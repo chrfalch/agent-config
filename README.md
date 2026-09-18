@@ -55,6 +55,7 @@ CLAUDE.md               orchestrator contract, loaded every turn
 agents/                 the seven subagents
 ledger.template.md      copied per task to .claude/ledger.md
 notes/                  rationale, not rules
+DECISIONS.md            why the setup is shaped this way
 settings.policy.json    Claude Code keys this repo asserts
 codex/policy.toml       Codex keys this repo asserts
 tools/apply-policy.py   the merge, used by deploy.sh

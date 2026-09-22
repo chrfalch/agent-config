@@ -18,7 +18,7 @@ REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CLAUDE="$HOME/.claude"
 BACKUP="$CLAUDE/backups/deploy-$(date +%Y-%m-%d-%H%M%S)"
 
-AGENTS=(researcher runner opus-implementer sol-implementer astra-implementer astra-reviewer reviewer)
+AGENTS=(researcher runner ui-runner opus-implementer sol-implementer astra-implementer astra-reviewer reviewer)
 
 link() {
   local src="$1" dst="$2"

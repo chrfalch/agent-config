@@ -1,6 +1,6 @@
 # agent-config
 
-A Claude Code multi-agent setup: an orchestrator contract, seven subagents, a
+A Claude Code multi-agent setup: an orchestrator contract, eight subagents, a
 task ledger that survives context compaction, and hooks that restore it.
 
 ## Install
@@ -17,7 +17,7 @@ cd agent-config
 | `--no-codex` | Skip Codex entirely. |
 | `--codex` | Require Codex; fail if its config is missing. |
 
-The Codex CLI is optional. Four of the seven agents are thin wrappers around it
+The Codex CLI is optional. Four of the eight agents are thin wrappers around it
 (`sol-implementer`, `astra-implementer`, `astra-reviewer`, and the second-opinion
 path in `reviewer`). Without Codex, the rest of the setup still works.
 
@@ -52,7 +52,7 @@ file it rewrites into `~/.claude/backups/deploy-<timestamp>/`.
 
 ```
 CLAUDE.md               orchestrator contract, loaded every turn
-agents/                 the seven subagents
+agents/                 the eight subagents
 ledger.template.md      copied per task to .claude/ledger.md
 notes/                  rationale, not rules
 DECISIONS.md            why the setup is shaped this way

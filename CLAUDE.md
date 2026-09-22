@@ -199,8 +199,9 @@ Rules:
 - Deep investigation: brief writable self-contained up front → `codex exec -s
   read-only -m gpt-5.6-sol` (free). Needs session state or iteration →
   `researcher`.
-- Computer use: opus-5 by default (injection robustness). Long end-to-end runs
-  where budget matters → gpt-6-astra through the Codex CLI.
+- Computer use: `ui-runner` (opus-5, injection robustness). Never in-thread — a view
+  hierarchy in your context is re-read by every later turn. Long end-to-end runs where
+  budget matters → gpt-6-astra through the Codex CLI.
 - ⚠ Every model here **expands scope and fills gaps** if allowed. Complete specs;
   scope review is mandatory. Never add "verify your work".
 - Never use Haiku.
@@ -211,6 +212,7 @@ Rules:
 |-------------------|-------------|-----------------|--------------------------------------------|-------------------------------------------------------|
 | researcher        | opus-5      | medium          | *why* — root cause, relevant code surface  | fix, plan, edit                                       |
 | runner            | sonnet-5    | —               | *what happened* — build/test verdicts      | fix (beyond trivial retry), dump raw logs             |
+| ui-runner         | opus-5      | medium/high     | *what the UI did* — device flows, assertions | fix code, paste hierarchies or screenshots          |
 | opus-implementer  | opus-5      | medium/high/max | implement judged and taste work            | architecture, review                                  |
 | sol-implementer   | gpt-5.6-sol | routine only    | implement free volume work                 | hard tier, untrusted input, taste work, fill spec gaps |
 | astra-implementer | gpt-6-astra | high/xhigh/max  | implement the hardest well-specified work  | routine work, taste work, untrusted input, fill spec gaps, `--full-auto` |
@@ -248,3 +250,62 @@ work) → clear point if more remains → you accept.
 - Workflow budgets count Claude tokens only. Sol is free; track Astra spend via
   Codex thread metadata (`model` / `reasoningEffort`) until the plan allowance is
   confirmed.
+## Context discipline
+
+Everything read stays in context and is paid for again on every later turn of the
+session. Before pulling something in, ask whether you need all of it.
+
+- Read ranges, not whole files. Use `Read` with `offset`/`limit`, or `sed -n '120,180p'`.
+  Reserve whole-file reads for files under ~200 lines.
+- Never re-read a file already in this session's context. Scroll back instead.
+- `.claude/ledger.md` is injected at SessionStart. Do not `cat` it.
+- Narrow output at the source — `grep -n`, `head`, `--name-only` — rather than reading
+  everything and filtering afterwards.
+- UI automation results are the most expensive thing you can put in context. Run
+  `mcp__argent__*` work in a subagent, so its screenshots and view hierarchies die with
+  that subagent instead of being re-read by every later turn. Prefer
+  `mcp__argent__await-ui-element` assertions over `describe`-then-read.
+
+## Editing files
+
+- Use `Edit` to change a file. Do not write a `python3 - <<PY` or `node -e` script to
+  perform a string replacement: it costs more, fails opaquely, and returns stdout
+  instead of a diff.
+- A script is the right tool only for a mechanical change across many files at once.
+  For one file, or a handful, use `Edit`.
+- Append to `.claude/ledger.md` with `Edit`, not `cat >>` with a heredoc. Never rewrite
+  the whole ledger to change part of it.
+## Context discipline
+
+Everything read stays in context and is paid for again on every later turn of the
+session. Measured over eight weeks: 86% of spend is context re-read, 14% is
+generation — 257 tokens read for every one written. Before pulling something in,
+ask whether you need all of it.
+
+- Read ranges, not whole files. Use `Read` with `offset`/`limit`, or `sed -n '120,180p'`.
+  Reserve whole-file reads for files under ~200 lines.
+- Never re-read a file already in this session's context. Scroll back instead.
+- `.claude/ledger.md` is injected at SessionStart. Do not `cat` it.
+- Narrow output at the source — `grep -n`, `head`, `--name-only` — rather than reading
+  everything and filtering afterwards.
+
+## UI automation
+
+All `mcp__argent__*` work goes to `ui-runner`, never in-thread. A view hierarchy is
+30–55k tokens and a screenshot more; held in your context it is re-read by every
+later turn of the session. Measured: argent results cost $0.64 a call against Bash's
+$0.0096 — 70x. One twelve-minute in-thread run cost ~$59.
+
+Inside `ui-runner`, and anywhere else: prefer `await-ui-element` assertions over
+`describe`-then-read. An assertion answers the question exactly; a hierarchy answers
+it by handing you the whole tree.
+
+## Editing files
+
+- Use `Edit` to change a file. Do not write a `python3 - <<PY` or `node -e` script to
+  perform a string replacement: it costs more, fails opaquely, and returns stdout
+  instead of a diff.
+- A script is the right tool only for a mechanical change across many files at once.
+  For one file, or a handful, use `Edit`.
+- Append to `.claude/ledger.md` with `Edit`, not `cat >>` with a heredoc. Never rewrite
+  the whole ledger to change part of it.

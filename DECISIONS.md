@@ -111,3 +111,43 @@ model to perform verification (the checks are deterministic), and a model to cla
 verification output (there are almost no verification clusters). The rule that replaces
 them: exit code, then parse a known format, then a model — and only when the first two
 are impossible.
+
+
+## 2026-09-22 — Opus 5.5 across the Opus lanes
+
+**All four Opus lanes move to `claude-opus-5-5`.** Model string verified against the
+CLI before the change. Anthropic published Opus 5.5 the same day at $4/$20 with cache
+reads at $0.20/M, against Opus 5's $5/$25 and $0.50/M.
+
+**Cache read is why this matters, not the headline rate.** The eight-week measurement
+put cache read at 61.5% of a $2,328 bill and generation at 13.6%. A 60% cut on the
+dominant component is worth an estimated $900 over an equivalent window — roughly 15x
+every applied token-reduction rule combined, and 3,600x the per-task routing question
+that was closed on measurement.
+
+*Basis of the $900.* The per-model read/write/output split is not in the data, so the
+corpus-wide split (61.5 / 24.9 / 13.6) was applied to the Opus 5 lane total of
+$2,026.71. Opus is 92.6% of turns, so the approximation is close — but this is an
+estimate, not a measurement. Fable's mix runs the other way: its cache writes exceed
+its cache reads. Treat the figure as an order of magnitude, not a forecast.
+
+**Routing-table cost score raised 4→5.** Opus 5.5 now pays Sonnet 5's cache-read rate
+exactly. It stays 2x Sonnet on input and output, but that covers 13.6% of spend. The
+practical cost gap between the Opus and Sonnet lanes is now small.
+
+**"Move main-thread turns to Sonnet" is withdrawn.** It was the one intervention that
+traded quality for cost, estimated at ~$270. With cache-read parity its value largely
+disappears. Do not re-raise it as a cost finding.
+
+**Fast mode rejected.** $8/$40 for 2.5x output speed. This fleet is context-bound, not
+latency-bound; doubling the rate to write faster buys nothing.
+
+**Unverified, carried forward:** that Opus 5's API behaviour (thinking on by default,
+400 on `thinking: disabled` at xhigh/max) is unchanged on 5.5, and that 5.5 holds Opus
+5's prompt-injection robustness. Both are assumed by the `ui-runner` and untrusted-input
+rules. Confirm before relying on either.
+
+**Measurement warning.** The 14-day matched-window control in the token-reduction work
+is priced at Opus 5 rates. Re-price both windows at 5.5 rates before the next
+comparison, or the price cut will be credited to `ui-runner` and the context-discipline
+rules.

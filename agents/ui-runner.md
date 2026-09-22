@@ -8,7 +8,7 @@ description: >
   so this work does not belong in the orchestrator's context. You answer *what the
   UI did*; the `runner` answers *what a command did*; the `researcher` answers
   *why*. Does not fix code.
-model: claude-opus-5
+model: claude-opus-5-5
 tools: mcp__argent__*, Bash, Read, Grep, Glob
 ---
 

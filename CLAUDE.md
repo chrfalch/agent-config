@@ -2,7 +2,7 @@
 
 ## Operating model
 
-As the top-level agent you are the orchestrator: **opus-5, high effort**. Your
+As the top-level agent you are the orchestrator: **opus-5.5, high effort**. Your
 leverage is planning, routing, and review, not typing code. Ambiguity and
 architecture are yours to resolve, never to delegate.
 
@@ -41,7 +41,7 @@ accept green.
 
 ### Review gate
 Every subagent result is reviewed against its original spec and acceptance criteria
-by a **fresh agent**, never its author. `reviewer` (opus-5) is mandatory. For
+by a **fresh agent**, never its author. `reviewer` (opus-5.5) is mandatory. For
 user-facing, architectural, security-relevant, or astra-implemented work, add
 `astra-reviewer` as an independent cross-check. It reviews **blind** — never sees
 the Claude verdict first. Where they disagree, you decide.
@@ -174,7 +174,7 @@ design, copy. Rationale and benchmarks: `~/.claude/notes/model-routing-rationale
 |-------------|------|--------------|-------|----------------------------------------|
 | gpt-5.6-sol | 7    | 8            | 6     | free on Codex plan; weak vs injection  |
 | sonnet-5    | 6    | 6            | 7     |                                        |
-| opus-5      | 4    | 9            | 9     | you; default for everything judged     |
+| opus-5.5    | 5    | 9            | 9     | you; default for everything judged     |
 | gpt-6-astra | 3    | 8            | 6     | Codex only; cost score assumes plan    |
 | fable-5     | 2    | 9            | 9     | retired from routing; manual only      |
 
@@ -194,12 +194,12 @@ Rules:
     migrations, algorithmic, long many-file sessions) → `astra-implementer`. Spec
     complete, criteria mechanical. In doubt → Opus: cheaper on our plan,
     injection-hardened.
-  - Untrusted or externally-sourced input → opus-5 only.
+  - Untrusted or externally-sourced input → opus-5.5 only.
   - Ambiguous spec → nobody. Resolve it first.
 - Deep investigation: brief writable self-contained up front → `codex exec -s
   read-only -m gpt-5.6-sol` (free). Needs session state or iteration →
   `researcher`.
-- Computer use: `ui-runner` (opus-5, injection robustness). Never in-thread — a view
+- Computer use: `ui-runner` (opus-5.5, injection robustness). Never in-thread — a view
   hierarchy in your context is re-read by every later turn. Long end-to-end runs where
   budget matters → gpt-6-astra through the Codex CLI.
 - ⚠ Every model here **expands scope and fills gaps** if allowed. Complete specs;
@@ -210,13 +210,13 @@ Rules:
 
 | agent             | engine      | effort          | answers                                    | never does                                            |
 |-------------------|-------------|-----------------|--------------------------------------------|-------------------------------------------------------|
-| researcher        | opus-5      | medium          | *why* — root cause, relevant code surface  | fix, plan, edit                                       |
+| researcher        | opus-5.5    | medium          | *why* — root cause, relevant code surface  | fix, plan, edit                                       |
 | runner            | sonnet-5    | —               | *what happened* — build/test verdicts      | fix (beyond trivial retry), dump raw logs             |
-| ui-runner         | opus-5      | medium/high     | *what the UI did* — device flows, assertions | fix code, paste hierarchies or screenshots          |
-| opus-implementer  | opus-5      | medium/high/max | implement judged and taste work            | architecture, review                                  |
+| ui-runner         | opus-5.5    | medium/high     | *what the UI did* — device flows, assertions | fix code, paste hierarchies or screenshots          |
+| opus-implementer  | opus-5.5    | medium/high/max | implement judged and taste work            | architecture, review                                  |
 | sol-implementer   | gpt-5.6-sol | routine only    | implement free volume work                 | hard tier, untrusted input, taste work, fill spec gaps |
 | astra-implementer | gpt-6-astra | high/xhigh/max  | implement the hardest well-specified work  | routine work, taste work, untrusted input, fill spec gaps, `--full-auto` |
-| reviewer          | opus-5      | medium          | is it actually done, red/green provenance  | fix code                                              |
+| reviewer          | opus-5.5    | medium          | is it actually done, red/green provenance  | fix code                                              |
 | astra-reviewer    | gpt-6-astra | high/xhigh      | independent cross-lab verdict on critical work | fix code, see the Claude verdict before reviewing |
 
 Runner first for errors; researcher when the cause is not obvious from them.
@@ -227,7 +227,7 @@ work) → clear point if more remains → you accept.
 ## Subagent mechanics
 
 - Claude models run via the Agent/Workflow model parameter with `effort` per
-  delegation. opus-5: thinking on by default; `thinking: disabled` with xhigh/max
+  delegation. opus-5.x: thinking on by default; `thinking: disabled` with xhigh/max
   → 400; `max_tokens` caps thinking plus response.
 - OpenAI models run only through the Codex CLI (`codex exec` / `codex review`).
   `~/.codex/config.toml` sets its own default model, and it is not sol. Always

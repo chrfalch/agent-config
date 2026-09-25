@@ -1,6 +1,6 @@
 # Model routing — rationale (not loaded into sessions)
 
-Kept out of CLAUDE.md to save context. Update when the routing table changes.
+Kept out of the rule files to save context. Update when the routing table changes.
 
 - **opus-5.5** (22 Sep 2026): $4/$20, cache read $0.20/M, cache write $5/M. That
   is 20% under Opus 5 on published rates and 60% under it on cache reads.

@@ -13,8 +13,8 @@ that removes the parts that depend on it:
 | Optional | Used by | Skip with |
 |---|---|---|
 | Codex CLI | `sol-implementer`, `astra-implementer`, `astra-reviewer`, and the second-opinion path in `reviewer` | `--no-codex` |
-| argent MCP server | `ui-runner`, and the UI automation section of `CLAUDE.md` | `--no-argent` |
-| `gh stack` extension | the Stacked PRs section of `CLAUDE.md` | nothing to skip; ignore the section |
+| argent MCP server | `ui-runner`, and the UI automation rule | `--no-argent` |
+| `gh stack` extension | the stacked-PR rule | `--no-stacks` |
 
 ## Install
 
@@ -34,15 +34,22 @@ policy keys would change, and whether any file of your own would be replaced.
 | `--dry-run` | Print every change and write nothing. Run this first. |
 | `--no-codex` | Skip Codex, and the three agents that drive it. |
 | `--codex` | Require Codex; fail if its config is missing. |
-| `--no-argent` | Skip `ui-runner`, which needs the argent MCP server. |
+| `--no-argent` | Skip `ui-runner` and the UI automation rule. |
+| `--no-stacks` | Skip the stacked-PR rule. |
 | `--agents a,b,c` | Deploy only the agents named. |
+| `--models a,b` | Keep only these models in the routing rules. |
 | `--force` | Replace a file of your own without asking. |
 | `--revert` | Remove this repo's symlinks and restore the newest backup. |
 | `--help` | Print the flag list. |
 
-If `~/.claude/CLAUDE.md` is already a file of your own, deploy asks before it
-replaces that file with a symlink. With no terminal attached it refuses and
-tells you to use `--force`, so an unattended run cannot overwrite your contract.
+**Your own `~/.claude/CLAUDE.md` is never touched.** The contract ships as rule
+files in `~/.claude/rules/` instead, which Claude Code loads for every project.
+If deploy finds a `~/.claude/CLAUDE.md` left as a symlink by an older version of
+this repo, it retires that link and says so.
+
+For the few files deploy does own, if one is already a file of your own it asks
+before replacing it. With no terminal attached it refuses and tells you to use
+`--force`, so an unattended run cannot overwrite anything.
 
 To undo a deploy:
 
@@ -54,6 +61,28 @@ To undo a deploy:
 Revert removes only symlinks that point into this repo, then restores the newest
 backup directory. It restores each file as it was at that deploy, so local edits
 made since are lost. Older backups stay in `~/.claude/backups/`.
+
+## How the contract ships
+
+The orchestrator contract lives in `rules/`, one file per topic, and deploys into
+`~/.claude/rules/`. Rules there apply to every project on your machine, and load
+at the start of every session.
+
+Two of those files, and parts of others, are gated on tools and models you may
+not have. Gating uses YAML frontmatter for a whole file and HTML comments for a
+block. Claude Code reads only `paths` from a rule's frontmatter and strips the
+rest, and it strips block-level HTML comments before the content reaches the
+model, so the markers cost nothing.
+
+With no selection flags, the rule files are symlinked, so an edit in the repo is
+live at once. With `--models`, `--agents`, `--no-codex`, `--no-argent` or
+`--no-stacks`, deploy writes filtered copies instead, and says so; after that,
+repo edits need another deploy.
+
+> **Cowork.** A Cowork session on the desktop skips a symlinked `~/.claude/rules/`
+> file whose target is outside the session's working directory, so these rules do
+> not load there. Claude Code in the terminal is unaffected. This was already true
+> of the `~/.claude/CLAUDE.md` symlink that earlier versions of this repo created.
 
 ## Models this setup expects
 
@@ -74,9 +103,15 @@ does not include the model named, or if you want a lane to run cheaper.
 The last three are thin Claude wrappers. Their own model is cheap because the
 real work happens in Codex; what matters there is the Codex model behind them.
 
-The model rankings in `CLAUDE.md`, and the cost figures in it, come from one
+The model rankings in the routing rule, and the cost figures in it, come from one
 operator's own eight-week corpus. Treat the ordering as a starting point and the
 absolute numbers as that operator's, not yours.
+
+To drop the models you do not have from the routing and fleet tables:
+
+```sh
+./deploy.sh --models opus-5.5,sonnet-5
+```
 
 ## Environment
 
@@ -100,7 +135,7 @@ Owned outright, and symlinked into `~/.claude/`. Editing the repo deploys them:
 
 | Path | Live location |
 |---|---|
-| `CLAUDE.md` | `~/.claude/CLAUDE.md` |
+| `rules/*.md` | `~/.claude/rules/` |
 | `ledger.template.md` | `~/.claude/ledger.template.md` |
 | `notes/model-routing-rationale.md` | `~/.claude/notes/` |
 | `agents/*.md` | `~/.claude/agents/` |
@@ -140,14 +175,15 @@ Run them after any change to `deploy.sh` or `tools/apply-policy.py`.
 ## Layout
 
 ```
-CLAUDE.md                 orchestrator contract, loaded every turn
+rules/                    the orchestrator contract, one file per topic
 agents/                   the eight subagents
 ledger.template.md        copied per task to .claude/ledger.md
 notes/                    rationale, not rules
 DECISIONS.md              why the setup is shaped this way
 settings.policy.json      Claude Code keys this repo asserts
 codex/policy.toml         Codex keys this repo asserts
-tools/apply-policy.py     the merge, used by deploy.sh
+tools/apply-policy.py     the settings merge, used by deploy.sh
+tools/build-rules.py      the rule filter, used by deploy.sh
 tools/test-apply-policy.py
 tools/test-deploy.py
 deploy.sh

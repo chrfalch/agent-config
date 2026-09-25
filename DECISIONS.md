@@ -1,6 +1,6 @@
 # Decisions
 
-Why this setup is shaped the way it is. `CLAUDE.md` holds the rules, `README.md`
+Why this setup is shaped the way it is. `rules/` holds the rules, `README.md`
 holds the mechanics, this file holds the reasons. Add to it when you change
 something and the reason is not obvious from the diff.
 
@@ -10,7 +10,7 @@ something and the reason is not obvious from the diff.
 They have no diff, no history and no rollback, and every change needs a manual
 re-upload. A repo gives all four.
 
-**Symlinks for what the repo owns.** `CLAUDE.md`, the agents, the ledger
+**Symlinks for what the repo owns.** The rule files, the agents, the ledger
 template and the notes are symlinked into `~/.claude/`. Editing the repo is
 deploying them, so there is no second step to forget.
 
@@ -59,7 +59,10 @@ task name is needed. The old wording asked the user for `continue <task name>`.
 `.claude/worktrees/` and `.worktrees/`. The hooks covered only the first, so
 some ledgers were invisible at session start.
 
-## 2026-09-17 — CLAUDE.md
+## 2026-09-17 — the contract
+
+*(This section predates the rules split. What it calls CLAUDE.md now lives as
+the files under `rules/`.)*
 
 **One source per rule.** Compact Instructions restated the ledger's own
 contents, and the routing bullets restated the Fleet reference table. The

@@ -1,42 +1,44 @@
 #!/usr/bin/env bash
 # Deploy agent-config.
 #
-#   ./deploy.sh                  symlink the owned files; apply policy; Codex if present
+#   ./deploy.sh                  link the owned files; apply policy; Codex if present
 #   ./deploy.sh --dry-run        print every change and write nothing
 #   ./deploy.sh --no-codex       skip Codex, and the three agents that drive it
 #   ./deploy.sh --codex          require Codex; fail if ~/.codex/config.toml is missing
-#   ./deploy.sh --no-argent      skip ui-runner, which needs the argent MCP server
+#   ./deploy.sh --no-argent      skip ui-runner and the UI automation rule
+#   ./deploy.sh --no-stacks      skip the stacked-PR rule (needs the gh stack extension)
 #   ./deploy.sh --agents a,b,c   deploy only these agents
+#   ./deploy.sh --models a,b     keep only these models in the routing rules
 #   ./deploy.sh --force          replace a file of your own without asking
-#   ./deploy.sh --revert         remove this repo's symlinks, restore the newest backup
+#   ./deploy.sh --revert         undo the last deploy
 #
 # Run --dry-run first against a config you care about.
 #
-# The repo owns CLAUDE.md, the agents, the ledger template and the notes, and
-# symlinks them, so editing the repo IS deploying them.
+# The contract ships as rule files in ~/.claude/rules/, which Claude Code loads
+# for every project. Your own ~/.claude/CLAUDE.md is never touched.
 #
-# It does NOT own ~/.claude/settings.json or ~/.codex/config.toml. Those hold
-# local state that the apps write: project trust levels, plugins, marketplaces,
-# MCP servers, your model choice. Deploy merges a few policy keys into them and
-# leaves everything else alone.
+# NOTE for Cowork users: a Cowork session on the desktop skips a symlinked
+# ~/.claude/rules/ file that points outside the session's working directory, so
+# these rules do not load there. Claude Code in the terminal is unaffected.
+#
+# Deploy does NOT own ~/.claude/settings.json or ~/.codex/config.toml. Those hold
+# local state the apps write: project trust levels, plugins, marketplaces, MCP
+# servers, your model choice. It merges a few policy keys and leaves the rest.
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CLAUDE="$HOME/.claude"
+RULES="$CLAUDE/rules"
+MANIFEST="$CLAUDE/.agent-config-manifest"
 BACKUP="$CLAUDE/backups/deploy-$(date +%Y-%m-%d-%H%M%S)"
+BUILD="$REPO/tools/build-rules.py"
 
 ALL_AGENTS=(researcher runner ui-runner opus-implementer sol-implementer astra-implementer astra-reviewer reviewer)
 CODEX_AGENTS=(sol-implementer astra-implementer astra-reviewer)
 ARGENT_AGENTS=(ui-runner)
 
-OWNED_TOP=(CLAUDE.md ledger.template.md)
-
-DRY=0
-FORCE=0
-REVERT=0
-NO_CODEX=0
-NO_ARGENT=0
-PICK=""
+DRY=0; FORCE=0; REVERT=0; NO_CODEX=0; NO_ARGENT=0; NO_STACKS=0
+PICK=""; MODELS=""
 ARGS=()
 
 while [ $# -gt 0 ]; do
@@ -45,12 +47,16 @@ while [ $# -gt 0 ]; do
     --force)     FORCE=1 ;;
     --revert)    REVERT=1 ;;
     --no-argent) NO_ARGENT=1 ;;
+    --no-stacks) NO_STACKS=1 ;;
     --agents)    shift; PICK="${1:-}"
                  if [ -z "$PICK" ]; then echo "--agents needs a comma-separated list" >&2; exit 1; fi ;;
     --agents=*)  PICK="${1#--agents=}" ;;
+    --models)    shift; MODELS="${1:-}"
+                 if [ -z "$MODELS" ]; then echo "--models needs a comma-separated list" >&2; exit 1; fi ;;
+    --models=*)  MODELS="${1#--models=}" ;;
     --no-codex)  NO_CODEX=1; ARGS+=("$1") ;;
     --codex)     ARGS+=("$1") ;;
-    -h|--help)   sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help)   sed -n '2,28p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *)           echo "unknown flag: $1   (try --help)" >&2; exit 1 ;;
   esac
   shift
@@ -67,6 +73,8 @@ in_list() {
   done
   return 1
 }
+
+note() { if [ "$DRY" = 1 ]; then echo "would $*"; else echo "$*"; fi; }
 
 # ------------------------------------------------------------ agent choice ---
 
@@ -90,32 +98,39 @@ else
   done
 fi
 
+# Anything narrowed means the rules must be generated rather than linked.
+FILTERED=0
+if [ -n "$PICK" ] || [ -n "$MODELS" ] || [ "$NO_CODEX" = 1 ] || [ "$NO_ARGENT" = 1 ] || [ "$NO_STACKS" = 1 ]; then
+  FILTERED=1
+fi
+
+features() {
+  local f=""
+  local a
+  for a in ${AGENTS[@]+"${AGENTS[@]}"}; do f="$f,$a"; done
+  if [ -n "$MODELS" ]; then f="$f,$MODELS"; else f="$f,gpt-5.6-sol,sonnet-5,opus-5.5,gpt-6-astra,fable-5"; fi
+  if [ "$NO_CODEX"  = 0 ]; then f="$f,codex"; fi
+  if [ "$NO_ARGENT" = 0 ]; then f="$f,argent"; fi
+  if [ "$NO_STACKS" = 0 ]; then f="$f,gh-stack"; fi
+  echo "${f#,}"
+}
+
 # ----------------------------------------------------------------- revert ----
 
 revert() {
-  local dst target newest rel
-  local found=0
-  for dst in "$CLAUDE/CLAUDE.md" "$CLAUDE/ledger.template.md" \
-             "$CLAUDE/notes/model-routing-rationale.md" "$CLAUDE"/agents/*.md; do
-    if [ ! -L "$dst" ]; then continue; fi
-    case "$(readlink "$dst")" in
-      "$REPO"/*)
-        found=$((found + 1))
-        if [ "$DRY" = 1 ]; then
-          echo "unlink   $(short "$dst")"
-        else
-          rm "$dst"
-          echo "unlinked $(short "$dst")"
-        fi ;;
-    esac
-  done
-  if [ "$found" = 0 ]; then echo "no symlinks from this repo are in place"; fi
+  local p target newest rel found=0
+  if [ -f "$MANIFEST" ]; then
+    while IFS= read -r p; do
+      if [ -z "$p" ] || { [ ! -e "$p" ] && [ ! -L "$p" ]; }; then continue; fi
+      found=$((found + 1))
+      if [ "$DRY" = 1 ]; then echo "remove   $(short "$p")"; else rm -f "$p"; echo "removed  $(short "$p")"; fi
+    done < "$MANIFEST"
+    if [ "$DRY" = 0 ]; then rm -f "$MANIFEST"; fi
+  fi
+  if [ "$found" = 0 ]; then echo "nothing from this repo is in place"; fi
 
   newest="$(ls -d "$CLAUDE"/backups/deploy-* 2>/dev/null | tail -1 || true)"
-  if [ -z "$newest" ]; then
-    echo "no backup to restore"
-    return 0
-  fi
+  if [ -z "$newest" ]; then echo "no backup to restore"; return 0; fi
   echo "backup   $(short "$newest")"
   while IFS= read -r f; do
     rel="${f#"$newest"/}"
@@ -134,24 +149,17 @@ revert() {
 }
 
 if [ "$REVERT" = 1 ]; then
-  if [ "$DRY" = 1 ]; then
-    echo "DRY RUN -- nothing below is written."
-    echo
-  fi
+  if [ "$DRY" = 1 ]; then echo "DRY RUN -- nothing below is written."; echo; fi
   revert
-  if [ "$DRY" = 1 ]; then
-    echo
-    echo "DRY RUN -- nothing was written."
-  fi
+  if [ "$DRY" = 1 ]; then echo; echo "DRY RUN -- nothing was written."; fi
   exit 0
 fi
 
 # ------------------------------------------------------------------ deploy ---
 
-if [ "$DRY" = 1 ]; then
-  echo "DRY RUN -- nothing below is written."
-  echo
-fi
+if [ "$DRY" = 1 ]; then echo "DRY RUN -- nothing below is written."; echo; fi
+
+WROTE=()
 
 confirm_replace() {
   local s="$1"
@@ -176,6 +184,7 @@ link() {
   local src="$1" dst="$2"
   local s
   s="$(short "$dst")"
+  WROTE+=("$dst")
   if [ -L "$dst" ] && [ "$(readlink "$dst")" = "$src" ]; then return 0; fi
 
   if [ "$DRY" = 1 ]; then
@@ -199,11 +208,41 @@ link() {
   echo "linked   $s"
 }
 
-for f in "${OWNED_TOP[@]}"; do
-  link "$REPO/$f" "$CLAUDE/$f"
-done
+# Earlier versions owned ~/.claude/CLAUDE.md. The contract now ships as rules,
+# so retire that symlink and leave any file of the user's own alone.
+OLD="$CLAUDE/CLAUDE.md"
+if [ -L "$OLD" ] && [[ "$(readlink "$OLD")" == "$REPO"/* ]]; then
+  note "retire   $(short "$OLD")   (the contract now ships as rules)"
+  if [ "$DRY" = 0 ]; then rm "$OLD"; fi
+fi
+
+# Remove rule files an earlier deploy wrote, so a narrower selection leaves none behind.
+if [ -f "$MANIFEST" ] && [ "$DRY" = 0 ]; then
+  while IFS= read -r p; do
+    case "$p" in "$RULES"/*) rm -f "$p" ;; esac
+  done < "$MANIFEST"
+fi
+
+FEAT="$(features)"
+if [ "$FILTERED" = 0 ]; then
+  for f in "$REPO"/rules/*.md; do
+    link "$f" "$RULES/$(basename "$f")"
+  done
+else
+  OUT="$RULES"
+  if [ "$DRY" = 1 ]; then OUT="$(mktemp -d)"; fi
+  python3 "$BUILD" --src "$REPO/rules" --out "$OUT" --features "$FEAT"
+  for f in "$OUT"/*.md; do
+    WROTE+=("$RULES/$(basename "$f")")
+    note "generate $(short "$RULES/$(basename "$f")")"
+  done
+  if [ "$DRY" = 1 ]; then rm -rf "$OUT"; fi
+  echo "rules    generated, not linked: edits in the repo need another deploy"
+fi
+
+link "$REPO/ledger.template.md" "$CLAUDE/ledger.template.md"
 link "$REPO/notes/model-routing-rationale.md" "$CLAUDE/notes/model-routing-rationale.md"
-for a in "${AGENTS[@]}"; do
+for a in ${AGENTS[@]+"${AGENTS[@]}"}; do
   link "$REPO/agents/$a.md" "$CLAUDE/agents/$a.md"
 done
 
@@ -213,6 +252,10 @@ for a in "${ALL_AGENTS[@]}"; do
 done
 if [ "${#SKIPPED[@]}" -gt 0 ]; then
   echo "agents   not deployed: ${SKIPPED[*]}"
+fi
+
+if [ "$DRY" = 0 ]; then
+  printf '%s\n' ${WROTE[@]+"${WROTE[@]}"} > "$MANIFEST"
 fi
 
 DRY_FLAG=()

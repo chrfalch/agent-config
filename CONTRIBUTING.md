@@ -17,7 +17,8 @@ Either way, run `./deploy.sh --dry-run` before your first deploy.
 Change locally, and do not send back:
 
 - The `model:` line in any agent, if your plan differs.
-- Sections of `CLAUDE.md` that name a tool you do not have.
+- Rules that name a tool you do not have. Prefer a deploy flag: `--no-codex`,
+  `--no-argent`, `--no-stacks`, `--models`.
 - Anything specific to your employer, your repos, or your own habits.
 - Agents that are yours alone. Put those in `~/.claude/agents/`, where deploy
   leaves them alone, not in `agents/` here.
@@ -26,7 +27,8 @@ Send back:
 
 - Bugs in `deploy.sh` or `tools/apply-policy.py`, with a test that fails before
   the fix.
-- Rules in `CLAUDE.md` that are true for everyone, not just for your project.
+- Rules that are true for everyone, not just for your project.
+- A missing gate: a rule that names a tool or model but carries no `needs:`.
 - Corrections to the README.
 
 ## Never commit
@@ -61,9 +63,28 @@ about, and none of it may be lost.
 
 ## Writing
 
-`CLAUDE.md` is read by an agent on every turn, so every line costs tokens on
+Every rule file is read by an agent on every turn, so every line costs tokens on
 every turn. Add a rule only if it changes behaviour. Delete a rule that has
 stopped being true. Say what to do, not why, and put the why in `DECISIONS.md`
 or `notes/`.
+
+Anything that names a model or a tool needs a gate, so a teammate without it does
+not read about it. Whole file:
+
+```markdown
+---
+needs: argent
+---
+```
+
+A block inside a file:
+
+```markdown
+<!-- needs: gpt-6-astra -->
+- Astra wrappers never run below high.
+<!-- /needs -->
+```
+
+`python3 tools/build-rules.py --vocabulary` lists the names a gate may use.
 
 Figures measured from one person's sessions should say so.

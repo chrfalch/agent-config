@@ -143,6 +143,18 @@ check(11, "--no-codex drops its agents and its prose",
       and "codex exec" not in mech and "Codex CLI" not in mech, agents_in(home))
 shutil.rmtree(home)
 
+# 13 -- a filtered deploy over a linked one must not touch the repo sources
+home = fresh_home()
+run(home)                      # links the rules into the temp HOME
+src = {f.name: hashlib.sha256(f.read_bytes()).hexdigest()
+       for f in (REPO / "rules").glob("*.md")}
+run(home, "--models", "opus-5.5")   # writes filtered copies over those links
+after = {f.name: hashlib.sha256(f.read_bytes()).hexdigest()
+         for f in (REPO / "rules").glob("*.md")}
+check(13, "a filtered deploy does not write through the symlinks into the repo",
+      src == after, str([k for k in src if src[k] != after.get(k)]))
+shutil.rmtree(home)
+
 # 12 -- no rule may name a lane that was not deployed
 home = fresh_home()
 run(home, "--agents", "opus-implementer", "--models", "opus-5.5",

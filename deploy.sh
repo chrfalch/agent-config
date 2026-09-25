@@ -76,6 +76,14 @@ in_list() {
 
 note() { if [ "$DRY" = 1 ]; then echo "would $*"; else echo "$*"; fi; }
 
+# What the last deploy wrote. Anything in here is ours to replace silently.
+OLD_WROTE=()
+if [ -f "$MANIFEST" ]; then
+  while IFS= read -r line; do
+    if [ -n "$line" ]; then OLD_WROTE+=("$line"); fi
+  done < "$MANIFEST"
+fi
+
 # ------------------------------------------------------------ agent choice ---
 
 AGENTS=()
@@ -190,6 +198,8 @@ link() {
   if [ "$DRY" = 1 ]; then
     if [ -L "$dst" ]; then
       echo "relink   $s   (now points at $(readlink "$dst"))"
+    elif [ -e "$dst" ] && [[ "$dst" == "$RULES"/* ]] && in_list "$dst" ${OLD_WROTE[@]+"${OLD_WROTE[@]}"}; then
+      echo "relink   $s   (replaces a copy an earlier deploy generated)"
     elif [ -e "$dst" ]; then
       echo "REPLACE  $s   (a file of your own: deploy would ask, then back it up)"
     else
@@ -199,9 +209,15 @@ link() {
   fi
 
   if [ -e "$dst" ] && [ ! -L "$dst" ]; then
-    if ! confirm_replace "$s"; then return 0; fi
-    mkdir -p "$BACKUP/$(dirname "${dst#"$HOME"/}")"
-    cp -p "$dst" "$BACKUP/${dst#"$HOME"/}"
+    # Only a generated rule counts as ours. A real file anywhere else is the
+    # user's, even if an earlier deploy put a symlink at that path.
+    if [[ "$dst" == "$RULES"/* ]] && in_list "$dst" ${OLD_WROTE[@]+"${OLD_WROTE[@]}"}; then
+      rm -f "$dst"          # our own generated copy, not the user's file
+    else
+      if ! confirm_replace "$s"; then return 0; fi
+      mkdir -p "$BACKUP/$(dirname "${dst#"$HOME"/}")"
+      cp -p "$dst" "$BACKUP/${dst#"$HOME"/}"
+    fi
   fi
   mkdir -p "$(dirname "$dst")"
   ln -sfn "$src" "$dst"
@@ -216,27 +232,29 @@ if [ -L "$OLD" ] && [[ "$(readlink "$OLD")" == "$REPO"/* ]]; then
   if [ "$DRY" = 0 ]; then rm "$OLD"; fi
 fi
 
-# Remove rule files an earlier deploy wrote, so a narrower selection leaves none behind.
-if [ -f "$MANIFEST" ] && [ "$DRY" = 0 ]; then
-  while IFS= read -r p; do
-    case "$p" in "$RULES"/*) rm -f "$p" ;; esac
-  done < "$MANIFEST"
-fi
-
 FEAT="$(features)"
 if [ "$FILTERED" = 0 ]; then
   for f in "$REPO"/rules/*.md; do
     link "$f" "$RULES/$(basename "$f")"
   done
 else
-  OUT="$RULES"
-  if [ "$DRY" = 1 ]; then OUT="$(mktemp -d)"; fi
+  # Always build into a temp directory. Building straight into $RULES would let
+  # the glob below pick up files an earlier, wider deploy left there.
+  OUT="$(mktemp -d)"
   python3 "$BUILD" --src "$REPO/rules" --out "$OUT" --features "$FEAT"
+  mkdir -p "$RULES"
   for f in "$OUT"/*.md; do
-    WROTE+=("$RULES/$(basename "$f")")
-    note "generate $(short "$RULES/$(basename "$f")")"
+    d="$RULES/$(basename "$f")"
+    WROTE+=("$d")
+    if [ "$DRY" = 1 ]; then
+      echo "generate $(short "$d")"
+    else
+      rm -f "$d"      # it may be a symlink into the repo; never write through it
+      cp "$f" "$d"
+      echo "generated $(short "$d")"
+    fi
   done
-  if [ "$DRY" = 1 ]; then rm -rf "$OUT"; fi
+  rm -rf "$OUT"
   echo "rules    generated, not linked: edits in the repo need another deploy"
 fi
 
@@ -252,6 +270,21 @@ for a in "${ALL_AGENTS[@]}"; do
 done
 if [ "${#SKIPPED[@]}" -gt 0 ]; then
   echo "agents   not deployed: ${SKIPPED[*]}"
+fi
+
+# A rule an earlier deploy wrote that this one does not write is stale. Removing
+# it here, rather than removing every rule up front, keeps an unchanged symlink
+# unchanged, so the dry run and the real run report the same work.
+if [ -f "$MANIFEST" ]; then
+  while IFS= read -r p; do
+    case "$p" in
+      "$RULES"/*)
+        if ! in_list "$p" ${WROTE[@]+"${WROTE[@]}"}; then
+          if [ "$DRY" = 1 ]; then echo "remove   $(short "$p")   (no longer selected)"
+          else rm -f "$p"; echo "removed  $(short "$p")"; fi
+        fi ;;
+    esac
+  done < "$MANIFEST"
 fi
 
 if [ "$DRY" = 0 ]; then

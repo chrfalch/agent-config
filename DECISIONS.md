@@ -219,3 +219,26 @@ says so, so nobody re-derives it from the old wording.
 **Codex model prices are not verified.** `gpt-5.6-sol` and `gpt-6-astra` are
 OpenAI models billed through the Codex plan. The figures in the rationale are
 their release-note list prices and were not re-checked.
+
+## 2026-09-25 — A filtered deploy could overwrite the repo
+
+**Found while verifying the price update.** Deploying with a selection flag wrote
+the filtered rules straight into `~/.claude/rules/`. Those paths were symlinks
+into the repo from the previous unfiltered deploy, so the write followed the link
+and overwrote the source file. Four rule files lost every gating marker. Caught by
+`git status`, restored with `git checkout`, and nothing reached the remote.
+
+**Three fixes, all of them narrow.** `build-rules.py` unlinks a destination before
+writing it. `deploy.sh` builds filtered rules into a temp directory and copies them
+in, so its own glob can no longer pick up files an earlier deploy left behind. A
+file the last deploy generated is recognised from the manifest and replaced without
+asking, but only under `~/.claude/rules/` — a real file at any other path is still
+treated as the user's.
+
+**Why it hid so long.** The original code deleted every rule up front, which
+masked the symlink-following bug and made every deploy relink. Removing that
+deletion to make the dry run honest is what exposed it.
+
+**Two tests now cover it.** One asserts that a filtered deploy leaves the repo
+sources byte-identical. The other walks full, filtered, full, repeat, revert and
+checks the rule set at each step.

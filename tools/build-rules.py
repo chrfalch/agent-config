@@ -135,7 +135,12 @@ def main():
         if not wanted(text, features):
             skipped.append(f.name)
             continue
-        (out / f.name).write_text(render(text, features))
+        dest = out / f.name
+        # A previous unfiltered deploy leaves a symlink into the repo here.
+        # Writing through it would overwrite the source. Replace it instead.
+        if dest.is_symlink() or dest.exists():
+            dest.unlink()
+        dest.write_text(render(text, features))
     if skipped:
         print(f"rules    not written: {', '.join(skipped)}")
     return 0

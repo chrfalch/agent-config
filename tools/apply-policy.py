@@ -36,11 +36,12 @@ def merge_key(live_value, policy_value):
     return merged, changed, kept
 
 
-def apply_json(policy_path, target, backup_dir):
+def apply_json(policy_path, target, backup_dir, dry=False):
     policy = json.loads(policy_path.read_text())
     if not target.exists():
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(json.dumps(policy, indent=2) + "\n")
+        if not dry:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(json.dumps(policy, indent=2) + "\n")
         return sorted(policy), []
     live = json.loads(target.read_text())
     merged = dict(live)
@@ -53,8 +54,9 @@ def apply_json(policy_path, target, backup_dir):
     kept += [k for k in live if k not in policy]
     if not changed:
         return [], sorted(kept)
-    backup(target, backup_dir)
-    target.write_text(json.dumps(merged, indent=2) + "\n")
+    if not dry:
+        backup(target, backup_dir)
+        target.write_text(json.dumps(merged, indent=2) + "\n")
     return sorted(changed), sorted(kept)
 
 
@@ -74,20 +76,20 @@ def set_toml_key(lines, key, raw_value):
     return True
 
 
-def apply_toml(policy_path, target, backup_dir):
+def apply_toml(policy_path, target, backup_dir, dry=False):
     policy = tomllib.loads(policy_path.read_text())
     flat = {k: v for k, v in policy.items() if not isinstance(v, dict)}
     if not target.exists():
         return None, None
     lines = target.read_text().splitlines(keepends=True)
-    original = list(lines)
     changed = [k for k, v in flat.items() if set_toml_key(lines, k, json.dumps(v))]
     if not changed:
         return [], len([l for l in lines if l.startswith("[")])
     new = "".join(lines)
     tomllib.loads(new)  # refuse to write a broken file
-    backup(target, backup_dir)
-    target.write_text(new)
+    if not dry:
+        backup(target, backup_dir)
+        target.write_text(new)
     return changed, len([l for l in lines if l.startswith("[")])
 
 
@@ -96,11 +98,14 @@ def main():
     ap.add_argument("--backup-dir", required=True)
     ap.add_argument("--no-codex", action="store_true")
     ap.add_argument("--codex", action="store_true", help="fail if Codex is absent")
+    ap.add_argument("--dry-run", action="store_true", help="report changes, write nothing")
     a = ap.parse_args()
     bdir = pathlib.Path(a.backup_dir)
+    verb = "would apply" if a.dry_run else "applied"
 
-    changed, untouched = apply_json(REPO / "settings.policy.json", HOME / ".claude/settings.json", bdir)
-    print(f"claude   policy keys applied: {', '.join(changed) if changed else 'already current'}")
+    changed, untouched = apply_json(
+        REPO / "settings.policy.json", HOME / ".claude/settings.json", bdir, a.dry_run)
+    print(f"claude   policy keys {verb}: {', '.join(changed) if changed else 'already current'}")
     if untouched:
         print(f"         left alone: {', '.join(untouched)}")
 
@@ -114,8 +119,8 @@ def main():
             return 1
         print("codex    skipped (no ~/.codex/config.toml; pass --codex to require it)")
         return 0
-    changed, tables = apply_toml(REPO / "codex/policy.toml", target, bdir)
-    print(f"codex    policy keys applied: {', '.join(changed) if changed else 'already current'}")
+    changed, tables = apply_toml(REPO / "codex/policy.toml", target, bdir, a.dry_run)
+    print(f"codex    policy keys {verb}: {', '.join(changed) if changed else 'already current'}")
     print(f"         left alone: {tables} tables of local state (projects, plugins, mcp_servers)")
     return 0
 

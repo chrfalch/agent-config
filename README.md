@@ -8,6 +8,7 @@ task ledger that survives context compaction, and hooks that restore it.
 ```sh
 git clone <this repo>
 cd agent-config
+./deploy.sh --dry-run   # print every change, write nothing
 ./deploy.sh
 ```
 
@@ -16,6 +17,7 @@ cd agent-config
 | *(none)* | Apply everything. Codex policy too, if `~/.codex/config.toml` exists. |
 | `--no-codex` | Skip Codex entirely. |
 | `--codex` | Require Codex; fail if its config is missing. |
+| `--dry-run` | Print every change and write nothing. Run this first. |
 
 The Codex CLI is optional. Four of the eight agents are thin wrappers around it
 (`sol-implementer`, `astra-implementer`, `astra-reviewer`, and the second-opinion
@@ -47,6 +49,18 @@ prints what it left alone so you can check.
 
 Re-running deploy is safe. It changes only keys that differ, and backs up any
 file it rewrites into `~/.claude/backups/deploy-<timestamp>/`.
+
+Policy keys are merged one level down. The repo asserts two hook events,
+`PreCompact` and `SessionStart`. Any other hook event you have keeps working.
+Deploy prints what it applied and what it left alone, by path.
+
+To check the merge yourself, before you trust it with a config you care about:
+
+```sh
+python3 tools/test-apply-policy.py
+```
+
+It writes only to a temporary directory.
 
 ## Layout
 

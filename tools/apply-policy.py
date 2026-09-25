@@ -12,8 +12,19 @@ HOME = pathlib.Path.home()
 
 
 def backup(path, backup_dir):
-    backup_dir.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(path, backup_dir / path.name)
+    """Copy path into backup_dir, keeping its position relative to HOME.
+
+    deploy.sh --revert restores a backup by replaying that relative path, so a
+    bare filename would be ambiguous: agents/reviewer.md and reviewer.md would
+    collide. A path outside HOME falls back to its bare name.
+    """
+    try:
+        rel = path.relative_to(HOME)
+    except ValueError:
+        rel = pathlib.Path(path.name)
+    dest = backup_dir / rel
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(path, dest)
 
 
 def merge_key(live_value, policy_value):

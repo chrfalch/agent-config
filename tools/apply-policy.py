@@ -16,6 +16,26 @@ def backup(path, backup_dir):
     shutil.copy2(path, backup_dir / path.name)
 
 
+def merge_key(live_value, policy_value):
+    """Merge one policy key into the live value already under that key.
+
+    A dict is merged one level down, so sub-keys this repo does not assert
+    survive: another hook event, for example. Anything else is replaced
+    outright. Returns (merged value, changed sub-keys, kept sub-keys); a
+    changed sub-key of "" means the whole key changed.
+    """
+    if not (isinstance(live_value, dict) and isinstance(policy_value, dict)):
+        return policy_value, ([] if live_value == policy_value else [""]), []
+    merged = dict(live_value)
+    changed = []
+    for k, v in policy_value.items():
+        if merged.get(k) != v:
+            changed.append(k)
+        merged[k] = v
+    kept = [k for k in live_value if k not in policy_value]
+    return merged, changed, kept
+
+
 def apply_json(policy_path, target, backup_dir):
     policy = json.loads(policy_path.read_text())
     if not target.exists():
@@ -23,13 +43,19 @@ def apply_json(policy_path, target, backup_dir):
         target.write_text(json.dumps(policy, indent=2) + "\n")
         return sorted(policy), []
     live = json.loads(target.read_text())
-    changed = [k for k, v in policy.items() if live.get(k) != v]
+    merged = dict(live)
+    changed, kept = [], []
+    for key, value in policy.items():
+        new_value, sub_changed, sub_kept = merge_key(live.get(key), value)
+        merged[key] = new_value
+        changed += [key if s == "" else f"{key}.{s}" for s in sub_changed]
+        kept += [f"{key}.{s}" for s in sub_kept]
+    kept += [k for k in live if k not in policy]
     if not changed:
-        return [], sorted(set(live) - set(policy))
+        return [], sorted(kept)
     backup(target, backup_dir)
-    live.update(policy)
-    target.write_text(json.dumps(live, indent=2) + "\n")
-    return changed, sorted(set(live) - set(policy))
+    target.write_text(json.dumps(merged, indent=2) + "\n")
+    return sorted(changed), sorted(kept)
 
 
 def set_toml_key(lines, key, raw_value):

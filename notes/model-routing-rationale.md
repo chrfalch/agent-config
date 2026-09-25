@@ -2,6 +2,36 @@
 
 Kept out of the rule files to save context. Update when the routing table changes.
 
+## Published rates, checked 2026-09-25
+
+Anthropic list prices, US dollars per million tokens. Cache write is the
+five-minute rate.
+
+| model | input | output | cache read | cache write |
+|---|---|---|---|---|
+| opus-5.5 | 4 | 20 | 0.20 | 5 |
+| opus-5 | 5 | 25 | 0.50 | — |
+| sonnet-5 | 2 | 10 | 0.20 | 2.50 |
+| fable-5.1 | 10 | 50 | 0.25 | — |
+| haiku-4.5 | 1 | 5 | 0.10 | — |
+
+**Sonnet 5 did not get more expensive.** Its $2/$10 launched as introductory
+pricing through 31 August 2026, and the scheduled rise to $3/$15 on 1 September
+was cancelled; $2/$10 is now the standard rate, and cache reads stay at $0.20/M.
+Any cost work that assumed the increase took effect is wrong and should be redone.
+One price tracker still labels the Sonnet 5 row "through Aug 31, 2026", which is
+the stale reading, not a second rate.
+
+**Cache read is the number that matters here**, not the headline rate: the
+eight-week measurement put cache reads at 61.5% of the bill and generation at
+13.6%. Opus 5.5 and Sonnet 5 now charge the same $0.20/M for a cache read, which
+is why the gap between those two lanes is far smaller than $4/$20 against $2/$10
+looks.
+
+Not checked here: `gpt-5.6-sol` and `gpt-6-astra`, which are OpenAI models billed
+through the Codex plan. The figures for those below are list prices from their
+release notes and have not been re-verified.
+
 - **opus-5.5** (22 Sep 2026): $4/$20, cache read $0.20/M, cache write $5/M. That
   is 20% under Opus 5 on published rates and 60% under it on cache reads.
   Anthropic puts the typical workload saving at 40%, because runs are also

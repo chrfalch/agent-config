@@ -194,3 +194,28 @@ editing. Christian's call, 2026-09-25: live with it, and say so in the installer
 files were still listed under Memory files and the canary still answered. They
 reload. Do not re-raise. Still untested: automatic compaction, which with
 `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=30` fires far later than a manual one.
+
+## 2026-09-25 — Prices re-checked
+
+**Anthropic rates are now in one dated table** at the top of
+`notes/model-routing-rationale.md`, checked 2026-09-25. Opus 5.5 $4/$20 with
+$0.20/M cache reads and $5/M cache writes; Opus 5 $5/$25 and $0.50/M; Sonnet 5
+$2/$10, $0.20/M and $2.50/M; Fable 5.1 $10/$50 and $0.25/M; Haiku 4.5 $1/$5 and
+$0.10/M. Nothing in the routing table had to change: every figure already in the
+repo was current.
+
+**The Sonnet 5 promotional trap did not happen.** Earlier work assumed Sonnet 5's
+$2/$10 was introductory pricing that ended on 31 August 2026, and that the rise to
+$3/$15 made it dearer on cache reads than it looked. Anthropic cancelled that
+increase; $2/$10 is the standard rate and cache reads stay at $0.20/M. Any cost
+comparison built on the increase is wrong. One price tracker still labels the
+Sonnet 5 row as effective through 31 August, which is a stale row rather than a
+second rate.
+
+**The lesson survives its example.** Checking effective dates before routing on a
+launch price is still right. This particular scare was unfounded, and the note now
+says so, so nobody re-derives it from the old wording.
+
+**Codex model prices are not verified.** `gpt-5.6-sol` and `gpt-6-astra` are
+OpenAI models billed through the Codex plan. The figures in the rationale are
+their release-note list prices and were not re-checked.

@@ -154,3 +154,43 @@ rules. Confirm before relying on either.
 is priced at Opus 5 rates. Re-price both windows at 5.5 rates before the next
 comparison, or the price cut will be credited to `ui-runner` and the context-discipline
 rules.
+
+## 2026-09-25 — The contract ships as rules
+
+**The repo stopped owning `~/.claude/CLAUDE.md`.** It is a file people already
+have and already edit. Replacing it, even with a backup, is hostile when the repo
+is shared. The contract now deploys as topic files into `~/.claude/rules/`, which
+Claude Code loads for every project on the machine. A `CLAUDE.md` left as a
+symlink by an earlier version is retired on the next deploy, and reported.
+
+**Gating is invisible to the model.** A whole file is gated by a `needs:` field
+in YAML frontmatter; a block by an HTML comment. Claude Code reads only `paths`
+from a rule's frontmatter and ignores other fields without an error, and it
+strips block-level HTML comments before the content enters context. So the
+markers cost nothing when nothing is filtered. `tools/build-rules.py` holds the
+filter and the vocabulary.
+
+**Symlink by default, generate only when narrowed.** With no selection flag the
+rule files are symlinked, so an edit in the repo is live at once. `--models`,
+`--agents`, `--no-codex`, `--no-argent` and `--no-stacks` make deploy write
+filtered copies instead, and it says so. That trade is the price of selection,
+not a default anyone pays.
+
+**Gates name no lane.** Three gates pointed at an agent inside the rule itself,
+so a narrowed deploy left an instruction aimed at nothing. Each gate now states
+the rule, and a gated block names the lane after it. A test deploys one agent and
+asserts no backticked lane name survives anywhere.
+
+**Cowork: accepted, not fixed.** A Cowork session on the desktop skips a
+symlinked `~/.claude/rules/` file whose target sits outside the session's working
+directory, so the fleet rules do not load there. This was already true of the
+`~/.claude/CLAUDE.md` symlink the earlier design created, so it is not a
+regression. Copying instead of symlinking would fix it and would cost live
+editing. Christian's call, 2026-09-25: live with it, and say so in the installer.
+
+**Compaction: verified, 2026-09-25.** Rules were suspected of not surviving
+`/compact`, since the docs promise re-injection only for a project-root
+`CLAUDE.md`. Tested with a canary line in a rule file. After `/compact` the rule
+files were still listed under Memory files and the canary still answered. They
+reload. Do not re-raise. Still untested: automatic compaction, which with
+`CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=30` fires far later than a manual one.

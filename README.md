@@ -153,6 +153,11 @@ tools/test-deploy.py
 deploy.sh
 ```
 
+## Sharing it
+
+See `CONTRIBUTING.md` for how to take this repo, what to keep local, what to send
+back, and what must never be committed.
+
 ## Notes
 
 Agents you add under `~/.claude/agents/` that are not in the table above are

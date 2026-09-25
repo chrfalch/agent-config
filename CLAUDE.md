@@ -124,7 +124,8 @@ to it.
 ## Writing for humans
 
 Anything that leaves the session — PR descriptions and comments, issues, commit
-messages, explanations to me — is read by a person first, an agent second.
+messages, explanations to the operator — is read by a person first, an agent
+second.
 Brevity means few ideas, not compressed sentences. Two layers:
 
 **Layer 1, summary, first.** For a reader who has not seen the ledger or this
@@ -137,12 +138,15 @@ could a reviewer who reads only this layer decide what to look at?
 **Layer 2, details.** Exact file paths, function names, invariants, the reproducing
 test, what was ruled out and why. Short headings. Do not restate the summary.
 
-Explanations to me default to layer 1; offer layer 2. If I ask for "layman's
-terms", the default was wrong — fix the default.
+Explanations to the operator default to layer 1; offer layer 2. If the operator
+asks for layman's terms, the default was wrong — fix the default.
 
 ## Stacked PRs
 
-Stacks are yours. Implementers and reviewers never run `gh stack`.
+This section applies only where the `gh stack` extension is installed. Ignore it
+otherwise.
+
+Stacks are the orchestrator's. Implementers and reviewers never run `gh stack`.
 
 - Open the first PR, then `gh stack link` to attach it to its parent.
 - `gh stack sync` after a parent branch moves, before you touch a child.
@@ -166,7 +170,7 @@ Stacks are yours. Implementers and reviewers never run `gh stack`.
 
 ## Model routing
 
-Rankings, higher = better. Cost is what I actually pay. Intelligence is how hard a
+Rankings, higher = better. Cost is what the operator actually pays. Intelligence is how hard a
 problem the model takes unsupervised. Taste covers UI/UX, code quality, API
 design, copy. Rationale and benchmarks: `~/.claude/notes/model-routing-rationale.md`.
 
@@ -254,8 +258,9 @@ work) → clear point if more remains → you accept.
 ## Context discipline
 
 Everything read stays in context and is paid for again on every later turn of the
-session. Measured over eight weeks: 86% of spend is context re-read, 14% is
-generation — 257 tokens read for every one written. Before pulling something in,
+session. Measured over eight weeks of one operator's own sessions: 86% of spend
+is context re-read, 14% is generation — 257 tokens read for every one written.
+Your own ratio will differ. Its direction will not. Before pulling something in,
 ask whether you need all of it.
 
 - Read ranges, not whole files. Use `Read` with `offset`/`limit`, or `sed -n '120,180p'`.
@@ -267,10 +272,13 @@ ask whether you need all of it.
 
 ## UI automation
 
+This section applies only where the argent MCP server is available. Ignore it
+otherwise; `ui-runner` is not deployed without argent.
+
 All `mcp__argent__*` work goes to `ui-runner`, never in-thread. A view hierarchy is
 30–55k tokens and a screenshot more; held in your context it is re-read by every
-later turn of the session. Measured: argent results cost $0.64 a call against Bash's
-$0.0096 — 70x. One twelve-minute in-thread run cost ~$59.
+later turn of the session. Measured in that same corpus: argent results cost $0.64
+a call against Bash's $0.0096 — 70x. One twelve-minute in-thread run cost ~$59.
 
 Inside `ui-runner`, and anywhere else: prefer `await-ui-element` assertions over
 `describe`-then-read. An assertion answers the question exactly; a hierarchy answers

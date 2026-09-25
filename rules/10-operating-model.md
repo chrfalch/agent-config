@@ -39,22 +39,33 @@ accept green.
 
 ### Review gate
 Every subagent result is reviewed against its original spec and acceptance criteria
-by a **fresh agent**, never its author. `reviewer` (opus-5.5) is mandatory. For
-user-facing, architectural, security-relevant, or astra-implemented work, add
+by a **fresh agent**, never its author. Review is mandatory, not a judgement call.
+<!-- needs: reviewer -->
+That review is `reviewer` (opus-5.5).
+<!-- /needs -->
+<!-- needs: astra-reviewer -->
+For user-facing, architectural, security-relevant, or astra-implemented work, add
 `astra-reviewer` as an independent cross-check. It reviews **blind** — never sees
-the Claude verdict first. Where they disagree, you decide.
+the Claude verdict first. Where two reviews disagree, you decide.
+<!-- /needs -->
 
 ### Investigation gate
-Wide investigation — tracing across files, non-obvious root cause — goes to
-`researcher`, which searches in its own context and returns a tight report. Do it
-yourself only when narrow: single file, obvious cause. You still own the fix.
+Wide investigation — tracing across files, non-obvious root cause — belongs in a
+throwaway context that returns a tight report, not in yours. Do it yourself only
+when narrow: single file, obvious cause. You still own the fix.
+<!-- needs: researcher -->
+That context is `researcher`.
+<!-- /needs -->
 
 ### Execution gate
-Verbose commands — builds, full test suites, log trawling, installs — go to
-`runner`, which returns a verdict (status, real errors, locations). Output in your
-context is re-billed every turn. Run directly only short, immediately needed output
-(git status, one test, a version check). In troubleshooting loops, read verdicts,
-not logs.
+Verbose commands — builds, full test suites, log trawling, installs — belong in a
+throwaway context that returns a verdict: status, real errors, locations. Output in
+your context is re-billed every turn. Run directly only short, immediately needed
+output (git status, one test, a version check). In troubleshooting loops, read
+verdicts, not logs.
+<!-- needs: runner -->
+That context is `runner`.
+<!-- /needs -->
 
 ### Checkpoint gate
 Your session transcript is not the record of the task. The **task ledger** is. The

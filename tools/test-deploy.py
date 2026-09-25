@@ -143,5 +143,17 @@ check(11, "--no-codex drops its agents and its prose",
       and "codex exec" not in mech and "Codex CLI" not in mech, agents_in(home))
 shutil.rmtree(home)
 
+# 12 -- no rule may name a lane that was not deployed
+home = fresh_home()
+run(home, "--agents", "opus-implementer", "--models", "opus-5.5",
+    "--no-codex", "--no-argent", "--no-stacks")
+blob = "".join((home / ".claude" / "rules" / n).read_text() for n in rules_in(home))
+ALL_AGENTS = ["researcher", "runner", "ui-runner", "opus-implementer",
+              "sol-implementer", "astra-implementer", "astra-reviewer", "reviewer"]
+# Backticked, so the ordinary English words reviewer and runner do not count.
+dangling = [a for a in ALL_AGENTS if a != "opus-implementer" and chr(96) + a + chr(96) in blob]
+check(12, "no rule names a lane that was not deployed", dangling == [], str(dangling))
+shutil.rmtree(home)
+
 print("PASS" if not fails else f"FAILED: {len(fails)}")
 sys.exit(1 if fails else 0)

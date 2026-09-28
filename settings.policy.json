@@ -25,6 +25,11 @@
       }
     ]
   },
+  "attribution": {
+    "commit": "",
+    "pr": "",
+    "sessionUrl": false
+  },
   "tui": "fullscreen",
   "skipWorkflowUsageWarning": true
 }

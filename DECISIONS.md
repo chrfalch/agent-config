@@ -270,3 +270,20 @@ fifth of the cost. Trial it on hard well-specified tasks before moving that lane
 **Prices verified this time**, for OpenAI too: launch posts and OpenRouter. Cached
 rates for Sol and Luna come from OpenRouter only. Plan coverage in Codex is assumed
 from the launch posts, not measured.
+
+## 2026-09-30 — Docs split into README plus docs/
+
+The README had grown into an install manual. Install detail was first, usage was
+scattered, and the two things a new reader needs — what this is, and what a day
+with it looks like — were not in it at all.
+
+The README now carries the project, the reason it is shaped this way, the happy
+path install, the daily loop, and a first explanation of the ledger and the
+`/clear` then `go` cycle. Everything longer moved to `docs/`: `installation.md`
+(flags, what deploy owns, hooks, revert, tests), `usage.md` (a worked task with
+the ledger shown at each stage), `fleet.md` (agents, models, routing, Codex
+mechanics), and `customizing.md` (models, gates, adding rules and agents).
+
+`docs/` rather than flat files at the root, so the root stays readable. The rule
+files remain the contract; `docs/` explains it to a person and is never loaded
+into a session.

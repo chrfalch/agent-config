@@ -1,20 +1,32 @@
 # agent-config
 
-A Claude Code multi-agent setup: an orchestrator contract, eight subagents, a
-task ledger that survives context compaction, and hooks that restore it.
+A Claude Code multi-agent setup. It gives the top-level session a contract: plan
+the work, delegate it to subagents, review the result, and keep the state in a
+file instead of in the conversation.
 
-## Before you install
+It ships four things:
 
-You need Claude Code, `python3` (3.11 or later, for `tomllib`), and `bash`.
+- **An orchestrator contract** — rule files that load in every session and tell
+  the top-level agent how to work.
+- **Eight subagents** — investigation, execution, implementation, and review
+  lanes, each pinned to a model.
+- **A task ledger** — a small file that holds the task state, so a session can
+  be cleared and restarted without losing anything.
+- **Two hooks** — they put the ledger back into context when a session starts,
+  and protect it when a session compacts.
 
-Three things are optional. Deploy works without any of them, and each has a flag
-that removes the parts that depend on it:
+## Why it is shaped this way
 
-| Optional | Used by | Skip with |
-|---|---|---|
-| Codex CLI | `sol-implementer`, `astra-implementer`, `astra-reviewer`, and the second-opinion path in `reviewer` | `--no-codex` |
-| argent MCP server | `ui-runner`, and the UI automation rule | `--no-argent` |
-| `gh stack` extension | the stacked-PR rule | `--no-stacks` |
+One number drives the design. In eight weeks of one operator's sessions, 86% of
+the spend was re-reading context, not generating output — 257 tokens read for
+every one written. Everything you read stays in the session and is paid for
+again on every later turn.
+
+So the setup pushes verbose work out of the main session. A build log goes to
+`runner`, which returns a verdict. A wide code search goes to `researcher`,
+which returns a short report. Implementation goes to an implementer, which
+returns a diff and a report. The main session stays small, and it stays the
+place where planning, routing, and review happen.
 
 ## Install
 
@@ -25,178 +37,98 @@ cd agent-config
 ./deploy.sh
 ```
 
-Run the dry run first. It tells you exactly which files would be linked, which
-policy keys would change, and whether any file of your own would be replaced.
+You need Claude Code, `python3` 3.11 or later, and `bash`. Codex CLI, the
+argent MCP server, and the `gh stack` extension are optional; deploy has a flag
+to skip each one.
 
-| Flag | Effect |
+Then add three variables to your shell profile:
+
+```sh
+export CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=30
+export BASH_MAX_OUTPUT_LENGTH=10000
+export MAX_MCP_OUTPUT_TOKENS=10000
+```
+
+That is the happy path. [docs/installation.md](docs/installation.md) has the
+flags, what deploy owns, what it never touches, and how to undo it.
+
+## Using it
+
+Open Claude Code in your repo and describe the task. The orchestrator explores,
+writes a plan, and asks you to approve it. On approval it creates a worktree and
+a ledger, then runs the pipeline:
+
+```
+investigate -> plan -> ledger -> red tests -> implement -> verify -> review -> clear point -> accept
+```
+
+Two things you take part in: you approve the plan, and you run `/clear` when the
+orchestrator says so.
+
+### The ledger
+
+Every non-trivial task gets a file at `.claude/ledger.md` in its worktree. It
+holds the goal, the approved plan with a status per step, decisions and their
+reasons, and one line naming the exact next action. The orchestrator writes to
+it at every step boundary.
+
+The ledger exists because the conversation is expensive and the file is cheap.
+A session transcript is re-read on every turn. The ledger is read once, when a
+session starts.
+
+```markdown
+## Next step
+Delegate step 3 to opus-implementer at high effort: make the failing
+tests in src/sync/__tests__/queue.test.ts pass.
+```
+
+### `/clear` and `go`
+
+When one implement-and-review cycle finishes and more work remains, the
+orchestrator stops and says:
+
+> Clear point. Ledger updated. Run `/clear`, then say: go.
+
+You type `/clear`, then `go`. A hook reads the ledger into the fresh session, so
+the new session knows the goal, what is done, and what is next. It continues
+from there. You type nothing else.
+
+This is the core loop. A cold start from the ledger costs a few thousand tokens
+once. Carrying the finished cycle into the next one costs that on every turn for
+the rest of the task.
+
+[docs/usage.md](docs/usage.md) walks through a full task, with the ledger at
+each stage.
+
+## Documentation
+
+| Document | What it covers |
 |---|---|
-| *(none)* | Apply everything. Codex policy too, if `~/.codex/config.toml` exists. |
-| `--dry-run` | Print every change and write nothing. Run this first. |
-| `--no-codex` | Skip Codex, and the three agents that drive it. |
-| `--codex` | Require Codex; fail if its config is missing. |
-| `--no-argent` | Skip `ui-runner` and the UI automation rule. |
-| `--no-stacks` | Skip the stacked-PR rule. |
-| `--agents a,b,c` | Deploy only the agents named. |
-| `--models a,b` | Keep only these models in the routing rules. |
-| `--force` | Replace a file of your own without asking. |
-| `--revert` | Remove this repo's symlinks and restore the newest backup. |
-| `--help` | Print the flag list. |
-
-**Your own `~/.claude/CLAUDE.md` is never touched.** The contract ships as rule
-files in `~/.claude/rules/` instead, which Claude Code loads for every project.
-If deploy finds a `~/.claude/CLAUDE.md` left as a symlink by an older version of
-this repo, it retires that link and says so.
-
-For the few files deploy does own, if one is already a file of your own it asks
-before replacing it. With no terminal attached it refuses and tells you to use
-`--force`, so an unattended run cannot overwrite anything.
-
-To undo a deploy:
-
-```sh
-./deploy.sh --revert --dry-run
-./deploy.sh --revert
-```
-
-Revert removes only symlinks that point into this repo, then restores the newest
-backup directory. It restores each file as it was at that deploy, so local edits
-made since are lost. Older backups stay in `~/.claude/backups/`.
-
-## How the contract ships
-
-The orchestrator contract lives in `rules/`, one file per topic, and deploys into
-`~/.claude/rules/`. Rules there apply to every project on your machine, and load
-at the start of every session.
-
-Two of those files, and parts of others, are gated on tools and models you may
-not have. Gating uses YAML frontmatter for a whole file and HTML comments for a
-block. Claude Code reads only `paths` from a rule's frontmatter and strips the
-rest, and it strips block-level HTML comments before the content reaches the
-model, so the markers cost nothing.
-
-With no selection flags, the rule files are symlinked, so an edit in the repo is
-live at once. With `--models`, `--agents`, `--no-codex`, `--no-argent` or
-`--no-stacks`, deploy writes filtered copies instead, and says so; after that,
-repo edits need another deploy.
-
-> **Cowork.** A Cowork session on the desktop skips a symlinked `~/.claude/rules/`
-> file whose target is outside the session's working directory, so these rules do
-> not load there. Claude Code in the terminal is unaffected. This was already true
-> of the `~/.claude/CLAUDE.md` symlink that earlier versions of this repo created.
-
-## Models this setup expects
-
-Each agent pins a model in its frontmatter. Change that one line if your plan
-does not include the model named, or if you want a lane to run cheaper.
-
-| Agent | Model | Effort | Needs |
-|---|---|---|---|
-| `runner` | `claude-sonnet-5-5` | — | — |
-| `researcher` | `claude-opus-5-5` | medium | — |
-| `reviewer` | `claude-opus-5-5` | medium | — |
-| `opus-implementer` | `claude-opus-5-5` | high | — |
-| `ui-runner` | `claude-opus-5-5` | — | argent |
-| `sol-implementer` | `sonnet` | low | Codex, `gpt-6.1-sol` |
-| `astra-implementer` | `sonnet` | low | Codex, `gpt-6-astra` |
-| `astra-reviewer` | `sonnet` | low | Codex, `gpt-6-astra` |
-
-The last three are thin Claude wrappers. Their own model is cheap because the
-real work happens in Codex; what matters there is the Codex model behind them.
-
-The model rankings in the routing rule, and the cost figures in it, come from one
-operator's own eight-week corpus. Treat the ordering as a starting point and the
-absolute numbers as that operator's, not yours.
-
-To drop the models you do not have from the routing and fleet tables:
-
-```sh
-./deploy.sh --models opus-5.5,sonnet-5.5
-```
-
-## Environment
-
-The setup also depends on three environment variables. They are not part of any
-file this repo deploys, so add them to your shell profile yourself:
-
-```sh
-export CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=30   # let a session fill further before compacting
-export BASH_MAX_OUTPUT_LENGTH=10000         # cap a Bash result before it enters context
-export MAX_MCP_OUTPUT_TOKENS=10000          # cap an MCP result before it enters context
-```
-
-The first one matters most on a model with a 1M-token window. It trades a longer
-usable session for a higher context bill, so clearing between tasks becomes the
-main brake. The other two stop one verbose command from being re-read on every
-later turn of the session.
-
-## What the repo owns, and what it does not
-
-Owned outright, and symlinked into `~/.claude/`. Editing the repo deploys them:
-
-| Path | Live location |
-|---|---|
-| `rules/*.md` | `~/.claude/rules/` |
-| `ledger.template.md` | `~/.claude/ledger.template.md` |
-| `notes/model-routing-rationale.md` | `~/.claude/notes/` |
-| `agents/*.md` | `~/.claude/agents/` |
-
-Not owned. These two files hold state the apps write for themselves, so deploy
-merges a few keys into them and leaves the rest alone:
-
-| Policy file | Merged into | Keys asserted |
-|---|---|---|
-| `settings.policy.json` | `~/.claude/settings.json` | `statusLine`, `hooks`, `tui`, `skipWorkflowUsageWarning` |
-| `codex/policy.toml` | `~/.codex/config.toml` | `approval_policy`, `sandbox_mode` |
-
-Everything else in those files stays yours and stays local: Codex project trust
-levels, plugins, marketplaces, MCP servers, `permissions`, your model choice.
-None of it is stored here. Running `./deploy.sh` never removes it, and deploy
-prints what it left alone so you can check.
-
-Policy keys are merged one level down. The repo asserts two hook events,
-`PreCompact` and `SessionStart`. Any other hook event you have keeps working.
-Deploy prints what it applied and what it left alone, by path.
-
-Re-running deploy is safe. It changes only keys that differ, and backs up any
-file it rewrites into `~/.claude/backups/deploy-<timestamp>/`, under that file's
-own path relative to your home directory.
-
-## Tests
-
-Both write only to a temporary directory. Neither touches your own config.
-
-```sh
-python3 tools/test-apply-policy.py   # the policy merge
-python3 tools/test-deploy.py         # dry run, confirm, force, revert, agent selection
-```
-
-Run them after any change to `deploy.sh` or `tools/apply-policy.py`.
+| [docs/usage.md](docs/usage.md) | The daily loop, a worked example, the ledger, clear points |
+| [docs/installation.md](docs/installation.md) | Prerequisites, every flag, what deploy owns, revert |
+| [docs/fleet.md](docs/fleet.md) | The eight agents, their models, and the routing rules |
+| [docs/customizing.md](docs/customizing.md) | Changing models, gating rules, adding an agent, tests |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | Forking, what to send back, what must never be committed |
+| [DECISIONS.md](DECISIONS.md) | Why the setup is shaped this way |
 
 ## Layout
 
 ```
 rules/                    the orchestrator contract, one file per topic
 agents/                   the eight subagents
+docs/                     this documentation
 ledger.template.md        copied per task to .claude/ledger.md
 notes/                    rationale, not rules
 DECISIONS.md              why the setup is shaped this way
 settings.policy.json      Claude Code keys this repo asserts
 codex/policy.toml         Codex keys this repo asserts
-tools/apply-policy.py     the settings merge, used by deploy.sh
-tools/build-rules.py      the rule filter, used by deploy.sh
-tools/test-apply-policy.py
-tools/test-deploy.py
+tools/                    the settings merge and rule filter, plus their tests
 deploy.sh
 ```
 
-## Sharing it
-
-See `CONTRIBUTING.md` for how to take this repo, what to keep local, what to send
-back, and what must never be committed.
-
 ## Notes
 
-Agents you add under `~/.claude/agents/` that are not in the table above are
-left alone by deploy. Keep private or employer-specific agents there, not here.
+Agents you add under `~/.claude/agents/` that are not in this repo are left
+alone by deploy. Keep private or employer-specific agents there, not here.
 
 No secrets belong in this repo. Nothing here reads a key or a token.

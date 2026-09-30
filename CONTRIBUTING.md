@@ -29,7 +29,7 @@ Send back:
   the fix.
 - Rules that are true for everyone, not just for your project.
 - A missing gate: a rule that names a tool or model but carries no `needs:`.
-- Corrections to the README.
+- Corrections to the README or to anything under `docs/`.
 
 ## Never commit
 

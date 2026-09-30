@@ -147,6 +147,14 @@ revert() {
   fi
   if [ "$found" = 0 ]; then echo "nothing from this repo is in place"; fi
 
+  # core.hooksPath is global git config, not a file, so it sits outside the
+  # backup this function replays. Say so rather than leave it dangling.
+  if [ "$(git config --global core.hooksPath || true)" = "$GITHOOKS" ]; then
+    echo "hooks    core.hooksPath still points at $(short "$GITHOOKS")"
+    echo "         revert does not unset it; it is global git config, not a file"
+    echo "         to undo it fully: git config --global --unset core.hooksPath"
+  fi
+
   newest="$(ls -d "$CLAUDE"/backups/deploy-* 2>/dev/null | tail -1 || true)"
   if [ -z "$newest" ]; then echo "no backup to restore"; return 0; fi
   echo "backup   $(short "$newest")"

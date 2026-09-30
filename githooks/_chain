@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# Chaining git hook dispatcher.
+#
+# Installed as ~/.config/git/hooks/_chain, with one symlink per hook name.
+# A global core.hooksPath replaces a repository's own .git/hooks entirely, so
+# this dispatcher restores them: it applies the policy below, then hands over
+# to the repository's own hook of the same name when it has one.
+#
+# exec is deliberate. It preserves stdin, which pre-push and post-rewrite read,
+# and it propagates the repository hook's exit code unchanged, so a hook that
+# blocks a commit still blocks it.
+set -euo pipefail
+
+name="$(basename "$0")"
+
+# --- policy: remove AI attribution trailers ---------------------------------
+# Only trailer lines go. A body line that mentions Claude Code survives, and so
+# does a co-author who is a real person.
+if [ "$name" = "commit-msg" ] && [ -n "${1:-}" ] && [ -f "$1" ]; then
+  perl -0pi -e 's/^[ \t]*Co-[Aa]uthored-[Bb]y:.*(?:[Cc]laude|anthropic\.com).*\R//gm; s/^.*Generated with \[Claude Code\].*\R//gm; s/^[ \t]*Claude-Session:.*\R//gm; s/\R{3,}/\n\n/g; s/\s+\z/\n/' "$1"
+fi
+
+# --- hand over to the repository's own hook ---------------------------------
+# --git-common-dir, not --git-dir: inside a worktree the hooks live in the
+# main repository's directory, not the worktree's.
+common="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
+[ -n "$common" ] || exit 0
+own="$common/hooks/$name"
+[ -x "$own" ] || exit 0
+
+# Refuse to call ourselves, in case a repository points core.hooksPath here.
+here="$(cd "$(dirname "$0")" && pwd -P)"
+there="$(cd "$(dirname "$own")" && pwd -P)"
+[ "$here" != "$there" ] || exit 0
+
+exec "$own" "$@"

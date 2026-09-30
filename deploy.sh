@@ -7,6 +7,7 @@
 #   ./deploy.sh --codex          require Codex; fail if ~/.codex/config.toml is missing
 #   ./deploy.sh --no-argent      skip ui-runner and the UI automation rule
 #   ./deploy.sh --no-stacks      skip the stacked-PR rule (needs the gh stack extension)
+#   ./deploy.sh --no-githooks    skip the git hook guard; leave core.hooksPath alone
 #   ./deploy.sh --agents a,b,c   deploy only these agents
 #   ./deploy.sh --models a,b     keep only these models in the routing rules
 #   ./deploy.sh --force          replace a file of your own without asking
@@ -21,6 +22,13 @@
 # ~/.claude/rules/ file that points outside the session's working directory, so
 # these rules do not load there. Claude Code in the terminal is unaffected.
 #
+# Deploy also installs a chaining git hook dispatcher in ~/.config/git/hooks and
+# points core.hooksPath at it. Each hook strips AI attribution trailers from the
+# commit message, then hands over to the repository's own hook of the same name,
+# so nothing a project keeps in .git/hooks stops working. If core.hooksPath is
+# already set to something else, deploy leaves it alone and says so. --revert
+# removes the files but does not unset core.hooksPath.
+#
 # Deploy does NOT own ~/.claude/settings.json or ~/.codex/config.toml. Those hold
 # local state the apps write: project trust levels, plugins, marketplaces, MCP
 # servers, your model choice. It merges a few policy keys and leaves the rest.
@@ -32,12 +40,13 @@ RULES="$CLAUDE/rules"
 MANIFEST="$CLAUDE/.agent-config-manifest"
 BACKUP="$CLAUDE/backups/deploy-$(date +%Y-%m-%d-%H%M%S)"
 BUILD="$REPO/tools/build-rules.py"
+GITHOOKS="$HOME/.config/git/hooks"
 
 ALL_AGENTS=(researcher runner ui-runner opus-implementer sol-implementer astra-implementer astra-reviewer reviewer)
 CODEX_AGENTS=(sol-implementer astra-implementer astra-reviewer)
 ARGENT_AGENTS=(ui-runner)
 
-DRY=0; FORCE=0; REVERT=0; NO_CODEX=0; NO_ARGENT=0; NO_STACKS=0
+DRY=0; FORCE=0; REVERT=0; NO_CODEX=0; NO_ARGENT=0; NO_STACKS=0; NO_GITHOOKS=0
 PICK=""; MODELS=""
 ARGS=()
 
@@ -48,6 +57,7 @@ while [ $# -gt 0 ]; do
     --revert)    REVERT=1 ;;
     --no-argent) NO_ARGENT=1 ;;
     --no-stacks) NO_STACKS=1 ;;
+    --no-githooks) NO_GITHOOKS=1 ;;
     --agents)    shift; PICK="${1:-}"
                  if [ -z "$PICK" ]; then echo "--agents needs a comma-separated list" >&2; exit 1; fi ;;
     --agents=*)  PICK="${1#--agents=}" ;;
@@ -56,7 +66,7 @@ while [ $# -gt 0 ]; do
     --models=*)  MODELS="${1#--models=}" ;;
     --no-codex)  NO_CODEX=1; ARGS+=("$1") ;;
     --codex)     ARGS+=("$1") ;;
-    -h|--help)   sed -n '2,28p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help)   sed -n '2,34p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *)           echo "unknown flag: $1   (try --help)" >&2; exit 1 ;;
   esac
   shift
@@ -263,6 +273,24 @@ link "$REPO/notes/model-routing-rationale.md" "$CLAUDE/notes/model-routing-ratio
 for a in ${AGENTS[@]+"${AGENTS[@]}"}; do
   link "$REPO/agents/$a.md" "$CLAUDE/agents/$a.md"
 done
+
+# --------------------------------------------------------------- git hooks ---
+# A global core.hooksPath replaces a repository's own .git/hooks entirely, so
+# the dispatcher chains: policy first, then that repository's own hook.
+if [ "$NO_GITHOOKS" = 0 ]; then
+  link "$REPO/githooks/_chain" "$GITHOOKS/_chain"
+  for h in commit-msg prepare-commit-msg pre-commit pre-merge-commit pre-push pre-rebase post-checkout post-merge post-commit post-rewrite; do
+    link "$GITHOOKS/_chain" "$GITHOOKS/$h"
+  done
+  CUR="$(git config --global core.hooksPath || true)"
+  if [ -z "$CUR" ]; then
+    note "set      core.hooksPath -> $(short "$GITHOOKS")"
+    if [ "$DRY" = 0 ]; then git config --global core.hooksPath "$GITHOOKS"; fi
+  elif [ "$CUR" != "$GITHOOKS" ]; then
+    echo "hooks    core.hooksPath is $CUR -- left alone, so the guard is not active"
+    echo "         to use it: git config --global core.hooksPath $(short "$GITHOOKS")"
+  fi
+fi
 
 SKIPPED=()
 for a in "${ALL_AGENTS[@]}"; do

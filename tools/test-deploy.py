@@ -73,7 +73,7 @@ check("3c", "the repo does not create a CLAUDE.md",
       not (home / ".claude" / "CLAUDE.md").exists())
 
 # 4 -- narrowing generates instead, and drops what is not wanted
-r = run(home, "--no-argent", "--models", "opus-5.5,sonnet-5")
+r = run(home, "--no-argent", "--models", "opus-5.5,sonnet-5.5")
 got = rules_in(home)
 check(4, "--no-argent drops the UI automation rule", "80-ui-automation.md" not in got, str(got))
 check("4b", "a filtered deploy writes real files, not links",

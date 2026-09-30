@@ -242,3 +242,31 @@ deletion to make the dry run honest is what exposed it.
 **Two tests now cover it.** One asserts that a filtered deploy leaves the repo
 sources byte-identical. The other walks full, filtered, full, repeat, revert and
 checks the rule set at each step.
+
+## 2026-09-30 — New models: Sonnet 5.5, GPT-6.1 Sol, GPT-6 Luna
+
+**`runner` moves to `claude-sonnet-5-5`.** Released 28 Sep at Sonnet 5's rates
+($2/$10, cache read $0.20/M). Model string taken from the Anthropic models page.
+
+**`sol-implementer` moves to `gpt-6.1-sol`.** Released 29 Sep at $2/$10, cached
+$0.10/M. GPT-6 Sol (22 Sep) was skipped: same list price, twice the cached rate.
+Codex's model list no longer shows `gpt-5.6-sol`. Label prefix is now `gpt-6.1:`.
+
+**`gpt-6-luna` enters the routing table without a lane.** $0.10/$0.50. One route:
+trivial batch work on trusted text. It does not reopen the 2026-09-22 rejection of a
+model that classifies verification output.
+
+**Gate names changed.** `gpt-5.6-sol` → `gpt-6.1-sol`, `sonnet-5` → `sonnet-5.5`, new
+`gpt-6-luna`. A teammate who passes `--models sonnet-5` or `--models gpt-5.6-sol` now
+gets "unknown feature" and must use the new names.
+
+**Kept, on purpose.** The ban on untrusted input for Sol stays: 6.1's injection
+robustness is not published. Main-thread and judged lanes stay on Opus 5.5. Mythos
+5.1 is not added: access is limited to vetted US organisations.
+
+**Open: Astra implementer.** OpenAI claims 6.1 Sol matches Astra on DeepSWE v1.1 at a
+fifth of the cost. Trial it on hard well-specified tasks before moving that lane.
+
+**Prices verified this time**, for OpenAI too: launch posts and OpenRouter. Cached
+rates for Sol and Luna come from OpenRouter only. Plan coverage in Codex is assumed
+from the launch posts, not measured.

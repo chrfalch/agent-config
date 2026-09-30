@@ -20,20 +20,20 @@ Two marker forms, neither of which Claude Code ever sees:
 A block or file is kept when every feature it names is present.
 
 Used by deploy.sh. Also runnable:
-    python3 tools/build-rules.py --features opus-5.5,sonnet-5,reviewer,runner \
+    python3 tools/build-rules.py --features opus-5.5,sonnet-5.5,reviewer,runner \
         --src rules --out /tmp/rules
     python3 tools/build-rules.py --vocabulary
 """
 import argparse, pathlib, re, sys
 
-MODELS = ["gpt-5.6-sol", "sonnet-5", "opus-5.5", "gpt-6-astra", "fable-5"]
+MODELS = ["gpt-6-luna", "gpt-6.1-sol", "sonnet-5.5", "opus-5.5", "gpt-6-astra", "fable-5"]
 TOOLS = ["codex", "argent", "gh-stack"]
 AGENTS = ["researcher", "runner", "ui-runner", "opus-implementer",
           "sol-implementer", "astra-implementer", "astra-reviewer", "reviewer"]
 VOCABULARY = set(MODELS) | set(TOOLS) | set(AGENTS)
 
 # A model that exists only behind another tool.
-MODEL_REQUIRES = {"gpt-5.6-sol": "codex", "gpt-6-astra": "codex"}
+MODEL_REQUIRES = {"gpt-6-luna": "codex", "gpt-6.1-sol": "codex", "gpt-6-astra": "codex"}
 
 OPEN = re.compile(r"^<!--\s*needs:\s*(.+?)\s*-->\s*$")
 CLOSE = re.compile(r"^<!--\s*/needs\s*-->\s*$")

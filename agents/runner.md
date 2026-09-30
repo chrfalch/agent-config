@@ -9,7 +9,7 @@ description: >
   are cheaper run directly. You answer *what happened*; the `researcher` answers
   *why* — if the orchestrator needs a root cause traced in code, that's not you.
   Does not fix code beyond trivial mechanical retries.
-model: claude-sonnet-5
+model: claude-sonnet-5-5
 tools: Bash, Read, Grep, Glob
 ---
 

@@ -6,7 +6,7 @@
 | researcher        | opus-5.5    | medium          | *why* — root cause, relevant code surface  | fix, plan, edit                                       |
 <!-- /needs -->
 <!-- needs: runner -->
-| runner            | sonnet-5    | —               | *what happened* — build/test verdicts      | fix (beyond trivial retry), dump raw logs             |
+| runner            | sonnet-5.5  | —               | *what happened* — build/test verdicts      | fix (beyond trivial retry), dump raw logs             |
 <!-- /needs -->
 <!-- needs: ui-runner -->
 | ui-runner         | opus-5.5    | medium/high     | *what the UI did* — device flows, assertions | fix code, paste hierarchies or screenshots          |
@@ -15,7 +15,7 @@
 | opus-implementer  | opus-5.5    | medium/high/max | implement judged and taste work            | architecture, review                                  |
 <!-- /needs -->
 <!-- needs: sol-implementer -->
-| sol-implementer   | gpt-5.6-sol | routine only    | implement free volume work                 | hard tier, untrusted input, taste work, fill spec gaps |
+| sol-implementer   | gpt-6.1-sol | routine only    | implement free volume work                 | hard tier, untrusted input, taste work, fill spec gaps |
 <!-- /needs -->
 <!-- needs: astra-implementer -->
 | astra-implementer | gpt-6-astra | high/xhigh/max  | implement the hardest well-specified work  | routine work, taste work, untrusted input, fill spec gaps, `--full-auto` |

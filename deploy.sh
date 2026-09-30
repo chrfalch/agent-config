@@ -126,7 +126,7 @@ features() {
   local f=""
   local a
   for a in ${AGENTS[@]+"${AGENTS[@]}"}; do f="$f,$a"; done
-  if [ -n "$MODELS" ]; then f="$f,$MODELS"; else f="$f,gpt-5.6-sol,sonnet-5,opus-5.5,gpt-6-astra,fable-5"; fi
+  if [ -n "$MODELS" ]; then f="$f,$MODELS"; else f="$f,gpt-6-luna,gpt-6.1-sol,sonnet-5.5,opus-5.5,gpt-6-astra,fable-5"; fi
   if [ "$NO_CODEX"  = 0 ]; then f="$f,codex"; fi
   if [ "$NO_ARGENT" = 0 ]; then f="$f,argent"; fi
   if [ "$NO_STACKS" = 0 ]; then f="$f,gh-stack"; fi

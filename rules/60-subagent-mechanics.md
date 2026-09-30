@@ -6,7 +6,7 @@
 <!-- needs: codex -->
 - OpenAI models run only through the Codex CLI (`codex exec` / `codex review`).
   `~/.codex/config.toml` sets its own default model, and it is not sol. Always
-  pass `-m` explicitly: `-m gpt-5.6-sol`, or `-m gpt-6-astra --reasoning-effort
+  pass `-m` explicitly: `-m gpt-6.1-sol`, or `-m gpt-6-astra --reasoning-effort
   high|xhigh|max` for Astra. Never rely on the config default. Read-only work:
   `codex exec -s read-only` with a self-contained prompt.
 <!-- /needs -->
@@ -23,7 +23,7 @@
 <!-- needs: codex -->
 - OpenAI models in workflows need a wrapper: thin Claude agent, `model: 'sonnet',
   effort: 'low'`, writes a self-contained Codex prompt, runs it via Bash, returns a
-  `schema` report. Label with the engine prefix — `gpt-5.6:` or `gpt-6:`, e.g.
+  `schema` report. Label with the engine prefix — `gpt-6.1:` for Sol, `gpt-6:` for Astra and Luna, e.g.
   `{label: 'gpt-6:astra-impl-sync-engine'}` — the UI shows only the wrapper's model.
 <!-- /needs -->
 <!-- needs: codex -->
@@ -34,7 +34,7 @@
 - Parallel Codex implementers use `isolation: 'worktree'`.
 <!-- /needs -->
 <!-- needs: codex -->
-- Workflow budgets count Claude tokens only. Sol is free; track Astra spend via
+- Workflow budgets count Claude tokens only. Sol and Luna are plan-covered; track Astra spend via
   Codex thread metadata (`model` / `reasoningEffort`) until the plan allowance is
   confirmed.
 <!-- /needs -->

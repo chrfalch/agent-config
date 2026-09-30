@@ -91,12 +91,12 @@ does not include the model named, or if you want a lane to run cheaper.
 
 | Agent | Model | Effort | Needs |
 |---|---|---|---|
-| `runner` | `claude-sonnet-5` | — | — |
+| `runner` | `claude-sonnet-5-5` | — | — |
 | `researcher` | `claude-opus-5-5` | medium | — |
 | `reviewer` | `claude-opus-5-5` | medium | — |
 | `opus-implementer` | `claude-opus-5-5` | high | — |
 | `ui-runner` | `claude-opus-5-5` | — | argent |
-| `sol-implementer` | `sonnet` | low | Codex, `gpt-5.6-sol` |
+| `sol-implementer` | `sonnet` | low | Codex, `gpt-6.1-sol` |
 | `astra-implementer` | `sonnet` | low | Codex, `gpt-6-astra` |
 | `astra-reviewer` | `sonnet` | low | Codex, `gpt-6-astra` |
 
@@ -110,7 +110,7 @@ absolute numbers as that operator's, not yours.
 To drop the models you do not have from the routing and fleet tables:
 
 ```sh
-./deploy.sh --models opus-5.5,sonnet-5
+./deploy.sh --models opus-5.5,sonnet-5.5
 ```
 
 ## Environment

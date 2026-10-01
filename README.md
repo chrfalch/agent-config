@@ -33,13 +33,19 @@ place where planning, routing, and review happen.
 ```sh
 git clone https://github.com/chrfalch/agent-config.git
 cd agent-config
-./deploy.sh --dry-run   # print every change, write nothing
-./deploy.sh
+bin/deploy --dry-run   # print every change, write nothing
+bin/deploy
 ```
 
-You need Claude Code, `python3` 3.11 or later, and `bash`. Codex CLI, the
-argent MCP server, and the `gh stack` extension are optional; deploy has a flag
-to skip each one.
+You need Claude Code, Node.js 20.12 or later, and `bash`. Deploy runs on Node.
+`bash` runs the git hook dispatcher that deploy installs. Python is no longer
+needed. The first run of `bin/deploy` runs `npm ci`, which installs
+dependencies into `node_modules` and writes the npm cache in `~/.npm`. Codex
+CLI, the argent MCP server, and the `gh stack` extension are optional; deploy
+has a flag to skip each one.
+
+Run `bin/deploy` with no flags in a terminal to start an interactive wizard.
+Flags work as before and skip the wizard.
 
 Then add three variables to your shell profile:
 
@@ -66,7 +72,7 @@ so the shell variables load, then start Claude Code in any repo.
    `Start a new task: …` with a sentence describing it. You should get a plan
    and a question asking you to approve it. Answer `yes` and follow along.
 
-If step 1 shows none of these agents, run `./deploy.sh --dry-run` again and
+If step 1 shows none of these agents, run `bin/deploy --dry-run` again and
 read what it would change.
 
 ## Using it
@@ -157,7 +163,7 @@ DECISIONS.md              why the setup is shaped this way
 settings.policy.json      Claude Code keys this repo asserts
 codex/policy.toml         Codex keys this repo asserts
 tools/                    the settings merge and rule filter, plus their tests
-deploy.sh
+bin/deploy
 ```
 
 ## Notes

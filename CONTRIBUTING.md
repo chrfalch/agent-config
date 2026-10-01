@@ -10,7 +10,7 @@ agents. You get your own history and you pull fixes when you want them.
 **Clone it** if you expect to stay close and send changes back. Keep your local
 differences on a branch, and rebase that branch when `main` moves.
 
-Either way, run `./deploy.sh --dry-run` before your first deploy.
+Either way, run `bin/deploy --dry-run` before your first deploy.
 
 ## What to change locally, and what to send back
 
@@ -25,8 +25,8 @@ Change locally, and do not send back:
 
 Send back:
 
-- Bugs in `deploy.sh` or `tools/apply-policy.py`, with a test that fails before
-  the fix.
+- Bugs in `tools/deploy.ts` or `tools/apply-policy.ts`, with a test that fails
+  before the fix.
 - Rules that are true for everyone, not just for your project.
 - A missing gate: a rule that names a tool or model but carries no `needs:`.
 - Corrections to the README or to anything under `docs/`.
@@ -49,12 +49,12 @@ into the live files and prints everything it left alone.
 ## Before you open a pull request
 
 ```sh
-python3 tools/test-apply-policy.py
-python3 tools/test-deploy.py
-bash -n deploy.sh
+npm test
+npm run typecheck
+node --check bin/deploy
 ```
 
-Both tests write only to a temporary directory.
+The tests write only to a temporary directory.
 
 A change to what deploy writes needs a test that proves the change, and proves
 that an existing config survives it. The merge is the dangerous part: a teammate
@@ -85,6 +85,6 @@ A block inside a file:
 <!-- /needs -->
 ```
 
-`python3 tools/build-rules.py --vocabulary` lists the names a gate may use.
+`npx tsx tools/build-rules.ts --vocabulary` lists the names a gate may use.
 
 Figures measured from one person's sessions should say so.

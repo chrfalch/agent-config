@@ -2,7 +2,13 @@
 
 ## Prerequisites
 
-Required: Claude Code, `python3` 3.11 or later (for `tomllib`), and `bash`.
+Required: Claude Code, Node.js 20.12 or later, and `bash`. Deploy runs on Node.
+`bash` runs the git hook dispatcher that deploy installs. Python is no longer
+needed.
+
+The first run of `bin/deploy` runs `npm ci`. It installs dependencies into
+`node_modules` and writes the npm cache in `~/.npm`. That first run needs
+network access.
 
 Optional. Deploy works without any of them, and each has a flag that removes the
 parts that depend on it:
@@ -18,12 +24,17 @@ parts that depend on it:
 ```sh
 git clone <this repo>
 cd agent-config
-./deploy.sh --dry-run   # print every change, write nothing
-./deploy.sh
+bin/deploy --dry-run   # print every change, write nothing
+bin/deploy
 ```
 
 Run the dry run first. It tells you which files would be linked, which policy
 keys would change, and whether any file of your own would be replaced.
+
+Run `bin/deploy` with no flags in a terminal to start an interactive wizard.
+You choose deploy or revert, then the components, agents and models. The wizard
+shows a dry-run preview and asks you to confirm before it writes anything. Flags
+work as before and skip the wizard.
 
 | Flag | Effect |
 |---|---|
@@ -42,9 +53,9 @@ keys would change, and whether any file of your own would be replaced.
 Examples:
 
 ```sh
-./deploy.sh --no-codex                    # Claude-only fleet
-./deploy.sh --models opus-5.5,sonnet-5.5  # drop models your plan lacks
-./deploy.sh --agents runner,reviewer      # a minimal two-agent setup
+bin/deploy --no-codex                    # Claude-only fleet
+bin/deploy --models opus-5.5,sonnet-5.5  # drop models your plan lacks
+bin/deploy --agents runner,reviewer      # a minimal two-agent setup
 ```
 
 ## Environment variables
@@ -94,7 +105,7 @@ keys into them and leaves the rest alone:
 
 Everything else in those files stays yours and stays local: Codex project trust
 levels, plugins, marketplaces, MCP servers, `permissions`, your model choice.
-None of it is stored here. Running `./deploy.sh` never removes it, and deploy
+None of it is stored here. Running `bin/deploy` never removes it, and deploy
 prints what it left alone so you can check.
 
 Policy keys are merged one level down. The repo asserts two hook events,
@@ -136,8 +147,8 @@ Deploy asserts two hook events in `~/.claude/settings.json`:
 ## Undoing a deploy
 
 ```sh
-./deploy.sh --revert --dry-run
-./deploy.sh --revert
+bin/deploy --revert --dry-run
+bin/deploy --revert
 ```
 
 Revert removes only symlinks that point into this repo, then restores the newest
@@ -146,11 +157,12 @@ made since are lost. Older backups stay in `~/.claude/backups/`.
 
 ## Tests
 
-Both write only to a temporary directory. Neither touches your own config.
+The tests write only to a temporary directory. They never touch your own config.
 
 ```sh
-python3 tools/test-apply-policy.py   # the policy merge
-python3 tools/test-deploy.py         # dry run, confirm, force, revert, agent selection
+npm test            # policy merge, dry run, confirm, force, revert, agent selection, wizard
+npm run typecheck
 ```
 
-Run them after any change to `deploy.sh` or `tools/apply-policy.py`.
+Run them after any change to `bin/deploy`, `tools/deploy.ts` or
+`tools/apply-policy.ts`.

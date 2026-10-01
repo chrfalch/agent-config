@@ -1,0 +1,43 @@
+#!/usr/bin/env node
+// CommonJS through bin/package.json: Node 18 before 18.19 and Node 20 before 20.10 refuse an
+// extensionless file in a "type": "module" package before running it, so the version check
+// would never run.
+'use strict';
+const { spawnSync } = require('node:child_process');
+const { existsSync } = require('node:fs');
+const path = require('node:path');
+const { pathToFileURL } = require('node:url');
+
+// 20.12 for @clack/prompts (node:util styleText); tsx alone needs 20.6 (module.register).
+const [major, minor] = process.versions.node.split('.').map(Number);
+if (major < 20 || (major === 20 && minor < 12)) {
+  console.error('deploy: Node.js >=20.12 is required');
+  process.exit(1);
+}
+
+// argv[1] is the path the caller used; __dirname is its realpath. Links into the repo
+// and the CLAUDE.md retirement check must use the caller's path.
+const repo = path.dirname(path.dirname(process.argv[1]));
+process.chdir(repo);
+
+// npm writes this file last, so its absence also catches an interrupted install.
+if (!existsSync(path.join(repo, 'node_modules/.package-lock.json'))) {
+  const npm = spawnSync('npm', ['ci', '--silent'], { stdio: ['inherit', process.stderr, 'inherit'] });
+  if (npm.error) {
+    console.error(`deploy: ${npm.error.message}`);
+    process.exit(1);
+  }
+  if (npm.status !== 0) process.exit(npm.status ?? 1);
+}
+
+process.env.DEPLOY_REPO = repo;
+import('tsx/esm/api')
+  .then(({ register }) => {
+    register();
+    return import(pathToFileURL(path.join(repo, 'tools/deploy.ts')).href);
+  })
+  .then(({ main }) => main(process.argv.slice(2)))
+  .catch((error) => {
+    console.error(`deploy: ${error.message}`);
+    process.exit(1);
+  });

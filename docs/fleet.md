@@ -41,7 +41,7 @@ does not include the model named, or if you want a lane to run cheaper.
 To drop the models you do not have from the routing and fleet tables:
 
 ```sh
-./deploy.sh --models opus-5.5,sonnet-5.5
+bin/deploy --models opus-5.5,sonnet-5.5
 ```
 
 ## Routing

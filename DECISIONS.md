@@ -287,3 +287,36 @@ mechanics), and `customizing.md` (models, gates, adding rules and agents).
 `docs/` rather than flat files at the root, so the root stays readable. The rule
 files remain the contract; `docs/` explains it to a person and is never loaded
 into a session.
+
+## 2026-10-01 — Deploy runs on Node, not bash and Python
+
+**The problem.** Deploy needed two runtimes: bash for the deploy script and
+Python for `tools/*.py`. Python had to be 3.11 or later, for `tomllib`. There
+was no interactive mode, so a new user had to read the flag table first.
+
+**TypeScript on Node 20.12 or later, run through `tsx`.** Not Node's native type
+stripping and not Bun: `tsx` runs on Node 20, and native type stripping needs a
+newer Node. The floor is 20.12 because `@clack/prompts` imports `styleText` from
+`node:util`, which Node added in 20.12. `tsx` alone needs 20.6, for
+`module.register`. One floor covers deploy and the wizard.
+The wizard uses `@clack/prompts`, not Ink, because it is lighter.
+`package-lock.json` is committed. Nothing is published to npm.
+
+**`bin/deploy` is the entry point.** It is a plain JavaScript file. It checks
+the Node version, runs `npm ci` when the install is missing, and loads
+`tools/deploy.ts` through `tsx`. It replaced `deploy.sh`, a bash shim that did
+the same. There are no existing users who need the old name, and the change
+drops bash as a launcher. `bin/package.json` makes the file CommonJS. Node 18
+before 18.19 and Node 20 before 20.10 refuse an extensionless ES module file
+before they run it, so the version check could not print its error.
+
+**The contract.** Flags, stdout and exit codes are byte-identical to the bash
+version. A differential run against 17ad18f checked this. Stderr from a crash is
+not part of the contract. Tool usage text now names the `.ts` files.
+
+**Accepted differences.** A dry run no longer creates `~/.claude/rules`. Under a
+`HOME` with a trailing slash, hook paths now use a single slash. Help text and
+the wizard name `bin/deploy`.
+
+**Cost.** The first run of `bin/deploy` runs `npm ci`, so it needs network
+access.

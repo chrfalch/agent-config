@@ -18,7 +18,7 @@ to run cheaper. Do not send that change back upstream; it is yours.
 To drop models you do not have from the routing and fleet tables instead:
 
 ```sh
-./deploy.sh --models opus-5.5,sonnet-5.5
+bin/deploy --models opus-5.5,sonnet-5.5
 ```
 
 That writes filtered copies of the rule files rather than symlinks, so later
@@ -33,7 +33,7 @@ employer-specific agents there, not in this repo.
 To deploy only some of this repo's agents:
 
 ```sh
-./deploy.sh --agents runner,reviewer,opus-implementer
+bin/deploy --agents runner,reviewer,opus-implementer
 ```
 
 ## Write a rule
@@ -75,12 +75,12 @@ the content reaches the model.
 To see which names a gate may use:
 
 ```sh
-python3 tools/build-rules.py --vocabulary
+npx tsx tools/build-rules.ts --vocabulary
 ```
 
 ## Change what deploy writes
 
-`deploy.sh` and `tools/apply-policy.py` are the dangerous part. A teammate may
+`tools/deploy.ts` and `tools/apply-policy.ts` are the dangerous part. A teammate may
 have hooks, permissions and a model choice that this repo knows nothing about,
 and none of it may be lost.
 
@@ -88,9 +88,9 @@ A change to what deploy writes needs a test that proves the change, and proves
 that an existing config survives it.
 
 ```sh
-python3 tools/test-apply-policy.py
-python3 tools/test-deploy.py
-bash -n deploy.sh
+npm test
+npm run typecheck
+node --check bin/deploy
 ```
 
 Both tests write only to a temporary directory.

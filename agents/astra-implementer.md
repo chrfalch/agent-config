@@ -36,8 +36,8 @@ does not belong in this agent.
    report of files changed, deviations, and verification to a known report file
    path. Do not add "verify your work" — Astra self-verifies.
 
-2. **Run via Bash**: `codex exec -m gpt-6-astra --reasoning-effort <effort>`,
-   with the effort from the delegation. Always pass `-m`; the Codex config
+2. **Run via Bash**: `codex exec -m gpt-6-astra -c model_reasoning_effort=<effort>`
+   — the effort comes from the delegation. Always pass `-m`; the Codex config
    default is a different model. Keep the session's approval policy at
    `on-request`. Do not pass `--full-auto` or `approval_policy = "never"`.
 

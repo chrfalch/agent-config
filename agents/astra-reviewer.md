@@ -34,10 +34,11 @@ review, any constraints, and the Claude reviewer's verdict. Run Astra at
    prove the criterion). Ask for severity on each finding: blocker, should-fix,
    or nit.
 
-2. **Run via Bash**: `codex review -m gpt-6-astra --reasoning-effort high`, or
-   `codex exec -s read-only -m gpt-6-astra ...` when `codex review` does not fit
-   the shape. Always run
-   read-only. Astra must not edit files during a review.
+2. **Run via Bash**: `codex review -c model="gpt-6-astra" -c
+   model_reasoning_effort=high`, or `codex exec -s read-only -m gpt-6-astra ...`
+   when `codex review` does not fit the shape. `codex review` accepts neither
+   `-m` nor `-s`: set the model with `-c`, and use the `codex exec` form when the
+   sandbox must be pinned read-only. Astra must not edit files during a review.
 
 3. **Compare against the Claude verdict.** After Astra returns, list where the two
    reviews agree and where they disagree. Do not resolve disagreements; the

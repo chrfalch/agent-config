@@ -1,0 +1,17 @@
+#!/bin/bash
+# Prints the single derived-data folder for this worktree and configuration.
+# Usage: cc-dd-path <configuration>      example: cc-dd-path Debug-sim
+set -eu
+
+config="${1:-}"
+if [ -z "$config" ]; then
+  echo "usage: cc-dd-path <configuration>" >&2
+  exit 1
+fi
+
+root=$(git rev-parse --show-toplevel)
+hash=$(printf '%s' "$root" | shasum | cut -c1-6)
+path="$HOME/Library/Developer/Xcode/DerivedData/cc-$(basename "$root")-$hash-$config"
+
+mkdir -p "$path"
+printf '%s\n' "$path"

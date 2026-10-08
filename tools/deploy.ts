@@ -236,6 +236,7 @@ export function deploy(opts: DeployOptions): number {
     console.log('rules    generated, not linked: edits in the repo need another deploy');
   }
   link(path.join(REPO, 'ledger.template.md'), path.join(claude, 'ledger.template.md'));
+  for (const hook of readdirSync(path.join(REPO, 'hooks')).filter((f) => f.endsWith('.sh')).sort()) link(path.join(REPO, 'hooks', hook), path.join(claude, 'hooks', hook));
   link(path.join(REPO, 'notes/model-routing-rationale.md'), path.join(claude, 'notes/model-routing-rationale.md'));
   for (const agent of agents) link(path.join(REPO, 'agents', `${agent}.md`), path.join(claude, 'agents', `${agent}.md`));
 

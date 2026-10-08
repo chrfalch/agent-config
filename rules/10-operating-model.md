@@ -147,6 +147,12 @@ failing tests, run them, show the failure" step one), and the effort level
 **state "concise"** — Opus 5's length follows prompting, not effort. Reports are
 agent-to-agent: layer 2 only (see Writing for humans).
 
+A commit a subagent made is not yours to amend. Your transcript does not show
+it being created, so `git commit --amend` on it reads as rewriting a commit
+from before the session, and auto mode denies it. Make a follow-up commit, or
+ask the operator first. The same holds for any HEAD you did not create in this
+transcript.
+
 ## Compact Instructions
 
 The ledger is the state, and the Checkpoint gate says what goes in it. Preserve

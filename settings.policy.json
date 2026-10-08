@@ -19,6 +19,17 @@
         ]
       }
     ],
+    "PermissionDenied": [
+      {
+        "matcher": "Bash|Read|Grep|Glob|NotebookRead",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$HOME\"/.claude/hooks/denied-read-retry.sh"
+          }
+        ]
+      }
+    ],
     "PreCompact": [
       {
         "hooks": [

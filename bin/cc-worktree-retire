@@ -1,0 +1,64 @@
+#!/bin/bash
+# Archives a worktree's task ledger, then removes the worktree.
+# Usage: cc-worktree-retire <worktree-path> [git worktree remove flags]
+set -eu
+
+arg="${1:-}"
+if [ -z "$arg" ]; then
+  echo "usage: cc-worktree-retire <worktree-path> [--force]" >&2
+  exit 1
+fi
+shift
+
+wt=$(cd "$arg" 2>/dev/null; pwd)
+if [ -z "$wt" ]; then
+  echo "not a directory: $arg" >&2
+  exit 1
+fi
+
+common=$(cd "$wt" 2>/dev/null; cd "$(git rev-parse --git-common-dir 2>/dev/null)" 2>/dev/null; pwd)
+if [ -z "$common" ]; then
+  echo "not a git worktree: $wt" >&2
+  exit 1
+fi
+
+main=$(dirname "$common")
+repo=$(basename "$main")
+branch=$(git -C "$wt" branch --show-current)
+slug="${branch##*/}"
+if [ -z "$slug" ]; then
+  slug=$(basename "$wt")
+fi
+
+ledger="$wt/.claude/ledger.md"
+if [ -f "$ledger" ]; then
+  archive="$HOME/.claude/ledger-archive/$repo"
+  mkdir -p "$archive"
+  dest=""
+  for old in "$archive"/*.md; do
+    if [ -f "$old" ] && cmp -s "$ledger" "$old"; then
+      dest="$old"
+      echo "already archived $dest"
+      break
+    fi
+  done
+  if [ -z "$dest" ]; then
+    dest="$archive/$(date +%F)-$slug.md"
+    n=2
+    while [ -e "$dest" ]; do
+      dest="$archive/$(date +%F)-$slug-$n.md"
+      n=$((n + 1))
+    done
+    cp "$ledger" "$dest"
+    if ! cmp -s "$ledger" "$dest"; then
+      echo "copy does not match the ledger: $dest" >&2
+      exit 1
+    fi
+    echo "archived $dest"
+  fi
+else
+  echo "no ledger at $ledger, nothing to archive"
+fi
+
+git -C "$main" worktree remove "$@" "$wt"
+echo "removed  $wt"

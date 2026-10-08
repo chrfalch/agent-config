@@ -108,7 +108,35 @@ transcript is re-billed on every turn; the ledger is read once per fresh session
   missing something, resume the old session to recover it, write it to the
   ledger, and clear again. Do not stay in the old session to finish the work.
 - Anything that would still be true next week goes in a rule file or auto memory,
-  not the ledger. The ledger dies with the branch.
+  not the ledger. The ledger outlives the branch: archive it before the
+  worktree goes.
+
+### Archiving a ledger
+
+Absolute. A worktree is disposable. Its ledger is the record of the task.
+
+- Retire a worktree with `bin/cc-worktree-retire <worktree> [--force]` from the
+  agent-config repo. It copies `.claude/ledger.md` to
+  `~/.claude/ledger-archive/<repo>/<YYYY-MM-DD>-<slug>.md`, checks the copy,
+  then runs `git worktree remove`. Running it twice archives once.
+- `<repo>` is the main checkout's directory name. `<slug>` is the branch name
+  without its owner prefix.
+- Never remove a worktree, and never delete its directory, while its ledger is
+  unarchived. A PreToolUse hook denies `git worktree remove` and `rm -rf` when
+  it sees an unarchived ledger under a path in the command.
+- Archive the ledger as it stands. Do not edit, shorten or summarise it first.
+
+To find an archived ledger later:
+
+```
+ls -1t ~/.claude/ledger-archive/*/*.md | head -20
+grep -rn 'branch: .*<name>' ~/.claude/ledger-archive
+grep -rl '<term>' ~/.claude/ledger-archive
+grep -rA2 '^## Goal' ~/.claude/ledger-archive/<repo>
+```
+
+Search by branch first; that is what you remember. Each archived file keeps its
+own Location section, so the worktree path, branch and base commit stay in it.
 
 ### Delegation contract
 Every delegation includes: spec, explicit acceptance criteria, file paths,

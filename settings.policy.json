@@ -11,6 +11,10 @@
           {
             "type": "command",
             "command": "\"$HOME\"/.claude/hooks/derived-data-gate.sh"
+          },
+          {
+            "type": "command",
+            "command": "\"$HOME\"/.claude/hooks/worktree-gate.sh"
           }
         ]
       }
@@ -27,11 +31,16 @@
     ],
     "SessionStart": [
       {
+        "matcher": "startup|resume|clear|fork",
         "hooks": [
           {
             "type": "command",
             "command": "\"$HOME\"/.claude/hooks/deploy-drift.sh"
-          },
+          }
+        ]
+      },
+      {
+        "hooks": [
           {
             "type": "command",
             "command": "L=$(ls .claude/ledger.md .claude/worktrees/*/.claude/ledger.md .worktrees/*/.claude/ledger.md 2>/dev/null); N=$(echo \"$L\" | grep -c .); if [ \"$N\" = 1 ]; then echo \"A task ledger exists at $L. Contents follow. If it has open steps, continue from Next step without re-verifying finished steps.\"; echo; cat \"$L\"; elif [ \"$N\" -gt 1 ]; then echo \"$N task ledgers exist. Summary of each follows. If asked what we are working on, answer from this. Before continuing one, ask which, then read its full ledger.\"; for f in $L; do echo; echo \"=== $f\"; awk '/^## Goal/{g=1;next} /^## Location/{g=0} /^## Next step/{n=1;next} /^## /{n=0} g||n{print}' \"$f\"; done; fi"

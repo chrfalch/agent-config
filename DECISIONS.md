@@ -320,3 +320,21 @@ the wizard name `bin/deploy`.
 
 **Cost.** The first run of `bin/deploy` runs `npm ci`, so it needs network
 access.
+
+## 2026-10-09 — Ledgers are found through git
+
+**Ledger discovery asks git, not a fixed layout.** The SessionStart and
+PreCompact hooks used fixed globs: `.claude/worktrees/*` and `.worktrees/*`.
+They did not find worktrees in a sibling folder such as `expo-worktrees/`, so a
+session did not see those tasks. The globs were extended once before, for
+`.worktrees/`. Now `hooks/ledger-list.sh` reads `git worktree list`, so it
+finds a worktree in any location. Both hooks call the same script, so they
+cannot disagree.
+
+**No rule about where worktrees live.** If all worktrees were under `.claude/`,
+the old globs would work. But Jest can collect zero tests under `.claude/` and
+still exit 0 (see `rules/10-operating-model.md`). That trades a visible listing
+gap for a hidden test gap.
+
+**A linked worktree sees only its own ledger.** A session that starts in a
+worktree is almost always for that task. The main checkout shows all ledgers.

@@ -35,7 +35,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "L=$(ls -t .claude/ledger.md .claude/worktrees/*/.claude/ledger.md .worktrees/*/.claude/ledger.md 2>/dev/null); N=$(echo \"$L\" | grep -c .); if [ \"$N\" = 1 ]; then echo \"Task ledger at $L is authoritative. Preserve its path and its Next step section verbatim.\"; elif [ \"$N\" -gt 1 ]; then echo \"$N task ledgers exist (most recently modified first). Preserve the path of the ledger this session is working on, and its Next step section verbatim:\"; echo \"$L\"; fi"
+            "command": "\"$HOME\"/.claude/hooks/ledger-list.sh pre-compact"
           }
         ]
       }
@@ -54,7 +54,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "L=$(ls .claude/ledger.md .claude/worktrees/*/.claude/ledger.md .worktrees/*/.claude/ledger.md 2>/dev/null); N=$(echo \"$L\" | grep -c .); if [ \"$N\" = 1 ]; then echo \"A task ledger exists at $L. Contents follow. If it has open steps, continue from Next step without re-verifying finished steps.\"; echo; cat \"$L\"; elif [ \"$N\" -gt 1 ]; then echo \"$N task ledgers exist. Summary of each follows. If asked what we are working on, answer from this. Before continuing one, ask which, then read its full ledger.\"; for f in $L; do echo; echo \"=== $f\"; awk '/^## Goal/{g=1;next} /^## Location/{g=0} /^## Next step/{n=1;next} /^## /{n=0} g||n{print}' \"$f\"; done; fi"
+            "command": "\"$HOME\"/.claude/hooks/ledger-list.sh"
           }
         ]
       }

@@ -9,6 +9,9 @@ design, copy. Rationale and benchmarks: `~/.claude/notes/model-routing-rationale
 <!-- needs: gpt-6-luna -->
 | gpt-6-luna  | 8    | 4            | —     | Codex plan; trivial batch only         |
 <!-- /needs -->
+<!-- needs: haiku-5.5 -->
+| haiku-5.5   | 8    | 5            | —     | trusted text only; >100k prompt = 5x   |
+<!-- /needs -->
 <!-- needs: gpt-6.1-sol -->
 | gpt-6.1-sol | 7    | 8            | 6     | Codex plan; injection not measured     |
 <!-- /needs -->
@@ -55,6 +58,11 @@ Rules:
 - Trivial batch work on trusted text (classify, extract, short summaries) →
   `codex exec -s read-only -m gpt-6-luna`. Never for code, review or verdicts.
 <!-- /needs -->
+<!-- needs: haiku-5.5 -->
+- Same trivial batch work when gpt-6-luna is not available → a subagent with
+  `model: 'claude-haiku-5-5'`, effort low or medium. Never for code, review or
+  verdicts. Keep each prompt under 100k tokens: past that, every rate is 5x.
+<!-- /needs -->
 <!-- needs: researcher -->
 - Deep investigation that needs session state or iteration → `researcher`.
 <!-- /needs -->
@@ -67,4 +75,5 @@ Rules:
 <!-- /needs -->
 - ⚠ Every model here **expands scope and fills gaps** if allowed. Complete specs;
   scope review is mandatory. Never add "verify your work".
-- Never use Haiku.
+- Never use Haiku 4.5. Never use Haiku 5.5 for code, review, verdicts or
+  untrusted input.

@@ -10,7 +10,7 @@ description: >
   prefix (e.g. {label: 'gpt-6:astra-review-sync-engine'}). NOT a replacement for
   `reviewer` — run `reviewer` first. NOT for routine changes; a second review is
   only worth paying for on work where a missed defect is expensive.
-model: sonnet
+model: claude-haiku-5-5
 effort: low
 tools: Read, Bash, Grep, Glob
 ---

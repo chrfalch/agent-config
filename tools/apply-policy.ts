@@ -51,9 +51,39 @@ function requireObject(value: JsonValue): JsonObject {
   return value;
 }
 
+type MergeChild = (key: string, liveValue: JsonValue | undefined, policyValue: JsonValue) => JsonValue;
+
+const takePolicy: MergeChild = (_key, _liveValue, policyValue) => policyValue;
+
+// Earlier deploys wrote these events as inline scripts, so they are replaced
+// whole rather than merged entry by entry.
+const ASSERTED_HOOK_EVENTS = new Set(['PreCompact', 'SessionStart']);
+
+// Entries an earlier policy wrote that the current one no longer writes
+// identically. When a hook entry is changed, renamed or removed, add its old
+// form here, or upgraded settings keep it beside the new one.
+const RETIRED_HOOK_ENTRIES = new Map<string, JsonValue[]>(
+  Object.entries({
+    PreToolUse: [
+      // ada53e6
+      { matcher: 'Bash', hooks: [{ type: 'command', command: '"$HOME"/.claude/hooks/derived-data-gate.sh' }] },
+    ],
+  }).map(([event, entries]) => [event, entries.map((entry) => parsePythonJson(JSON.stringify(entry)))]),
+);
+
+const mergeHookEvent: MergeChild = (event, liveEntries, policyEntries) => {
+  if (ASSERTED_HOOK_EVENTS.has(event) || !Array.isArray(liveEntries) || !Array.isArray(policyEntries)) {
+    return policyEntries;
+  }
+  const owned = [...policyEntries, ...(RETIRED_HOOK_ENTRIES.get(event) ?? [])];
+  const isOwned = (entry: JsonValue): boolean => owned.some((ownedEntry) => jsonEqual(entry, ownedEntry));
+  return [...liveEntries.filter((entry) => !isOwned(entry)), ...policyEntries];
+};
+
 function mergeKey(
   liveValue: JsonValue | undefined,
   policyValue: JsonValue,
+  mergeChild = takePolicy,
 ): [JsonValue, string[], string[]] {
   if (!(liveValue instanceof JsonObject && policyValue instanceof JsonObject)) {
     return [policyValue, jsonEqual(liveValue, policyValue) ? [] : [''], []];
@@ -62,8 +92,9 @@ function mergeKey(
   for (const [key, value] of liveValue.entries) merged.entries.set(key, value);
   const changed: string[] = [];
   for (const [key, value] of policyValue.entries) {
-    if (!jsonEqual(merged.entries.get(key), value)) changed.push(key);
-    merged.entries.set(key, value);
+    const mergedValue = mergeChild(key, merged.entries.get(key), value);
+    if (!jsonEqual(merged.entries.get(key), mergedValue)) changed.push(key);
+    merged.entries.set(key, mergedValue);
   }
   const kept = [...liveValue.entries.keys()].filter((key) => !policyValue.entries.has(key));
   return [merged, changed, kept];
@@ -93,7 +124,11 @@ export function applyJson(
   const changed: string[] = [];
   const kept: string[] = [];
   for (const [key, value] of policy.entries) {
-    const [newValue, subChanged, subKept] = mergeKey(live.entries.get(key), value);
+    const [newValue, subChanged, subKept] = mergeKey(
+      live.entries.get(key),
+      value,
+      key === 'hooks' ? mergeHookEvent : takePolicy,
+    );
     merged.entries.set(key, newValue);
     changed.push(...subChanged.map((subkey) => (subkey === '' ? key : `${key}.${subkey}`)));
     kept.push(...subKept.map((subkey) => `${key}.${subkey}`));

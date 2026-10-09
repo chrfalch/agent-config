@@ -126,8 +126,10 @@ levels, plugins, marketplaces, MCP servers, `permissions`, your model choice.
 None of it is stored here. Running `bin/deploy` never removes it, and deploy
 prints what it left alone so you can check.
 
-Policy keys are merged one level down. The repo asserts two hook events,
-`PreCompact` and `SessionStart`. Any other hook event you have keeps working.
+Policy keys are merged one level down, and hooks follow their own rule. Deploy
+replaces the `PreCompact` and `SessionStart` hook events whole. For every other
+event, it replaces the repo's own entries and keeps yours as they are. An entry
+you edited counts as yours.
 
 Re-running deploy is safe. It changes only keys that differ, and backs up any
 file it rewrites into `~/.claude/backups/deploy-<timestamp>/`, under that file's

@@ -104,8 +104,15 @@ read at the start of every session for the life of the task.
 ## Change the hooks or the status line
 
 They live in `settings.policy.json`, and deploy merges them into
-`~/.claude/settings.json` one level down. The repo asserts the `PreCompact` and
-`SessionStart` hook events; any other hook event you have keeps working.
+`~/.claude/settings.json`. Deploy replaces the `PreCompact` and `SessionStart`
+hook events whole. For every other hook event, it replaces the repo's own
+entries and keeps yours as they are. An entry you edited counts as yours.
+
+If you change or remove a hook entry in any other event, add its old form to
+`RETIRED_HOOK_ENTRIES` in `tools/apply-policy.ts`. Otherwise upgraded settings
+keep the old entry beside the new one. The list is read only for events the
+policy still writes. If you remove a whole event from the policy, the old
+entries stay in upgraded settings; remove them by hand.
 
 The `SessionStart` hook is what makes the `/clear` then `go` loop work. If you
 change it, test that a session started in a worktree still finds

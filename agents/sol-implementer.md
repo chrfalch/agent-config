@@ -14,7 +14,7 @@ description: >
   untrusted or externally-sourced input — gpt-5.6-sol's prompt-injection resistance
   was an order of magnitude weaker than opus-5's, and gpt-6.1-sol is not yet
   measured, so that work stays on Claude.
-model: sonnet
+model: claude-haiku-5-5
 effort: low
 tools: Read, Bash, Grep, Glob
 ---

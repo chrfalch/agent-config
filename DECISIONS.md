@@ -338,3 +338,30 @@ gap for a hidden test gap.
 
 **A linked worktree sees only its own ledger.** A session that starts in a
 worktree is almost always for that task. The main checkout shows all ledgers.
+
+## 2026-10-09 — Haiku 5.5 enters routing; Codex wrappers move to it
+
+**Codex wrappers move from `sonnet` to `claude-haiku-5-5`.** `sol-implementer`,
+`astra-implementer` and `astra-reviewer` only write a Codex prompt, run it and relay
+the report. Haiku 5.5 (7 Oct) lists at $0.10/$0.50 and $0.01/M cache read: 20x under
+Sonnet 5.5 on input and output, 10x on cache read.
+
+**`haiku-5.5` enters the routing table.** Cost 8, intelligence 5, taste not scored.
+One route: trivial batch work on trusted text when gpt-6-luna is not available.
+
+**"Never use Haiku" narrowed.** It was written for Haiku 4.5. Now: never Haiku 4.5;
+never Haiku 5.5 for code, review, verdicts or untrusted input. The 2026-09-22
+rejection of a model that classifies verification output still stands.
+
+**Kept, on purpose.** `runner` stays on Sonnet 5.5 until a shadow trial on the same
+logs. Judged lanes stay on Opus 5.5. No injection figures are published for Haiku 5.5.
+
+**Price step.** A Haiku 5.5 request whose prompt passes 100k tokens, cache reads
+included, pays 5x on every rate. Wrapper prompt sizes are not measured.
+
+**Correction: Sonnet 5.5 cache read is $0.10/M, not $0.20/M** (pricing page,
+2026-10-09). That is half of Opus 5.5. Cost score not changed yet. Whether it reopens
+the 2026-09-22 withdrawal of "move main-thread turns to Sonnet" is open.
+
+**New gate name `haiku-5.5`.** It gates the routing row and line only. The wrapper
+agents pin Haiku in frontmatter regardless, as `runner` pins Sonnet.

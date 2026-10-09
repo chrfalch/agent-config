@@ -22,7 +22,7 @@
   `post_tool_use` hook.
 <!-- /needs -->
 <!-- needs: codex -->
-- OpenAI models in workflows need a wrapper: thin Claude agent, `model: 'sonnet',
+- OpenAI models in workflows need a wrapper: thin Claude agent, `model: 'claude-haiku-5-5',
   effort: 'low'`, writes a self-contained Codex prompt, runs it via Bash, returns a
   `schema` report. Label with the engine prefix — `gpt-6.1:` for Sol, `gpt-6:` for Astra and Luna, e.g.
   `{label: 'gpt-6:astra-impl-sync-engine'}` — the UI shows only the wrapper's model.

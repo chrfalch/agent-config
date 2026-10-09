@@ -5,7 +5,7 @@ import test, { type TestContext } from 'node:test';
 import { freshHome, run } from './helpers.js';
 
 const BUILD_RULES = [process.execPath, '--import', 'tsx', 'tools/build-rules.ts'] as const;
-const VOCABULARY = 'argent astra-implementer astra-reviewer codex fable-5 gh-stack gpt-6-astra gpt-6-luna gpt-6.1-sol opus-5.5 opus-implementer researcher reviewer runner sol-implementer sonnet-5.5 ui-runner\n';
+const VOCABULARY = 'argent astra-implementer astra-reviewer codex fable-5 gh-stack gpt-6-astra gpt-6-luna gpt-6.1-sol haiku-5.5 opus-5.5 opus-implementer researcher reviewer runner sol-implementer sonnet-5.5 ui-runner\n';
 
 function fixture(t: TestContext, files: Record<string, string> = {}) {
   const home = freshHome(t);

@@ -11,11 +11,13 @@ Anthropic (source: platform.claude.com pricing page):
 | model | input | output | cache read | cache write |
 |---|---|---|---|---|
 | opus-5.5 | 4 | 20 | 0.20 | 5 |
-| sonnet-5.5 | 2 | 10 | 0.20 | 2.50 |
+| sonnet-5.5 | 2 | 10 | 0.10 | 2.50 |
 | sonnet-5 | 2 | 10 | 0.20 | 2.50 |
 | fable-5.1 | 10 | 50 | 0.25 | 12.50 |
 | mythos-5.1 | 10 | 50 | 0.25 | 12.50 |
 | opus-5 | 5 | 25 | 0.50 | 6.25 |
+| haiku-5.5, prompt ≤100k | 0.10 | 0.50 | 0.01 | 0.125 |
+| haiku-5.5, prompt >100k | 0.50 | 2.50 | 0.05 | 0.625 |
 | haiku-4.5 | 1 | 5 | 0.10 | 1.25 |
 
 OpenAI API list prices (sources: OpenAI launch posts for GPT-6 Sol/Luna and
@@ -37,7 +39,28 @@ that list. Plan coverage for the GPT-6 family is assumed from the launch posts
 
 **Cache read is the number that matters here**, not the headline rate: the
 eight-week measurement put cache reads at 61.5% of the bill and generation at
-13.6%. Opus 5.5, Sonnet 5.5 and Sonnet 5 all charge $0.20/M for a cache read.
+13.6%. Opus 5.5 and Sonnet 5 charge $0.20/M for a cache read. Sonnet 5.5 charges
+$0.10/M (pricing page, checked 2026-10-09; the 2026-09-30 table had $0.20).
+
+## Changes on 2026-10-09
+
+- **haiku-5.5** (7 Oct 2026, `claude-haiku-5-5`) added to the table. $0.10/$0.50,
+  cache read $0.01/M, cache write $0.125/M, 1M context, 128k output. A request
+  whose prompt passes 100k tokens (cache reads included) pays 5x on every rate.
+  Vendor figures: Terminal-Bench 4.0 39.2% (Sonnet 5.5 70.6%, GPT-6 Luna 16.4%),
+  OSWorld 2.1 72.4% (Sonnet 83.9%, Luna 48.9%), GDPval-AA 1620 (Sonnet 1840, Luna
+  1437). Artificial Analysis index 43 at max effort, 34 at medium (Luna 37/29,
+  6.1 Sol 52). Scores: cost 8 (same list price as Luna), intelligence 5, taste
+  not measured. Prompt-injection robustness not published.
+- **Codex wrappers** (`sol-implementer`, `astra-implementer`, `astra-reviewer`)
+  move from `sonnet` to `claude-haiku-5-5`. They write a Codex prompt and relay
+  the report; the judgement is in Codex.
+- **Not moved:** `runner` stays on Sonnet 5.5 until a shadow trial compares
+  verdicts on the same logs. Long logs can also pass the 100k price step.
+  `ui-runner`, `researcher`, `reviewer` stay on Opus 5.5.
+- **Open — Sonnet 5.5 cache read is $0.10/M**, half of Opus 5.5. Cost score left
+  at 7 for now. Whether this reopens the 2026-09-22 withdrawal of "move
+  main-thread turns to Sonnet" is undecided.
 
 ## Changes on 2026-09-30
 

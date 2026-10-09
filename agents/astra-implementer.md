@@ -12,7 +12,7 @@ description: >
   opus-implementer. NOT for ambiguous specs — Astra will confidently fill gaps
   you did not authorize. NOT for tasks that touch untrusted input or external
   repositories without an explicit approval gate.
-model: sonnet
+model: claude-haiku-5-5
 effort: low
 tools: Read, Bash, Grep, Glob
 ---

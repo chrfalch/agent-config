@@ -34,9 +34,9 @@ does not include the model named, or if you want a lane to run cheaper.
 | `reviewer` | `claude-opus-5-5` | medium | — |
 | `opus-implementer` | `claude-opus-5-5` | high | — |
 | `ui-runner` | `claude-opus-5-5` | — | argent |
-| `sol-implementer` | `sonnet` | low | Codex, `gpt-6.1-sol` |
-| `astra-implementer` | `sonnet` | low | Codex, `gpt-6-astra` |
-| `astra-reviewer` | `sonnet` | low | Codex, `gpt-6-astra` |
+| `sol-implementer` | `claude-haiku-5-5` | low | Codex, `gpt-6.1-sol` |
+| `astra-implementer` | `claude-haiku-5-5` | low | Codex, `gpt-6-astra` |
+| `astra-reviewer` | `claude-haiku-5-5` | low | Codex, `gpt-6-astra` |
 
 To drop the models you do not have from the routing and fleet tables:
 
@@ -53,6 +53,7 @@ unsupervised. Taste covers UI and UX, code quality, API design, and copy.
 | model | cost | intelligence | taste | note |
 |---|---|---|---|---|
 | gpt-6-luna | 8 | 4 | — | Codex plan; trivial batch only |
+| haiku-5.5 | 8 | 5 | — | trusted text only; a prompt over 100k tokens costs 5x |
 | gpt-6.1-sol | 7 | 8 | 6 | Codex plan; injection not measured |
 | sonnet-5.5 | 7 | 7 | 7 | |
 | opus-5.5 | 5 | 9 | 9 | the orchestrator; default for anything judged |

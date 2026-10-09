@@ -1,0 +1,12 @@
+{
+  "name": "agent-config",
+  "owner": { "name": "Christian Falch" },
+  "description": "Claude Code mods that ship with agent-config",
+  "plugins": [
+    {
+      "name": "ledger",
+      "source": "./mods/ledger",
+      "description": "/ledger prints each task ledger's goal, current step and next step"
+    }
+  ]
+}

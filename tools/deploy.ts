@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { closeSync, existsSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, readlinkSync, readSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, readlinkSync, readSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -22,6 +22,7 @@ export interface DeployOptions {
   noStacks?: boolean;
   noGithooks?: boolean;
   noCodex?: boolean;
+  noMods?: boolean;
   codex?: boolean;
   agents?: string;
   models?: string;
@@ -43,6 +44,7 @@ export function parseDeployArguments(argv: string[]): { options: DeployOptions; 
       case '--no-stacks': opts.noStacks = true; break;
       case '--no-githooks': opts.noGithooks = true; break;
       case '--no-codex': opts.noCodex = true; break;
+      case '--no-mods': opts.noMods = true; break;
       case '--codex': opts.codex = true; break;
       case '--agents':
       case '--models': {
@@ -68,6 +70,74 @@ function command(program: string, args: string[], allowFailure = false): string 
     throw new DeployError(result.error?.message ?? '', result.status ?? 1);
   }
   return (result.stdout ?? '').replace(/\n+$/, '');
+}
+
+const MARKETPLACE = 'agent-config';
+const MOD = `ledger@${MARKETPLACE}`;
+
+function runClaude(args: string[]): string {
+  const result = spawnSync('claude', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'] });
+  if (result.error || result.status !== 0) {
+    throw new DeployError(`deploy: claude ${args.join(' ')} failed${result.error ? `: ${result.error.message}` : ''}`);
+  }
+  return result.stdout;
+}
+
+function claudeList<T>(args: string[]): T[] {
+  const listArgs = [...args, 'list', '--json'];
+  const stdout = runClaude(listArgs);
+  let list: unknown;
+  try {
+    list = JSON.parse(stdout);
+  } catch {
+    list = undefined;
+  }
+  if (!Array.isArray(list)) {
+    throw new DeployError(`deploy: claude ${listArgs.join(' ')} printed something that is not a JSON list:\n${stdout.slice(0, 200)}`);
+  }
+  return list as T[];
+}
+
+function samePath(first: string, second: string): boolean {
+  const real = (file: string): string => existsSync(file) ? realpathSync(file) : path.resolve(file);
+  return real(first) === real(second);
+}
+
+const PAST = { add: 'added', install: 'installed' } as const;
+
+// Installed from this repo as a folder marketplace, so repo edits reach a session through
+// /reload-plugins without a reinstall. --revert leaves both in place: they live in Claude
+// Code's own plugin state, which deploy does not own.
+function deployMods(opts: DeployOptions): void {
+  if (opts.noMods) {
+    console.log('mods     skipped (--no-mods)');
+    return;
+  }
+  if (!command('sh', ['-c', 'command -v claude'], true)) {
+    console.log('mods     skipped (no claude CLI on PATH)');
+    return;
+  }
+  const change = (verb: keyof typeof PAST, args: string[], what: string): void => {
+    if (opts.dry) {
+      console.log(`mods     would ${verb} ${what}`);
+      return;
+    }
+    runClaude([...args, '--scope', 'user']);
+    console.log(`mods     ${PAST[verb]} ${what}`);
+  };
+  const marketplace = claudeList<{ name: string; path?: string; installLocation?: string }>(['plugin', 'marketplace'])
+    .find(({ name }) => name === MARKETPLACE);
+  const location = marketplace?.path ?? marketplace?.installLocation;
+  if (!marketplace) change('add', ['plugin', 'marketplace', 'add', REPO], `marketplace ${MARKETPLACE} (this repo)`);
+  else if (location && samePath(location, REPO)) console.log(`mods     marketplace ${MARKETPLACE} already added`);
+  else {
+    console.log(`mods     marketplace ${MARKETPLACE} points at ${location ?? 'an unknown source'}, not this repo; to fix: claude plugin marketplace remove ${MARKETPLACE}, then run deploy again`);
+    console.log(`mods     skipped install of ${MOD} until the marketplace points at this repo`);
+    return;
+  }
+  const plugins = claudeList<{ id: string }>(['plugin']);
+  if (plugins.some(({ id }) => id === MOD)) console.log(`mods     ${MOD} already installed`);
+  else change('install', ['plugin', 'install', MOD], `${MOD} (/ledger)`);
 }
 
 function manifestLines(filename: string): string[] {
@@ -141,6 +211,9 @@ export function deploy(opts: DeployOptions): number {
       console.log('         revert does not unset it; it is global git config, not a file');
       console.log('         to undo it fully: git config --global --unset core.hooksPath');
     }
+    console.log('mods     revert leaves the ledger mod installed; it is Claude Code plugin state, not a file');
+    console.log('         to remove it: claude plugin uninstall ledger');
+    console.log(`                       claude plugin marketplace remove ${MARKETPLACE}`);
     const backups = path.join(claude, 'backups');
     const newest = existsSync(backups) ? readdirSync(backups).filter((name) => name.startsWith('deploy-')).sort().at(-1) : undefined;
     if (!newest) console.log('no backup to restore');
@@ -270,6 +343,7 @@ export function deploy(opts: DeployOptions): number {
   if (policy.error) throw policy.error;
   const status = policy.status ?? 1;
   if (status !== 0) return status;
+  deployMods(opts);
   if (opts.dry) console.log('\nDRY RUN -- nothing was written.');
   else if (existsSync(backup) && statSync(backup).isDirectory()) console.log(`backup   ${short(backup)}`);
   return 0;
@@ -288,6 +362,7 @@ const HELP = `Deploy agent-config.
   bin/deploy --no-argent      skip ui-runner and the UI automation rule
   bin/deploy --no-stacks      skip the stacked-PR rule (needs the gh stack extension)
   bin/deploy --no-githooks    skip the git hook guard; leave core.hooksPath alone
+  bin/deploy --no-mods        skip the ledger mod (/ledger in Claude Code)
   bin/deploy --agents a,b,c   deploy only these agents
   bin/deploy --models a,b     keep only these models in the routing rules
   bin/deploy --force          replace a file of your own without asking

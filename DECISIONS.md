@@ -365,3 +365,23 @@ the 2026-09-22 withdrawal of "move main-thread turns to Sonnet" is open.
 
 **New gate name `haiku-5.5`.** It gates the routing row and line only. The wrapper
 agents pin Haiku in frontmatter regardless, as `runner` pins Sonnet.
+
+## 2026-10-09 — The ledger mod ships through a folder marketplace
+
+**The problem.** The `/ledger` command is a Claude Code plugin in
+`mods/ledger`. Claude Code must find the plugin in every session, and the plugin
+must find the same ledgers as the SessionStart hook.
+
+**A folder marketplace, not `CLAUDE_CODE_PLUGIN_DIRS`.** That variable would
+have to be set in the shell profile, and deploy does not own the shell profile.
+Deploy adds this repo as a marketplace named `agent-config` and installs
+`ledger@agent-config` at user scope. Both steps are skipped when already done.
+Repo edits reach a session through `/reload-plugins`.
+
+**One lookup rule.** The mod runs `hooks/ledger-list.sh paths`, the script the
+SessionStart hook uses. So the command and the hook cannot disagree. The
+consequence: in a linked worktree, `/ledger` shows only that worktree's ledger.
+
+**The flag is `--no-mods`.** It follows the `--no-codex` convention. Deploy
+also skips the mod when `claude` is not on `PATH`. `--revert` does not remove
+the mod. It prints the two `claude plugin` commands that do.

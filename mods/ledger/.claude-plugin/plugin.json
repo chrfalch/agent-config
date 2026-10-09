@@ -1,0 +1,6 @@
+{
+  "name": "ledger",
+  "version": "0.1.0",
+  "description": "/ledger prints each task ledger's goal, current step and next step",
+  "author": { "name": "Christian Falch" }
+}

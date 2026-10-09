@@ -12,6 +12,7 @@ const COMPONENTS = [
   { value: 'argent', label: 'Argent UI automation', flag: '--no-argent' },
   { value: 'stacks', label: 'Stacked-PR rule', flag: '--no-stacks' },
   { value: 'githooks', label: 'Git hook guard', flag: '--no-githooks' },
+  { value: 'mods', label: 'Ledger mod (/ledger)', flag: '--no-mods' },
 ] as const;
 const ALL_MODELS = MODELS.split(',');
 
@@ -26,6 +27,7 @@ export interface Environment {
   codex: boolean;
   argent: boolean;
   stacks: boolean;
+  claude: boolean;
   hooksPath: string;
 }
 
@@ -64,6 +66,7 @@ export function detectEnvironment(): Environment {
     codex: existsSync(path.join(homedir(), '.codex/config.toml')),
     argent: output('sh', ['-c', 'command -v argent']) !== undefined,
     stacks: output('gh', ['extension', 'list'])?.includes('stack') ?? false,
+    claude: output('sh', ['-c', 'command -v claude']) !== undefined,
     hooksPath: output('git', ['config', '--global', 'core.hooksPath']) ?? '',
   };
 }
@@ -129,6 +132,7 @@ export function detectedComponents(env: Environment): Components {
     argent: env.argent,
     stacks: env.stacks,
     githooks: !env.hooksPath || resolveHome(env.hooksPath) === guardDir,
+    mods: env.claude,
   };
 }
 
@@ -139,6 +143,7 @@ async function askDeployAnswers(env: Environment): Promise<Answers> {
     argent: 'argent is not on PATH',
     stacks: 'gh stack extension not installed',
     githooks: `core.hooksPath is ${env.hooksPath}`,
+    mods: 'no claude CLI on PATH',
   };
   const selected = await ask(multiselect<Component>({
     message: 'Which components should deploy install?',
@@ -146,7 +151,7 @@ async function askDeployAnswers(env: Environment): Promise<Answers> {
     initialValues: COMPONENTS.map(({ value }) => value).filter((value) => found[value]),
     required: false,
   }));
-  const components: Components = { codex: false, argent: false, stacks: false, githooks: false };
+  const components: Components = { codex: false, argent: false, stacks: false, githooks: false, mods: false };
   for (const value of selected) components[value] = true;
   const agents = await ask(multiselect<string>({
     message: 'Which agents?',
@@ -185,6 +190,7 @@ function describe(env: Environment): string {
     `~/.codex/config.toml  ${env.codex ? 'found' : 'not found'}`,
     `argent                ${env.argent ? 'on PATH' : 'not on PATH'}`,
     `gh stack              ${env.stacks ? 'installed' : 'not installed'}`,
+    `claude                ${env.claude ? 'on PATH' : 'not on PATH'}`,
     `core.hooksPath        ${env.hooksPath || 'not set'}`,
   ].join('\n');
 }

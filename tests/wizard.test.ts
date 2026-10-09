@@ -7,7 +7,7 @@ import { ALL_AGENTS, CODEX_AGENTS, MODELS, parseDeployArguments, shouldRunWizard
 import { answersToArgs, detectedComponents, detectEnvironment, type Components } from '../tools/wizard.js';
 
 const allModels = MODELS.split(',');
-const allOn: Components = { codex: true, argent: true, stacks: true, githooks: true };
+const allOn: Components = { codex: true, argent: true, stacks: true, githooks: true, mods: true };
 
 function deployAnswers(components: Partial<Components> = {}, agents?: string[], models = allModels) {
   const selected = { ...allOn, ...components };
@@ -36,6 +36,12 @@ test('each component turned off maps to its --no flag', () => {
     answersToArgs(deployAnswers({ codex: false, argent: false, stacks: false, githooks: false })),
     ['--no-codex', '--no-argent', '--no-stacks', '--no-githooks'],
   );
+});
+
+test('turning off the mods component maps to --no-mods, which deploy accepts', () => {
+  const args = answersToArgs(deployAnswers({ mods: false }));
+  assert.deepEqual(args, ['--no-mods']);
+  assert.deepEqual(parseDeployArguments(args).options, { noMods: true });
 });
 
 test('--agents appears only when the selection differs from the set the flags imply', () => {
@@ -90,7 +96,7 @@ test('environment detection reports nothing found instead of throwing', (t) => {
   });
   process.env.HOME = home;
   process.env.PATH = '';
-  assert.deepEqual(detectEnvironment(), { codex: false, argent: false, stacks: false, hooksPath: '' });
+  assert.deepEqual(detectEnvironment(), { codex: false, argent: false, stacks: false, claude: false, hooksPath: '' });
 
   mkdirSync(path.join(home, '.codex'));
   writeFileSync(path.join(home, '.codex/config.toml'), '');
@@ -105,7 +111,7 @@ test('the git hook guard counts as detected when core.hooksPath names its direct
     rmSync(home, { recursive: true, force: true });
   });
   process.env.HOME = home;
-  const guard = (hooksPath: string) => detectedComponents({ codex: false, argent: false, stacks: false, hooksPath }).githooks;
+  const guard = (hooksPath: string) => detectedComponents({ codex: false, argent: false, stacks: false, claude: false, hooksPath }).githooks;
 
   assert.equal(guard(''), true);
   assert.equal(guard(path.join(home, '.config/git/hooks')), true);
@@ -129,7 +135,7 @@ test('a relative core.hooksPath never counts as the guard, even from the home di
   });
   process.env.HOME = home;
   process.chdir(home);
-  const guard = (hooksPath: string) => detectedComponents({ codex: false, argent: false, stacks: false, hooksPath }).githooks;
+  const guard = (hooksPath: string) => detectedComponents({ codex: false, argent: false, stacks: false, claude: false, hooksPath }).githooks;
 
   assert.equal(guard('.config/git/hooks'), false);
   assert.equal(guard('./.config/git/hooks/'), false);
@@ -137,7 +143,7 @@ test('a relative core.hooksPath never counts as the guard, even from the home di
 
 test('detected components pass the other findings through', () => {
   assert.deepEqual(
-    detectedComponents({ codex: true, argent: false, stacks: true, hooksPath: '/elsewhere/hooks' }),
-    { codex: true, argent: false, stacks: true, githooks: false },
+    detectedComponents({ codex: true, argent: false, stacks: true, claude: true, hooksPath: '/elsewhere/hooks' }),
+    { codex: true, argent: false, stacks: true, githooks: false, mods: true },
   );
 });

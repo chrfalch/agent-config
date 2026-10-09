@@ -1,6 +1,7 @@
 #!/bin/bash
 # Lists task ledgers for the session's working directory.
-# Mode: session-start (default) prints them; pre-compact names them.
+# Mode: session-start (default) prints them; pre-compact names them;
+# paths prints only their absolute paths, one per line.
 #
 # Ledgers are found through git, not through a fixed directory layout:
 # - main checkout: the ledger here, plus one per git worktree, wherever that
@@ -44,6 +45,9 @@ n=${#ledgers[@]}
 [ "$n" -eq 0 ] && exit 0
 
 case "$mode" in
+  paths)
+    printf '%s\n' "${ledgers[@]}"
+    ;;
   pre-compact)
     if [ "$n" -eq 1 ]; then
       echo "Task ledger at ${ledgers[0]} is authoritative. Preserve its path and its Next step section verbatim."

@@ -4,7 +4,7 @@ A Claude Code multi-agent setup. It gives the top-level session a contract: plan
 the work, delegate it to subagents, review the result, and keep the state in a
 file instead of in the conversation.
 
-It ships four things:
+It ships five things:
 
 - **An orchestrator contract** — rule files that load in every session and tell
   the top-level agent how to work.
@@ -14,6 +14,8 @@ It ships four things:
   be cleared and restarted without losing anything.
 - **Two hooks** — they put the ledger back into context when a session starts,
   and protect it when a session compacts.
+- **A ledger mod** — a Claude Code plugin that adds `/ledger`. It prints each
+  task ledger's goal, current step and next step.
 
 ## Why it is shaped this way
 

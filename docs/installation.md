@@ -44,6 +44,7 @@ work as before and skip the wizard.
 | `--codex` | Require Codex; fail if its config is missing. |
 | `--no-argent` | Skip `ui-runner` and the UI automation rule. |
 | `--no-stacks` | Skip the stacked-PR rule. |
+| `--no-mods` | Skip the ledger mod (`/ledger`). |
 | `--agents a,b,c` | Deploy only the agents named. |
 | `--models a,b` | Keep only these models in the routing rules. |
 | `--force` | Replace a file of your own without asking. |
@@ -92,6 +93,23 @@ this repo, it retires that link and says so.
 For the few files deploy does own, if one is already a file of your own it asks
 before replacing it. With no terminal attached it refuses and tells you to use
 `--force`, so an unattended run cannot overwrite anything.
+
+### The ledger mod
+
+The ledger mod is a Claude Code plugin in `mods/ledger`. It adds the `/ledger`
+command, which prints each task ledger's goal, current step and next step.
+
+Deploy installs it through the `claude` CLI, at user scope:
+
+- It adds this repo as a folder marketplace named `agent-config`.
+- It installs the plugin `ledger@agent-config`.
+
+Deploy skips each step that is already done. The plugin loads from this repo,
+so an edit to the repo reaches a running session after `/reload-plugins`. It
+does not need a reinstall.
+
+Deploy skips the mod with `--no-mods`. It also skips the mod when `claude` is
+not on `PATH`, and says so.
 
 ## What deploy does not own
 
@@ -154,6 +172,14 @@ bin/deploy --revert
 Revert removes only symlinks that point into this repo, then restores the newest
 backup directory. It restores each file as it was at that deploy, so local edits
 made since are lost. Older backups stay in `~/.claude/backups/`.
+
+Revert does not remove the ledger mod. The mod lives in Claude Code's own plugin
+state, not in a file deploy links. To remove it, run:
+
+```sh
+claude plugin uninstall ledger
+claude plugin marketplace remove agent-config
+```
 
 ## Tests
 

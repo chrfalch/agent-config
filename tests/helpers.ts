@@ -1,12 +1,86 @@
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { TestContext } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 export const REPO = fileURLToPath(new URL('../', import.meta.url));
+
+const PATH_WITHOUT_STUB = process.env.PATH ?? '';
+const STUB_ROOT = mkdtempSync(path.join(tmpdir(), 'agent-config-claude-stub-'));
+process.on('exit', () => rmSync(STUB_ROOT, { recursive: true, force: true }));
+
+// A fake `claude` that answers the two plugin list commands from per-HOME state, so a
+// marketplace add or plugin install changes what later lists report. The state lives
+// outside HOME: --dry-run tests assert that HOME is byte-for-byte unchanged.
+const CLAUDE_STUB = `#!${process.execPath}
+const { createHash } = require('node:crypto');
+const fs = require('node:fs');
+const path = require('node:path');
+
+const home = (process.env.HOME ?? '').replace(/\\/+$/, '');
+const state = path.join(${JSON.stringify(path.join(STUB_ROOT, 'state'))}, createHash('sha256').update(home).digest('hex'));
+fs.mkdirSync(state, { recursive: true });
+const args = process.argv.slice(2);
+fs.appendFileSync(path.join(state, 'calls'), args.join(' ') + '\\n');
+
+const read = (name) => fs.existsSync(path.join(state, name)) ? JSON.parse(fs.readFileSync(path.join(state, name), 'utf8')) : [];
+const write = (name, value) => fs.writeFileSync(path.join(state, name), JSON.stringify(value, null, 2));
+const fail = (message) => { console.error(message); process.exit(1); };
+const failIfAsked = (step) => { if (fs.existsSync(path.join(state, 'fail-' + step))) fail('Error: stub ' + step + ' failed'); };
+const [, sub, verb, target] = args;
+
+const list = (name) => fs.existsSync(path.join(state, name)) ? fs.readFileSync(path.join(state, name), 'utf8') : '[]';
+
+if (args.join(' ') === 'plugin marketplace list --json') console.log(list('marketplaces'));
+else if (args.join(' ') === 'plugin list --json') console.log(list('plugins'));
+else if (sub === 'marketplace' && verb === 'add' && target) {
+  failIfAsked('add');
+  const manifest = path.join(target, '.claude-plugin/marketplace.json');
+  if (!fs.existsSync(manifest)) fail('Error: no marketplace at ' + manifest);
+  const { name } = JSON.parse(fs.readFileSync(manifest, 'utf8'));
+  write('marketplaces', [...read('marketplaces'), { name, source: 'directory', path: target, installLocation: target }]);
+} else if (sub === 'install' && verb) {
+  failIfAsked('install');
+  const [plugin, marketplace] = verb.split('@');
+  if (!read('marketplaces').some((entry) => entry.name === marketplace)) fail('Error: marketplace ' + marketplace + ' not found');
+  const now = new Date().toISOString();
+  write('plugins', [...read('plugins'), { id: verb, version: '0.1.0', scope: 'user', enabled: true, installPath: path.join(home, '.claude/plugins/cache', marketplace, plugin, '0.1.0'), installedAt: now, lastUpdated: now }]);
+} else fail('stub claude: unexpected arguments: ' + args.join(' '));
+`;
+
+mkdirSync(path.join(STUB_ROOT, 'bin'));
+writeFileSync(path.join(STUB_ROOT, 'bin/claude'), CLAUDE_STUB, { mode: 0o755 });
+// Set on process.env, not only in run(): tests that spawn bin/deploy themselves must never reach the real claude.
+process.env.PATH = `${path.join(STUB_ROOT, 'bin')}${path.delimiter}${PATH_WITHOUT_STUB}`;
+
+function stubState(home: string): string {
+  return path.join(STUB_ROOT, 'state', createHash('sha256').update(home.replace(/\/+$/, '')).digest('hex'));
+}
+
+/** Every argv the stub claude received under this HOME, one string per call, oldest first. */
+export function claudeCalls(home: string): string[] {
+  const calls = path.join(stubState(home), 'calls');
+  return existsSync(calls) ? readFileSync(calls, 'utf8').split('\n').filter(Boolean) : [];
+}
+
+/** Sets what the stub claude prints for `plugin marketplace list --json` and `plugin list --json` under this HOME. */
+export function claudeLists(home: string, lists: { marketplaces?: string; plugins?: string }): void {
+  mkdirSync(stubState(home), { recursive: true });
+  for (const [name, text] of Object.entries(lists)) writeFileSync(path.join(stubState(home), name), text);
+}
+
+/** Makes the stub claude exit 1 with an error on stderr for every later `step` under this HOME. */
+export function failClaude(home: string, step: 'add' | 'install'): void {
+  mkdirSync(stubState(home), { recursive: true });
+  writeFileSync(path.join(stubState(home), `fail-${step}`), '');
+}
+
+const PATH_WITHOUT_CLAUDE = PATH_WITHOUT_STUB.split(path.delimiter)
+  .filter((directory) => directory && !existsSync(path.join(directory, 'claude')))
+  .join(path.delimiter);
 
 export function freshHome(t: TestContext, ownClaudeMd = false): string {
   const home = mkdtempSync(path.join(tmpdir(), 'agent-config-test-'));
@@ -37,10 +111,19 @@ export function snapshot(root: string): Record<string, string> {
 }
 
 export function run(home: string, command: readonly [string, ...string[]], ...args: string[]) {
+  return spawn(home, process.env.PATH ?? '', command, args);
+}
+
+/** Like run(), with no `claude` executable anywhere on PATH. */
+export function runWithoutClaude(home: string, command: readonly [string, ...string[]], ...args: string[]) {
+  return spawn(home, PATH_WITHOUT_CLAUDE, command, args);
+}
+
+function spawn(home: string, searchPath: string, command: readonly [string, ...string[]], args: string[]) {
   const [executable, ...prefix] = command;
   const result = spawnSync(executable, [...prefix, ...args], {
     cwd: REPO,
-    env: { ...process.env, HOME: home, GIT_CONFIG_GLOBAL: path.join(home, '.gitconfig') },
+    env: { ...process.env, HOME: home, PATH: searchPath, GIT_CONFIG_GLOBAL: path.join(home, '.gitconfig') },
     stdio: ['ignore', 'pipe', 'pipe'],
     encoding: 'utf8',
   });

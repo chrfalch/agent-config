@@ -118,7 +118,8 @@ Absolute. A worktree is disposable. Its ledger is the record of the task.
 - Retire a worktree with `bin/cc-worktree-retire <worktree> [--force]` from the
   agent-config repo. It copies `.claude/ledger.md` to
   `~/.claude/ledger-archive/<repo>/<YYYY-MM-DD>-<slug>.md`, checks the copy,
-  then runs `git worktree remove`. Running it twice archives once.
+  then runs `git worktree remove`. Running it twice archives once. It also
+  deletes the worktree's `cc-dd-path` build folders.
 - `<repo>` is the main checkout's directory name. `<slug>` is the branch name
   without its owner prefix.
 - Never remove a worktree, and never delete its directory, while its ledger is

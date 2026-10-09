@@ -110,7 +110,9 @@ entries and keeps yours as they are. An entry you edited counts as yours.
 
 If you change or remove a hook entry in any other event, add its old form to
 `RETIRED_HOOK_ENTRIES` in `tools/apply-policy.ts`. Otherwise upgraded settings
-keep the old entry beside the new one.
+keep the old entry beside the new one. The list is read only for events the
+policy still writes. If you remove a whole event from the policy, the old
+entries stay in upgraded settings; remove them by hand.
 
 The `SessionStart` hook is what makes the `/clear` then `go` loop work. If you
 change it, test that a session started in a worktree still finds

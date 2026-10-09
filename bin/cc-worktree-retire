@@ -1,5 +1,5 @@
 #!/bin/bash
-# Archives a worktree's task ledger, then removes the worktree.
+# Archives a worktree's task ledger, removes the worktree, then deletes its cc-dd-path build folders.
 # Usage: cc-worktree-retire <worktree-path> [git worktree remove flags]
 set -eu
 
@@ -60,5 +60,17 @@ else
   echo "no ledger at $ledger, nothing to archive"
 fi
 
+# Same formula as cc-dd-path; computed now because the worktree is gone after removal.
+root=$(git -C "$wt" rev-parse --show-toplevel)
+hash=$(printf '%s' "$root" | shasum | cut -c1-6)
+prefix="$HOME/Library/Developer/Xcode/DerivedData/cc-$(basename "$root")-$hash-"
+
 git -C "$main" worktree remove "$@" "$wt"
 echo "removed  $wt"
+
+for build in "$prefix"*; do
+  if [ -d "$build" ]; then
+    rm -rf "$build"
+    echo "deleted  $build"
+  fi
+done

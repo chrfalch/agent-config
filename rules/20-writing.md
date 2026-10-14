@@ -15,8 +15,12 @@ could a reviewer who reads only this layer decide what to look at?
 **Layer 2, details.** Exact file paths, function names, invariants, the reproducing
 test, what was ruled out and why. Short headings. Do not restate the summary.
 
-Explanations to the operator default to layer 1; offer layer 2. If the operator
-asks for layman's terms, the default was wrong — fix the default.
+Explanations to the operator default to layer 1; offer layer 2. Use plain words:
+describe what happens step by step, explain each technical term the first time
+you use it, and keep file paths and function names out. When the operator must
+decide, say what changes compared with earlier decisions, then end with the
+options and your recommendation. If the operator asks for layman's terms, the
+default was wrong — fix the default.
 
 ## Code preferences
 

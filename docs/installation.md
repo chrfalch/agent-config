@@ -44,7 +44,7 @@ work as before and skip the wizard.
 | `--codex` | Require Codex; fail if its config is missing. |
 | `--no-argent` | Skip `ui-runner` and the UI automation rule. |
 | `--no-stacks` | Skip the stacked-PR rule. |
-| `--no-mods` | Skip the ledger mod (`/ledger`). |
+| `--no-mods` | Skip the ledger and worktrees mods (`/ledger`, `/worktrees`). |
 | `--agents a,b,c` | Deploy only the agents named. |
 | `--models a,b` | Keep only these models in the routing rules. |
 | `--force` | Replace a file of your own without asking. |
@@ -99,10 +99,17 @@ before replacing it. With no terminal attached it refuses and tells you to use
 The ledger mod is a Claude Code plugin in `mods/ledger`. It adds the `/ledger`
 command, which prints each task ledger's goal, current step and next step.
 
-Deploy installs it through the `claude` CLI, at user scope:
+The worktrees mod, in `mods/worktrees`, adds the `/worktrees` command. It
+prints each linked git worktree's size, last commit, dirty files, ledger and PR.
+`/worktrees prune <name>` lists the build folders of one worktree and their
+sizes. These are ignored folders such as `node_modules` and `Pods`, and the
+worktree's Xcode build folders from `bin/cc-dd-path`. Add `--yes` to delete
+them. The command never deletes the worktree itself or anything in `.claude`.
+
+Deploy installs both through the `claude` CLI, at user scope:
 
 - It adds this repo as a folder marketplace named `agent-config`.
-- It installs the plugin `ledger@agent-config`.
+- It installs the plugins `ledger@agent-config` and `worktrees@agent-config`.
 
 Deploy skips each step that is already done. The plugin loads from this repo,
 so an edit to the repo reaches a running session after `/reload-plugins`. It
@@ -175,11 +182,12 @@ Revert removes only symlinks that point into this repo, then restores the newest
 backup directory. It restores each file as it was at that deploy, so local edits
 made since are lost. Older backups stay in `~/.claude/backups/`.
 
-Revert does not remove the ledger mod. The mod lives in Claude Code's own plugin
-state, not in a file deploy links. To remove it, run:
+Revert does not remove the ledger and worktrees mods. The mods live in Claude
+Code's own plugin state, not in a file deploy links. To remove them, run:
 
 ```sh
 claude plugin uninstall ledger
+claude plugin uninstall worktrees
 claude plugin marketplace remove agent-config
 ```
 

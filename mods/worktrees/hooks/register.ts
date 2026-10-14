@@ -9,6 +9,7 @@ import {
   formatPrunePlan,
   formatTable,
   ignoredBuildFolders,
+  isEmptyFolder,
   isOwnXcodeFolder,
   parseCommand,
   parsePrs,
@@ -148,13 +149,14 @@ async function prune($: EngineInterface, worktrees: Worktree[], name: string, co
     xcodeBuildFolders($, scope),
   ])
   if (ignored.failure !== undefined) return `Could not read the ignored files of ${name}. git status ${ignored.failure}`
-  const folders = await Promise.all(
+  const sized = await Promise.all(
     [...ignoredBuildFolders(ignored.stdout, match.path), ...xcodePaths].map(async path => ({
       path,
       label: folderLabel(path, match.path),
       sizeGb: sizeGb((await run($, ['du', '-sk', path], cwd)).stdout),
     })),
   )
+  const folders = sized.filter(folder => !isEmptyFolder(folder))
   if (!confirmed || folders.length === 0) return formatPrunePlan(name, folders)
 
   const failures = await Promise.all(folders.map(folder => deleteFolder($, folder, scope, cwd)))

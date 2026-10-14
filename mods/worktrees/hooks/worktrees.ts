@@ -96,7 +96,10 @@ export function parseCommand(args: string): WorktreesCommand {
   return name === '--yes' ? { kind: 'usage' } : { kind: 'prune', name, confirmed: confirmedName !== undefined }
 }
 
-const BUILD_FOLDER_NAMES = new Set(['node_modules', '.build', '.expo-prebuild', '.cache', 'Pods', 'build', '.DerivedData'])
+const BUILD_FOLDER_NAMES = new Set(['.build', '.expo-prebuild', '.cache', 'build', '.DerivedData'])
+
+/** Nothing in these is ever pruned: `.claude` holds agent state, and keeping `node_modules` and `Pods` lets a pruned worktree build without reinstalling. */
+const KEPT_FOLDER_NAMES = new Set(['.claude', 'node_modules', 'Pods'])
 
 export function ignoredBuildFolders(porcelain: string, root: string): string[] {
   return porcelain
@@ -107,7 +110,7 @@ export function ignoredBuildFolders(porcelain: string, root: string): string[] {
     .filter(path => !path.startsWith('"'))
     .filter(path => {
       const segments = path.split('/')
-      return BUILD_FOLDER_NAMES.has(segments.at(-1) ?? '') && !segments.includes('.claude')
+      return BUILD_FOLDER_NAMES.has(segments.at(-1) ?? '') && !segments.some(segment => KEPT_FOLDER_NAMES.has(segment))
     })
     .map(path => `${root}/${path}`)
 }
@@ -128,13 +131,13 @@ export const isOwnXcodeFolder = (name: string, prefix: string): boolean =>
 
 export type PruneScope = { root: string; derivedData: string | null; prefix: string }
 
-/** The folder a path may be deleted from: the worktree for a folder strictly inside it and outside its `.claude`, DerivedData for one of its own Xcode build folders, else null. */
+/** The folder a path may be deleted from: the worktree for a folder strictly inside it and outside any kept folder, DerivedData for one of its own Xcode build folders, else null. */
 export function pruneBase(path: string, { root, derivedData, prefix }: PruneScope): string | null {
   const segments = path.split('/')
   if (segments.includes('..') || segments.includes('.')) return null
   if (path.startsWith(`${root}/`)) {
     const inside = path.slice(root.length + 1).split('/')
-    return inside.every(segment => segment !== '' && segment !== '.claude') ? root : null
+    return inside.every(segment => segment !== '' && !KEPT_FOLDER_NAMES.has(segment)) ? root : null
   }
   if (derivedData === null || !path.startsWith(`${derivedData}/`)) return null
   const name = path.slice(derivedData.length + 1)
@@ -147,11 +150,15 @@ export const isPrunable = (path: string, scope: PruneScope): boolean => pruneBas
 export function realPathProblem(realPath: string, realBase: string): string | undefined {
   const inside = realPath.startsWith(`${realBase}/`) ? realPath.slice(realBase.length + 1) : ''
   if (inside === '') return `it resolves to ${realPath}, which is not inside ${realBase}.`
-  if (inside.split('/').includes('.claude')) return `it resolves to ${realPath}, inside a .claude folder.`
+  const kept = inside.split('/').find(segment => KEPT_FOLDER_NAMES.has(segment))
+  if (kept !== undefined) return `it resolves to ${realPath}, inside a ${kept} folder.`
   return undefined
 }
 
 export type PruneFolder = { path: string; label: string; sizeGb: number | null }
+
+/** Whether the folder's size prints as 0.0; an unknown size does not count as empty. */
+export const isEmptyFolder = ({ sizeGb }: PruneFolder): boolean => sizeGb !== null && sizeGb < 0.05
 
 export const folderLabel = (path: string, root: string): string =>
   path.startsWith(`${root}/`) ? path.slice(root.length + 1) : `~/Library/Developer/Xcode/DerivedData/${basename(path)}`
@@ -173,6 +180,7 @@ export function formatPrunePlan(name: string, folders: PruneFolder[]): string {
     ...pruneTable(folders),
     '',
     'Folders inside a `.claude` folder are never deleted.',
+    '`node_modules` and `Pods` folders are kept, so the worktree still builds.',
     `Run \`/worktrees prune ${name} --yes\` to delete them.`,
   ].join('\n')
 }

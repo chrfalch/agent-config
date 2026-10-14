@@ -323,12 +323,15 @@ test('parseCommand reads anything else as a request for usage', () => {
   }
 })
 
-test('ignoredBuildFolders keeps ignored build folders on the allowlist, as absolute paths', () => {
+test('ignoredBuildFolders keeps ignored build folders on the allowlist, as absolute paths, and nothing in node_modules or Pods', () => {
   const porcelain = [
     ' M a.ts',
     '?? b.ts',
     '!! node_modules/',
     '!! packages/app/ios/Pods/',
+    '!! node_modules/x/build/',
+    '!! packages/app/ios/Pods/build/',
+    '!! .build/',
     '!! packages/app/ios/build/',
     '!! apps/x/.expo-prebuild/',
     '!! dist/',
@@ -339,8 +342,7 @@ test('ignoredBuildFolders keeps ignored build folders on the allowlist, as absol
     '',
   ].join('\n')
   expect(ignoredBuildFolders(porcelain, BIG)).toEqual([
-    `${BIG}/node_modules`,
-    `${BIG}/packages/app/ios/Pods`,
+    `${BIG}/.build`,
     `${BIG}/packages/app/ios/build`,
     `${BIG}/apps/x/.expo-prebuild`,
   ])
@@ -356,13 +358,19 @@ const HOME = '/Users/me'
 const DERIVED_DATA = `${HOME}/Library/Developer/Xcode/DerivedData`
 const DEBUG_SIM = `${DERIVED_DATA}/cc-big-b4dd60-Debug-sim`
 const RELEASE_SIM = `${DERIVED_DATA}/cc-big-b4dd60-Release-sim`
+const EMPTY_DEVICE = `${DERIVED_DATA}/cc-big-b4dd60-Debug-device`
+const EMPTY_ANDROID = `${BIG}/android/build`
 
-test('isPrunable allows only folders strictly inside the worktree, or its own Xcode build folders', () => {
+test('isPrunable allows only folders strictly inside the worktree and outside node_modules and Pods, or its own Xcode build folders', () => {
   const scope = { root: BIG, derivedData: DERIVED_DATA, prefix: 'cc-big-b4dd60-' }
-  expect(isPrunable(`${BIG}/node_modules`, scope)).toBe(true)
+  expect(isPrunable(`${BIG}/.build`, scope)).toBe(true)
   expect(isPrunable(DEBUG_SIM, scope)).toBe(true)
   for (const path of [
     BIG,
+    `${BIG}/node_modules`,
+    `${BIG}/node_modules/x/build`,
+    `${BIG}/packages/app/ios/Pods`,
+    `${BIG}/packages/app/ios/Pods/build`,
     `${BIG}/`,
     `${BIG}/.`,
     `${BIG}/./node_modules`,
@@ -389,18 +397,27 @@ test('isPrunable leaves alone the Xcode build folders of another worktree whose 
   expect(isPrunable(`${DERIVED_DATA}/cc-a-1b2c3d-abcdef-Debug-sim`, scope)).toBe(false)
 })
 
-test('realPathProblem allows a real path strictly inside the real base and outside any .claude folder below it', () => {
-  expect(realPathProblem('/private/big/node_modules', '/private/big')).toBeUndefined()
+test('realPathProblem allows a real path strictly inside the real base and outside any .claude, node_modules or Pods folder below it', () => {
+  expect(realPathProblem('/private/big/build', '/private/big')).toBeUndefined()
   expect(realPathProblem('/private/big', '/private/big')).toBe('it resolves to /private/big, which is not inside /private/big.')
   expect(realPathProblem('/private/big-other/node_modules', '/private/big')).toBe(
     'it resolves to /private/big-other/node_modules, which is not inside /private/big.',
   )
   expect(realPathProblem('/private/big/.claude/x/build', '/private/big')).toBe('it resolves to /private/big/.claude/x/build, inside a .claude folder.')
+  expect(realPathProblem('/private/big/node_modules/x/build', '/private/big')).toBe(
+    'it resolves to /private/big/node_modules/x/build, inside a node_modules folder.',
+  )
+  expect(realPathProblem('/private/big/ios/Pods', '/private/big')).toBe('it resolves to /private/big/ios/Pods, inside a Pods folder.')
 })
 
 const IGNORED = [
   '!! node_modules/',
   '!! packages/app/ios/Pods/',
+  '!! node_modules/x/build/',
+  '!! packages/app/ios/Pods/build/',
+  '!! .build/',
+  '!! packages/app/.cache/',
+  '!! android/build/',
   '!! packages/app/ios/build/',
   '!! apps/x/.expo-prebuild/',
   '!! dist/',
@@ -417,6 +434,7 @@ const fakeDerivedData = async (_$: unknown, e: { path: string }) =>
         value: [
           dir('cc-big-b4dd60-Debug-sim'),
           dir('cc-big-b4dd60-Release-sim'),
+          dir('cc-big-b4dd60-Debug-device'),
           dir('cc-big-b4dd60-link', 'other'),
           dir('cc-big-b4dd60-x-abcdef-Debug-sim'),
           dir('cc-big-000000-Debug-sim'),
@@ -437,8 +455,8 @@ const fakeRealFs =
   }
 
 const PRUNE_FOLDERS = [
-  `${BIG}/node_modules`,
-  `${BIG}/packages/app/ios/Pods`,
+  `${BIG}/.build`,
+  `${BIG}/packages/app/.cache`,
   `${BIG}/packages/app/ios/build`,
   `${BIG}/apps/x/.expo-prebuild`,
   DEBUG_SIM,
@@ -453,13 +471,17 @@ function pruneReplies(): Replies {
   return replies(
     [WORKTREE_LIST, ok(PORCELAIN)],
     [IGNORED_STATUS, ok(` M a.ts\n?? b.ts\n${IGNORED}`)],
-    [['du', '-sk', `${BIG}/node_modules`], ok(`1953125\t${BIG}/node_modules\n`)],
+    [['du', '-sk', `${BIG}/.build`], ok(`1953125\t${BIG}/.build\n`)],
+    [['du', '-sk', `${BIG}/packages/app/.cache`], ok('976563\t.cache\n')],
+    [['du', '-sk', EMPTY_ANDROID], ok('48\tbuild\n')],
+    [['du', '-sk', EMPTY_DEVICE], ok('0\tDebug-device\n')],
+    [['du', '-sk', `${BIG}/node_modules`], ok('1953125\tnode_modules\n')],
     [['du', '-sk', `${BIG}/packages/app/ios/Pods`], ok('976563\tPods\n')],
     [['du', '-sk', `${BIG}/packages/app/ios/build`], ok('97657\tbuild\n')],
     [['du', '-sk', `${BIG}/apps/x/.expo-prebuild`], exit(1, '', 'du: .expo-prebuild: Permission denied')],
     [['du', '-sk', DEBUG_SIM], ok('9765625\tDebug-sim\n')],
     [['du', '-sk', RELEASE_SIM], ok('4882813\tRelease-sim\n')],
-    ...PRUNE_FOLDERS.map((path): [string[], Reply] => [rm(path), ok('')]),
+    ...[...PRUNE_FOLDERS, EMPTY_ANDROID, EMPTY_DEVICE].map((path): [string[], Reply] => [rm(path), ok('')]),
   )
 }
 
@@ -484,13 +506,13 @@ const PRUNE_TABLE = [
   '|---|---:|',
   '| ~/Library/Developer/Xcode/DerivedData/cc-big-b4dd60-Debug-sim | 10.0 |',
   '| ~/Library/Developer/Xcode/DerivedData/cc-big-b4dd60-Release-sim | 5.0 |',
-  '| node_modules | 2.0 |',
-  '| packages/app/ios/Pods | 1.0 |',
+  '| .build | 2.0 |',
+  '| packages/app/.cache | 1.0 |',
   '| packages/app/ios/build | 0.1 |',
   '| apps/x/.expo-prebuild | ? |',
 ]
 
-test('/worktrees prune <name> lists the build folders it would delete, largest first, and deletes nothing', async ($, on) => {
+test('/worktrees prune <name> lists the build folders it would delete, largest first, skips empty ones, and deletes nothing', async ($, on) => {
   const { argvs, run } = recording(pruneReplies())
   on('session.cwd', async () => ({ value: REPO }))
   on('process.run', run)
@@ -505,13 +527,14 @@ test('/worktrees prune <name> lists the build folders it would delete, largest f
       ...PRUNE_TABLE,
       '',
       'Folders inside a `.claude` folder are never deleted.',
+      '`node_modules` and `Pods` folders are kept, so the worktree still builds.',
       'Run `/worktrees prune big --yes` to delete them.',
     ].join('\n'),
   )
   expect(rmCalls(argvs)).toEqual([])
 })
 
-test('/worktrees prune <name> --yes runs rm -rf -- once per folder, by absolute path, and nothing else', async ($, on) => {
+test('/worktrees prune <name> --yes runs rm -rf -- once per non-empty folder, by absolute path, and nothing else', async ($, on) => {
   const { argvs, run } = recording(pruneReplies())
   on('session.cwd', async () => ({ value: REPO }))
   on('process.run', run)
@@ -546,7 +569,7 @@ test('/worktrees prune <name> --yes starts every rm before any of them finishes'
 
 test('/worktrees prune <name> --yes reports each folder rm could not delete', async ($, on) => {
   on('session.cwd', async () => ({ value: REPO }))
-  on('process.run', fakeRun({ ...pruneReplies(), ...replies([rm(`${BIG}/node_modules`), exit(1, '', 'rm: node_modules/x: Permission denied\n')]) }))
+  on('process.run', fakeRun({ ...pruneReplies(), ...replies([rm(`${BIG}/.build`), exit(1, '', 'rm: .build/x: Permission denied\n')]) }))
   on('fs.exists', fakeExists)
   on('fs.list', fakeDerivedData)
   on('fs.stat', fakeRealFs())
@@ -554,13 +577,13 @@ test('/worktrees prune <name> --yes reports each folder rm could not delete', as
   const { text } = await $.command.run({ command: 'worktrees', args: 'prune big --yes' })
   const lines = text.split('\n')
   expect(lines[0]).toBe('**Pruned big** · 16.1 GB freed in 5 folders')
-  expect(lines).not.toContain('| node_modules | 2.0 |')
-  expect(lines.at(-1)).toBe('Could not delete node_modules: rm failed (exit 1): rm: node_modules/x: Permission denied')
+  expect(lines).not.toContain('| .build | 2.0 |')
+  expect(lines.at(-1)).toBe('Could not delete .build: rm failed (exit 1): rm: .build/x: Permission denied')
 })
 
 test('/worktrees prune <name> --yes skips a symbolic link, a path that resolves outside the worktree or into a .claude folder, and one that does not resolve', async ($, on) => {
   const redirected: Record<string, string | undefined> = {
-    [`${BIG}/packages/app/ios/Pods`]: '/elsewhere/ios/Pods',
+    [`${BIG}/packages/app/.cache`]: '/elsewhere/app/.cache',
     [`${BIG}/packages/app/ios/build`]: `${BIG}/.claude/worktrees/x/build`,
     [`${BIG}/apps/x/.expo-prebuild`]: undefined,
   }
@@ -569,7 +592,7 @@ test('/worktrees prune <name> --yes skips a symbolic link, a path that resolves 
   on('process.run', run)
   on('fs.exists', fakeExists)
   on('fs.list', fakeDerivedData)
-  on('fs.stat', fakeRealFs({ links: [`${BIG}/node_modules`], realPath: path => (path in redirected ? redirected[path] : path) }))
+  on('fs.stat', fakeRealFs({ links: [`${BIG}/.build`], realPath: path => (path in redirected ? redirected[path] : path) }))
   mock.env(on, { HOME })
   const { text } = await $.command.run({ command: 'worktrees', args: 'prune big --yes' })
   expect(text).toBe(
@@ -578,8 +601,8 @@ test('/worktrees prune <name> --yes skips a symbolic link, a path that resolves 
       '',
       ...PRUNE_TABLE.slice(0, 4),
       '',
-      `Skipped ${BIG}/node_modules: it is a symbolic link.`,
-      `Skipped ${BIG}/packages/app/ios/Pods: it resolves to /elsewhere/ios/Pods, which is not inside ${BIG}.`,
+      `Skipped ${BIG}/.build: it is a symbolic link.`,
+      `Skipped ${BIG}/packages/app/.cache: it resolves to /elsewhere/app/.cache, which is not inside ${BIG}.`,
       `Skipped ${BIG}/packages/app/ios/build: it resolves to ${BIG}/.claude/worktrees/x/build, inside a .claude folder.`,
       `Skipped ${BIG}/apps/x/.expo-prebuild: its real path could not be resolved.`,
     ].join('\n'),
@@ -633,6 +656,19 @@ test('/worktrees prune <name> says so when there is nothing to prune', async ($,
   mock.env(on, { HOME })
   const { text } = await $.command.run({ command: 'worktrees', args: 'prune big --yes' })
   expect(text).toBe('Nothing to prune in big.')
+})
+
+test('/worktrees prune <name> --yes says there is nothing to prune, and deletes nothing, when every build folder is empty', async ($, on) => {
+  const { argvs, run } = recording({ ...pruneReplies(), ...replies([IGNORED_STATUS, ok('!! android/build/\n!! node_modules/\n')]) })
+  on('session.cwd', async () => ({ value: REPO }))
+  on('process.run', run)
+  on('fs.exists', fakeExists)
+  on('fs.list', async (_$: unknown, e: { path: string }) => (e.path === DERIVED_DATA ? { value: [dir('cc-big-b4dd60-Debug-device')] } : { deny: `ENOENT: ${e.path}` }))
+  on('fs.stat', fakeRealFs())
+  mock.env(on, { HOME })
+  const { text } = await $.command.run({ command: 'worktrees', args: 'prune big --yes' })
+  expect(text).toBe('Nothing to prune in big.')
+  expect(rmCalls(argvs)).toEqual([])
 })
 
 test('/worktrees prune finds a worktree whose name has spaces, and hands its path to git as one argument', async ($, on) => {

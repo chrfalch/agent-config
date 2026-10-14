@@ -102,9 +102,11 @@ command, which prints each task ledger's goal, current step and next step.
 The worktrees mod, in `mods/worktrees`, adds the `/worktrees` command. It
 prints each linked git worktree's size, last commit, dirty files, ledger and PR.
 `/worktrees prune <name>` lists the build folders of one worktree and their
-sizes. These are ignored folders such as `node_modules` and `Pods`, and the
-worktree's Xcode build folders from `bin/cc-dd-path`. Add `--yes` to delete
-them. The command never deletes the worktree itself or anything in `.claude`.
+sizes. These are ignored folders such as `build` and `.expo-prebuild`, and the
+worktree's Xcode build folders from `bin/cc-dd-path`. Empty folders are left
+out. Add `--yes` to delete them. The command never deletes the worktree itself
+or anything in `.claude`. It also keeps `node_modules` and `Pods`, so the
+worktree still builds without a new install.
 
 Deploy installs both through the `claude` CLI, at user scope:
 

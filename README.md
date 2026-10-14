@@ -19,7 +19,8 @@ It ships five things:
 - **A worktrees mod** — a Claude Code plugin that adds `/worktrees`. It prints
   a table of the repo's linked git worktrees, largest first.
   `/worktrees prune <name>` lists that worktree's build folders, and `--yes`
-  deletes them.
+  deletes them. It keeps `node_modules` and `Pods`, so the worktree still
+  builds.
 
 ## Why it is shaped this way
 

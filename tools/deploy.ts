@@ -73,7 +73,9 @@ function command(program: string, args: string[], allowFailure = false): string 
 }
 
 const MARKETPLACE = 'agent-config';
-const MOD = `ledger@${MARKETPLACE}`;
+const MODS = ['ledger', 'worktrees'];
+const modId = (name: string): string => `${name}@${MARKETPLACE}`;
+const MOD_COMMANDS = MODS.map((name) => `/${name}`).join(', ');
 
 function runClaude(args: string[]): string {
   const result = spawnSync('claude', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'] });
@@ -132,12 +134,15 @@ function deployMods(opts: DeployOptions): void {
   else if (location && samePath(location, REPO)) console.log(`mods     marketplace ${MARKETPLACE} already added`);
   else {
     console.log(`mods     marketplace ${MARKETPLACE} points at ${location ?? 'an unknown source'}, not this repo; to fix: claude plugin marketplace remove ${MARKETPLACE}, then run deploy again`);
-    console.log(`mods     skipped install of ${MOD} until the marketplace points at this repo`);
+    console.log(`mods     skipped install of ${MODS.map(modId).join(', ')} until the marketplace points at this repo`);
     return;
   }
   const plugins = claudeList<{ id: string }>(['plugin']);
-  if (plugins.some(({ id }) => id === MOD)) console.log(`mods     ${MOD} already installed`);
-  else change('install', ['plugin', 'install', MOD], `${MOD} (/ledger)`);
+  for (const name of MODS) {
+    const mod = modId(name);
+    if (plugins.some(({ id }) => id === mod)) console.log(`mods     ${mod} already installed`);
+    else change('install', ['plugin', 'install', mod], `${mod} (/${name})`);
+  }
 }
 
 function manifestLines(filename: string): string[] {
@@ -211,9 +216,10 @@ export function deploy(opts: DeployOptions): number {
       console.log('         revert does not unset it; it is global git config, not a file');
       console.log('         to undo it fully: git config --global --unset core.hooksPath');
     }
-    console.log('mods     revert leaves the ledger mod installed; it is Claude Code plugin state, not a file');
-    console.log('         to remove it: claude plugin uninstall ledger');
-    console.log(`                       claude plugin marketplace remove ${MARKETPLACE}`);
+    console.log(`mods     revert leaves the mods installed (${MOD_COMMANDS}); they are Claude Code plugin state, not files`);
+    console.log('         to remove them:');
+    for (const name of MODS) console.log(`           claude plugin uninstall ${name}`);
+    console.log(`           claude plugin marketplace remove ${MARKETPLACE}`);
     const backups = path.join(claude, 'backups');
     const newest = existsSync(backups) ? readdirSync(backups).filter((name) => name.startsWith('deploy-')).sort().at(-1) : undefined;
     if (!newest) console.log('no backup to restore');
@@ -362,7 +368,7 @@ const HELP = `Deploy agent-config.
   bin/deploy --no-argent      skip ui-runner and the UI automation rule
   bin/deploy --no-stacks      skip the stacked-PR rule (needs the gh stack extension)
   bin/deploy --no-githooks    skip the git hook guard; leave core.hooksPath alone
-  bin/deploy --no-mods        skip the ledger mod (/ledger in Claude Code)
+  bin/deploy --no-mods        skip the Claude Code mods (${MOD_COMMANDS})
   bin/deploy --agents a,b,c   deploy only these agents
   bin/deploy --models a,b     keep only these models in the routing rules
   bin/deploy --force          replace a file of your own without asking

@@ -16,6 +16,10 @@ It ships five things:
   and protect it when a session compacts.
 - **A ledger mod** — a Claude Code plugin that adds `/ledger`. It prints each
   task ledger's goal, current step and next step.
+- **A worktrees mod** — a Claude Code plugin that adds `/worktrees`. It prints
+  a table of the repo's linked git worktrees, largest first.
+  `/worktrees prune <name>` lists that worktree's build folders, and `--yes`
+  deletes them.
 
 ## Why it is shaped this way
 

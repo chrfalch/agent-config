@@ -1,0 +1,6 @@
+{
+  "name": "worktrees",
+  "version": "0.1.0",
+  "description": "/worktrees prints each linked git worktree's size, last commit, dirty files, ledger and PR",
+  "author": { "name": "Christian Falch" }
+}

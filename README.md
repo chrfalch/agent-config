@@ -70,17 +70,19 @@ flags, what deploy owns, what it never touches, and how to undo it.
 Check that the install worked before you start real work. Open a new terminal
 so the shell variables load, then start Claude Code in any repo.
 
-1. Type `/agents`. The list should include `researcher`, `runner`, `reviewer`,
-   and `opus-implementer`. The Codex and argent agents appear only if you did
-   not skip them at deploy.
-2. Ask `What are we working on?`. It should say that no task is open, because
+1. In the terminal, run `ls ~/.claude/agents/`. The list should include
+   `researcher.md`, `runner.md`, `reviewer.md`, and `opus-implementer.md`. The
+   Codex and argent agents appear only if you did not skip them at deploy.
+2. In Claude Code, type `/ledger` and then `/worktrees`. Both commands should
+   run. If Claude Code does not know them, the mods did not install.
+3. Ask `What are we working on?`. It should say that no task is open, because
    this repo has no ledger yet.
-3. Pick a small real task that touches more than one file, and type
+4. Pick a small real task that touches more than one file, and type
    `Start a new task: …` with a sentence describing it. You should get a plan
    and a question asking you to approve it. Answer `yes` and follow along.
 
-If step 1 shows none of these agents, run `bin/deploy --dry-run` again and
-read what it would change.
+If step 1 or step 2 fails, run `bin/deploy --dry-run` again and read what it
+would change.
 
 ## Using it
 
@@ -129,8 +131,8 @@ the rest of the task.
 
 ### Things you can say
 
-There are no commands to learn. You write plain sentences, and the wording does
-not have to match these examples.
+You write plain sentences, and the wording does not have to match these
+examples.
 
 | You type | What happens |
 |---|---|
@@ -146,6 +148,23 @@ not have to match these examples.
 
 [docs/usage.md](docs/usage.md) walks through a full task, with the ledger at
 each stage.
+
+### Commands
+
+Two commands print state directly. Use them when you want a quick look instead
+of a full answer.
+
+| You type | What happens |
+|---|---|
+| `/ledger` | Prints each task ledger's goal, current step and next step. |
+| `/ledger <name>` | Prints only the ledger with that name. |
+| `/worktrees` | Prints a table of the repo's linked git worktrees, largest first, with size, last commit, changed files, ledger and PR. |
+| `/worktrees prune <name>` | Lists the build folders of that worktree and their sizes. It deletes nothing. |
+| `/worktrees prune <name> --yes` | Deletes those build folders. It keeps `node_modules`, `Pods`, `.claude` and the worktree itself. |
+
+To remove a finished worktree, use `bin/cc-worktree-retire <worktree>`. It
+archives the ledger first, then removes the worktree and its Xcode build
+folders.
 
 ## Documentation
 
@@ -169,8 +188,12 @@ notes/                    rationale, not rules
 DECISIONS.md              why the setup is shaped this way
 settings.policy.json      Claude Code keys this repo asserts
 codex/policy.toml         Codex keys this repo asserts
+mods/ledger/              the /ledger command (a Claude Code plugin)
+mods/worktrees/           the /worktrees command (a Claude Code plugin)
 tools/                    the settings merge and rule filter, plus their tests
-bin/deploy
+bin/deploy                installs everything above
+bin/cc-dd-path            prints the shared Xcode build folder for a worktree
+bin/cc-worktree-retire    archives a worktree's ledger, then removes the worktree
 ```
 
 ## Notes

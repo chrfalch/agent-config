@@ -81,6 +81,16 @@ transcript is re-billed on every turn; the ledger is read once per fresh session
   working directory: the main checkout when you run one session for the task,
   the worktree when you run one session per worktree. The SessionStart hook
   reads both.
+- **New work, new task.** When the operator asks for work outside the current
+  ledger's goal, it is a separate task by default. Run `bin/cc-task-new <slug>
+  --goal '<one paragraph>'` from the agent-config repo; write each `'` inside
+  the goal as `'\''`. Add `--stack` only when the new work builds on the
+  current branch. Then add one line under the
+  current ledger's Decisions that names the new task, and give the operator
+  the `start:` command the script printed. Do not add the work to the current
+  ledger, and do not start it in this session. If you cannot tell whether the
+  work is separate, ask in one line. `/task <description>` asks for the same
+  thing directly.
 - **Update the ledger at every pipeline boundary**: after plan approval, after red
   tests, after each implementer report, after each review verdict. Write facts,
   not narrative. Keep it under ~4k tokens; roll finished steps into one line each.

@@ -1,0 +1,104 @@
+#!/bin/bash
+# Starts a separate task: a new branch, its worktree under the main checkout's
+# .claude/worktrees/, and a task ledger filled from ledger.template.md.
+# Usage: cc-task-new <slug> [--goal <text>] [--branch <name>] [--base <ref> | --stack]
+# Works from the main checkout or from inside any linked worktree. Every check runs
+# before the worktree is created, and a later failure removes the worktree and
+# branch again, so a failure leaves nothing behind.
+set -eu
+
+usage="usage: cc-task-new <slug> [--goal <text>] [--branch <name>] [--base <ref> | --stack]"
+
+fail() {
+  echo "$1" >&2
+  exit 1
+}
+
+is_slug() (
+  LC_ALL=C
+  [[ $1 =~ ^[a-z0-9][a-z0-9-]*$ ]]
+)
+
+slug="" goal="" branch="" base="" stack=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --goal|--branch|--base)
+      [ $# -ge 2 ] || fail "$1 needs a value"
+      case "$1" in
+        --goal) goal="$2" ;;
+        --branch) branch="$2" ;;
+        --base) base="$2" ;;
+      esac
+      shift 2
+      ;;
+    --stack) stack=1; shift ;;
+    -*) fail "unknown flag: $1"$'\n'"$usage" ;;
+    *)
+      [ -z "$slug" ] || fail "one slug only, got '$slug' and '$1'"$'\n'"$usage"
+      slug="$1"
+      shift
+      ;;
+  esac
+done
+
+[ -n "$slug" ] || fail "$usage"
+is_slug "$slug" || fail "slug must match ^[a-z0-9][a-z0-9-]*\$: $slug"
+[ -z "$base" ] || [ -z "$stack" ] || fail "use --base or --stack, not both"
+branch="${branch:-$slug}"
+
+self="$0"
+while [ -L "$self" ]; do
+  link=$(readlink "$self")
+  case "$link" in
+    /*) self="$link" ;;
+    *) self="$(dirname "$self")/$link" ;;
+  esac
+done
+template="$(cd -P "$(dirname "$self")/.." && pwd)/ledger.template.md"
+[ -f "$template" ] || fail "no ledger template at $template"
+
+common=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || fail "not inside a git repository: $(pwd)"
+main=$(dirname "$common")
+
+if [ -n "$stack" ]; then
+  base=$(git branch --show-current)
+  [ -n "$base" ] || fail "--stack needs a branch, but HEAD is detached in $(pwd)"
+elif [ -z "$base" ]; then
+  base=$(git -C "$main" symbolic-ref --quiet --short refs/remotes/origin/HEAD) ||
+    base=$(git -C "$main" branch --show-current)
+  [ -n "$base" ] || fail "no origin/HEAD and $main is on a detached HEAD; pass --base <ref>"
+fi
+sha=$(git rev-parse --quiet --verify "$base^{commit}") || fail "unknown --base ref: $base"
+short=$(git rev-parse --short "$sha")
+
+git check-ref-format --branch "$branch" >/dev/null 2>&1 || fail "not a valid branch name: $branch"
+if git show-ref --verify --quiet "refs/heads/$branch"; then fail "branch already exists: $branch"; fi
+
+target="$main/.claude/worktrees/$slug"
+[ ! -e "$target" ] || fail "folder already exists: $target"
+
+# A commit, not the ref, so a branch made from origin/main does not track it.
+git -C "$main" worktree add --quiet -b "$branch" "$target" "$sha"
+trap 'git -C "$main" worktree remove --force "$target" || true; git -C "$main" branch --quiet -D "$branch"' EXIT
+wt=$(cd "$target" && pwd)
+ledger="$wt/.claude/ledger.md"
+mkdir -p "$wt/.claude"
+
+# Values travel through ENVIRON: awk -v and sed would rewrite backslashes and &.
+TASK_SLUG="$slug" TASK_GOAL="$goal" TASK_WORKTREE="$wt" TASK_BRANCH="$branch" TASK_BASE="$base @ $short" \
+  awk '
+    /^## / { section = $0 }
+    NR == 1 && /^# Task ledger — <slug>$/ { $0 = "# Task ledger — " ENVIRON["TASK_SLUG"] }
+    section == "## Goal" && /^<.*>$/ && ENVIRON["TASK_GOAL"] != "" { $0 = ENVIRON["TASK_GOAL"] }
+    section == "## Location" && /^- worktree: / { $0 = "- worktree: " ENVIRON["TASK_WORKTREE"] }
+    section == "## Location" && /^- branch: / { $0 = "- branch: " ENVIRON["TASK_BRANCH"] }
+    section == "## Location" && /^- base: / { $0 = "- base: " ENVIRON["TASK_BASE"] }
+    { print }
+  ' "$template" > "$ledger"
+trap - EXIT
+
+echo "worktree $wt"
+echo "branch   $branch"
+echo "base     $base @ $short"
+echo "ledger   $ledger"
+echo "start:   cd $wt && claude"

@@ -146,7 +146,7 @@ examples.
 | `Change step 2: keep the old API and add the new one next to it.` | The orchestrator rewrites the plan and asks again. |
 | `What are we working on?` | It answers from the ledger: the goal, what is done, and the next step. If several tasks are open, it lists each one. |
 | `go` | It continues from the next step in the ledger. Use this after `/clear`, or in a new session the next day. |
-| `Continue the offline queue task.` | The same as `go`, when several tasks are open and you want to name one. |
+| `go offline-queue-loss` | The same as `go`, when several tasks are open and you want to name one. The session moves into that task's worktree first. |
 | `Why did we drop the retry counter?` | It answers from the decisions recorded in the ledger, with the reason for each. |
 | `Explain that in more detail.` | Answers start as a short summary. This asks for file paths, function names, and what was ruled out. |
 | `Commit and open a PR.` | The orchestrator does not commit on its own. When the last review passes it asks you, and this is the answer. |
@@ -171,8 +171,9 @@ To start a separate task, type `/ledger:task <what the task is>`. Claude Code
 puts the plugin name in front of every command that a plugin writes as a
 markdown file, so a plain `/task` does not exist. The agent picks a
 short name and writes the goal. It then runs `bin/cc-task-new`, which creates
-a branch, a worktree and a ledger with the goal filled in. The reply is the one
-command that opens a new session in that worktree.
+a branch, a worktree and a ledger with the goal filled in. The reply tells you
+to type `/clear`, then `go <name>`. The fresh session moves into the new
+worktree and starts from its ledger. You do not open a new terminal.
 
 To remove a finished worktree, use `bin/cc-worktree-retire <worktree>`. It
 archives the ledger first, then removes the worktree and its Xcode build

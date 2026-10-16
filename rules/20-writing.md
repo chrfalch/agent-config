@@ -22,6 +22,28 @@ decide, say what changes compared with earlier decisions, then end with the
 options and your recommendation. If the operator asks for layman's terms, the
 default was wrong — fix the default.
 
+## Result status marks
+
+In your conversation with the user, mark each result with a status emoji. A
+result is one row of a results table, one summary line, or one note about an
+outcome: a test run, an experiment, a tuning run, a check, a finding.
+
+- 🟢 good: every run passed, or the finding is confirmed. A run with zero
+  tests is not a pass.
+- 🔴 blocking: at least one run failed. 100 passes and 1 failure is 🔴.
+- 🟡 the user must do something: clarify, decide or check. A result that is
+  not confirmed is 🟡. Say what is missing.
+
+Rules:
+- Put a word or value after every mark: `🟢 PASSED`, `🟢 score 0.93`,
+  `🔴 1 of 3 runs failed`. Never a mark alone; colour alone does not
+  reach every reader. The word is the outcome, never "red" or "green".
+- In a comparison table, give each row one mark.
+- Next steps, recommendations and questions stay plain text, without a mark.
+- ⚠ stays a warning callout. It is not a result mark.
+- Subagent reports stay plain text. Add the mark when you pass a result to the
+  user.
+
 ## Code preferences
 
 - TypeScript: never `any` unless 100% necessary or instructed.

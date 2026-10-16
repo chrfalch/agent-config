@@ -1,18 +1,28 @@
 import { expect, mock, test } from 'claude-code/testing'
 
 import {
+  classifyDerivedData,
   derivedDataPrefix,
   dirtyCount,
+  formatDerivedData,
   formatTable,
   ignoredBuildFolders,
+  isDirectChild,
+  isDiskConnected,
+  isOrphan,
   isPrunable,
   parseCommand,
+  parseMainWorktree,
   parsePrs,
   parseWorktrees,
   prLabel,
   realPathProblem,
   shortDate,
   sizeGb,
+  volumeOf,
+  workspacePathOf,
+  type DerivedDataEntry,
+  type RepoLayout,
   type WorktreeRow,
 } from './worktrees'
 
@@ -715,6 +725,557 @@ test('/worktrees prints a usage line for arguments it does not know', async ($, 
   on('process.run', fakeRun(pruneReplies()))
   for (const args of ['prune', 'prune --yes', 'clean']) {
     const { text } = await $.command.run({ command: 'worktrees', args })
-    expect(text).toBe('Usage: `/worktrees` or `/worktrees prune <name> [--yes]`')
+    expect(text).toBe('Usage: `/worktrees`, `/worktrees prune <name> [--yes]`, `/worktrees derived-data` or `/worktrees prune-orphans [--yes]`')
   }
+})
+
+test('parseCommand reads derived-data and prune-orphans [--yes], with no other words', () => {
+  expect(parseCommand('derived-data')).toEqual({ kind: 'derived-data' })
+  expect(parseCommand(' derived-data ')).toEqual({ kind: 'derived-data' })
+  expect(parseCommand('prune-orphans')).toEqual({ kind: 'prune-orphans', confirmed: false })
+  expect(parseCommand(' prune-orphans\t--yes ')).toEqual({ kind: 'prune-orphans', confirmed: true })
+  for (const args of ['derived-data extra', 'derived-data --yes', 'prune-orphans extra', 'prune-orphans --yes extra', 'prune-orphans --force', 'prune-orphansx', 'derived-datax']) {
+    expect(parseCommand(args)).toEqual({ kind: 'usage' })
+  }
+})
+
+test('parseCommand still reads prune with a space before the name as a prune, never as prune-orphans', () => {
+  expect(parseCommand('prune -orphans')).toEqual({ kind: 'prune', name: '-orphans', confirmed: false })
+  expect(parseCommand('prune prune-orphans --yes')).toEqual({ kind: 'prune', name: 'prune-orphans', confirmed: true })
+})
+
+test('parseMainWorktree reads the first worktree git lists, which is the main checkout', () => {
+  expect(parseMainWorktree(PORCELAIN)).toBe(REPO)
+  expect(parseMainWorktree('')).toBeNull()
+})
+
+const NESTED = `${BIG}/.claude/worktrees/inner`
+
+const LAYOUT: RepoLayout = {
+  main: REPO,
+  worktrees: [
+    { path: BIG, branch: 'me/big' },
+    { path: NESTED, branch: 'me/inner' },
+    { path: '/outside/wt', branch: 'me/outside' },
+  ],
+}
+
+const entry = (name: string, workspacePath: string | null, exists = true, diskConnected = true): DerivedDataEntry => ({
+  name,
+  workspacePath,
+  exists,
+  diskConnected,
+})
+
+test('classifyDerivedData puts .noindex folders and SDKExplicitPrecompiledModules in the shared caches, whatever their source', () => {
+  expect(classifyDerivedData(entry('ModuleCache.noindex', null), LAYOUT)).toEqual({ kind: 'cache' })
+  expect(classifyDerivedData(entry('SymbolCache.noindex', '/gone/App.xcworkspace', false), LAYOUT)).toEqual({ kind: 'cache' })
+  expect(classifyDerivedData(entry('SDKExplicitPrecompiledModules', null), LAYOUT)).toEqual({ kind: 'cache' })
+  expect(classifyDerivedData(entry('noindex', null), LAYOUT)).toEqual({ kind: 'no-source' })
+})
+
+test('classifyDerivedData puts a folder without a WorkspacePath under no source recorded', () => {
+  expect(classifyDerivedData(entry('cc-big-b4dd60-Debug-sim', null, false), LAYOUT)).toEqual({ kind: 'no-source' })
+})
+
+test('classifyDerivedData calls a folder an orphan when its WorkspacePath is not on disk, wherever that path was', () => {
+  expect(classifyDerivedData(entry('Gone', '/old/Gone.xcworkspace', false), LAYOUT)).toEqual({ kind: 'orphan' })
+  expect(classifyDerivedData(entry('Gone-big', `${BIG}/ios/Gone.xcworkspace`, false), LAYOUT)).toEqual({ kind: 'orphan' })
+  expect(classifyDerivedData(entry('Gone-main', `${REPO}/ios/Gone.xcworkspace`, false), LAYOUT)).toEqual({ kind: 'orphan' })
+})
+
+test('classifyDerivedData gives a workspace to the linked worktree whose root is the longest match, not to the main checkout that holds it', () => {
+  expect(classifyDerivedData(entry('App-big', `${BIG}/ios/App.xcworkspace`), LAYOUT)).toEqual({ kind: 'worktree', path: BIG })
+  expect(classifyDerivedData(entry('App-inner', `${NESTED}/ios/App.xcodeproj`), LAYOUT)).toEqual({ kind: 'worktree', path: NESTED })
+  expect(classifyDerivedData(entry('App-outside', '/outside/wt/App.xcworkspace'), LAYOUT)).toEqual({ kind: 'worktree', path: '/outside/wt' })
+})
+
+test('classifyDerivedData puts a workspace inside the main checkout and outside every linked worktree under the main checkout', () => {
+  expect(classifyDerivedData(entry('App-main', `${REPO}/ios/App.xcworkspace`), LAYOUT)).toEqual({ kind: 'main' })
+  expect(classifyDerivedData(entry('App-claude', `${REPO}/.claude/worktrees/App.xcodeproj`), LAYOUT)).toEqual({ kind: 'main' })
+})
+
+test('classifyDerivedData matches a root only up to a /, so /repo/.claude/worktrees/big is not a prefix of .../bigger', () => {
+  expect(classifyDerivedData(entry('App-bigger', `${BIG}ger/ios/App.xcworkspace`), LAYOUT)).toEqual({ kind: 'main' })
+  expect(classifyDerivedData(entry('App-repository', '/repository/App.xcworkspace'), LAYOUT)).toEqual({ kind: 'other' })
+  expect(classifyDerivedData(entry('App-wt2', '/outside/wt2/App.xcworkspace'), LAYOUT)).toEqual({ kind: 'other' })
+})
+
+test('classifyDerivedData puts a workspace that exists outside the repo under other location, and so does every workspace when the main checkout is unknown', () => {
+  expect(classifyDerivedData(entry('Other', '/elsewhere/Other.xcodeproj'), LAYOUT)).toEqual({ kind: 'other' })
+  expect(classifyDerivedData(entry('App-main', `${REPO}/ios/App.xcworkspace`), { main: null, worktrees: [] })).toEqual({ kind: 'other' })
+})
+
+test('isOrphan selects the orphans and no folder of any other group', () => {
+  const entries = [
+    entry('ModuleCache.noindex', '/gone/App.xcworkspace', false),
+    entry('SDKExplicitPrecompiledModules', null, false),
+    entry('cc-big-b4dd60-Debug-device', null, false),
+    entry('App-main', `${REPO}/ios/App.xcworkspace`),
+    entry('App-big', `${BIG}/ios/App.xcworkspace`),
+    entry('App-inner', `${NESTED}/App.xcodeproj`),
+    entry('Other', '/elsewhere/Other.xcodeproj'),
+    entry('Gone-a', '/old/Gone.xcworkspace', false),
+    entry('Gone-b', `${BIG}/ios/Gone.xcworkspace`, false),
+  ]
+  expect(entries.filter(folder => isOrphan(folder, LAYOUT)).map(({ name }) => name)).toEqual(['Gone-a', 'Gone-b'])
+})
+
+test('workspacePathOf drops the newline plutil prints after the value, and accepts only an absolute path', () => {
+  expect(workspacePathOf('/repo/ios/App.xcworkspace\n')).toBe('/repo/ios/App.xcworkspace')
+  expect(workspacePathOf('/repo/ios/App.xcworkspace')).toBe('/repo/ios/App.xcworkspace')
+  expect(workspacePathOf('\n')).toBeNull()
+  expect(workspacePathOf('')).toBeNull()
+  expect(workspacePathOf('ios/App.xcworkspace\n')).toBeNull()
+})
+
+test('workspacePathOf reads a plist plutil could not read, or a value that is not a path, as no source recorded', () => {
+  for (const stdout of [null, '<?xml version="1.0"?><plist><dict>\n', 'true\n', '{\n  "WorkspacePath" = 1;\n}\n']) {
+    expect(workspacePathOf(stdout)).toBeNull()
+    expect(classifyDerivedData(entry('Broken', workspacePathOf(stdout), false), LAYOUT)).toEqual({ kind: 'no-source' })
+  }
+})
+
+test('workspacePathOf resolves . and .. segments, so a path that leaves the repo is not grouped under it', () => {
+  expect(workspacePathOf('/repo/../elsewhere/X.xcworkspace\n')).toBe('/elsewhere/X.xcworkspace')
+  expect(workspacePathOf('/repo/./ios//App.xcworkspace/\n')).toBe('/repo/ios/App.xcworkspace')
+  expect(classifyDerivedData(entry('Escaped', workspacePathOf('/repo/../elsewhere/X.xcworkspace\n')), LAYOUT)).toEqual({ kind: 'other' })
+  expect(classifyDerivedData(entry('Escaped-big', workspacePathOf(`${BIG}/../small/App.xcworkspace\n`)), LAYOUT)).toEqual({ kind: 'main' })
+})
+
+test('classifyDerivedData groups the root folder and the parent of the main checkout under other location', () => {
+  const layout: RepoLayout = { main: '/Users/me/repo', worktrees: [{ path: '/Users/me/repo/.claude/worktrees/a', branch: 'me/a' }] }
+  expect(classifyDerivedData(entry('Root', workspacePathOf('/\n')), layout)).toEqual({ kind: 'other' })
+  expect(classifyDerivedData(entry('Root', '/'), LAYOUT)).toEqual({ kind: 'other' })
+  expect(classifyDerivedData(entry('Parent', '/Users/me'), layout)).toEqual({ kind: 'other' })
+  expect(classifyDerivedData(entry('Parent', workspacePathOf('/Users/me/repo/..\n')), layout)).toEqual({ kind: 'other' })
+})
+
+test('volumeOf names the /Volumes folder a path is inside, and nothing for any other path', () => {
+  expect(volumeOf('/Volumes/USB/proj/App.xcworkspace')).toBe('/Volumes/USB')
+  expect(volumeOf('/Volumes/My Disk/App.xcodeproj')).toBe('/Volumes/My Disk')
+  for (const path of ['/Volumes/USB', '/Volumes', '/', '/repo/Volumes/USB/App.xcworkspace', '/VolumesX/USB/App.xcworkspace']) {
+    expect(volumeOf(path)).toBeNull()
+  }
+  expect(volumeOf(workspacePathOf('/Volumes/USB/../../repo/App.xcworkspace\n') ?? '')).toBeNull()
+})
+
+test('classifyDerivedData puts a missing workspace on a disk that is not connected under its own group, and never calls it an orphan', () => {
+  const unmounted = entry('App-usb', '/Volumes/USB/proj/App.xcworkspace', false, false)
+  expect(classifyDerivedData(unmounted, LAYOUT)).toEqual({ kind: 'disk-not-connected' })
+  expect(isOrphan(unmounted, LAYOUT)).toBe(false)
+})
+
+test('classifyDerivedData still calls a workspace an orphan when its disk is connected but the path is gone', () => {
+  const missing = entry('Gone-ssd', '/Volumes/SSD/old/App.xcworkspace', false, true)
+  expect(classifyDerivedData(missing, LAYOUT)).toEqual({ kind: 'orphan' })
+  expect(isOrphan(missing, LAYOUT)).toBe(true)
+})
+
+const probe = (device: string | null, linkTarget: string | null = null) => ({ device, volumesDevice: '16777230\n', linkTarget })
+
+test('isDiskConnected calls a /Volumes folder connected only when stat puts it on another device than /Volumes', () => {
+  expect(isDiskConnected(probe('16777233\n'))).toBe(true)
+  expect(isDiskConnected(probe('16777230\n'))).toBe(false)
+})
+
+test('isDiskConnected calls a /Volumes folder not connected when either stat failed or printed no device number', () => {
+  expect(isDiskConnected(probe(null))).toBe(false)
+  expect(isDiskConnected({ device: '16777233\n', volumesDevice: null, linkTarget: null })).toBe(false)
+  expect(isDiskConnected(probe('stat: /Volumes/USB: No such file or directory\n'))).toBe(false)
+  expect(isDiskConnected(probe(''))).toBe(false)
+})
+
+test('isDiskConnected calls the boot disk link to / connected, though it shares the /Volumes device, and no other link', () => {
+  expect(isDiskConnected(probe('16777230\n', '/'))).toBe(true)
+  expect(isDiskConnected(probe('16777230\n', '/Users/me/fake-disk'))).toBe(false)
+})
+
+test('isDirectChild allows only a single real name directly below the parent', () => {
+  expect(isDirectChild(`${DERIVED_DATA}/Gone-a`, DERIVED_DATA)).toBe(true)
+  for (const path of [DERIVED_DATA, `${DERIVED_DATA}/`, `${DERIVED_DATA}/.`, `${DERIVED_DATA}/..`, `${DERIVED_DATA}/Gone-a/x`, `${DERIVED_DATA}-x/Gone-a`, '/elsewhere/Gone-a']) {
+    expect(isDirectChild(path, DERIVED_DATA)).toBe(false)
+  }
+})
+
+test('formatDerivedData orders linked worktree groups by name, keeps two worktrees with one name apart, and says so when there are no folders', () => {
+  const folder = (name: string, path: string) => ({ path: `${DERIVED_DATA}/${name}`, label: name, sizeGb: 1, group: { kind: 'worktree' as const, path } })
+  const lines = formatDerivedData([folder('a', SMALL), folder('b', BIG), folder('c', '/elsewhere/big')]).split('\n')
+  expect(lines.filter(line => line.startsWith('**Linked'))).toEqual([
+    '**Linked worktree big** · 1.0 GB in 1 folder',
+    '**Linked worktree big** · 1.0 GB in 1 folder',
+    '**Linked worktree small** · 1.0 GB in 1 folder',
+  ])
+  expect(formatDerivedData([])).toBe('No folders in ~/Library/Developer/Xcode/DerivedData.')
+})
+
+test('formatDerivedData says under the disk not connected group that its folders are never deleted, and only there', () => {
+  const folder = (name: string, kind: 'disk-not-connected' | 'other') => ({ path: `${DERIVED_DATA}/${name}`, label: name, sizeGb: 1, group: { kind } })
+  expect(formatDerivedData([folder('App-usb', 'disk-not-connected'), folder('Other-x', 'other')]).split('\n')).toEqual([
+    '**~/Library/Developer/Xcode/DerivedData** · 2.0 GB in 2 folders',
+    '',
+    '**Other location** · 1.0 GB in 1 folder',
+    '',
+    '| Folder | Size GB |',
+    '|---|---:|',
+    '| Other-x | 1.0 |',
+    '',
+    '**Disk not connected** · 1.0 GB in 1 folder',
+    '',
+    '| Folder | Size GB |',
+    '|---|---:|',
+    '| App-usb | 1.0 |',
+    '',
+    'A folder here was built from a project on a disk that is not connected, so it is never deleted.',
+  ])
+  expect(formatDerivedData([folder('Other-x', 'other')])).not.toContain('not connected')
+})
+
+const plutil = (name: string): string[] => ['plutil', '-extract', 'WorkspacePath', 'raw', '-o', '-', `${DERIVED_DATA}/${name}/info.plist`]
+
+const MAIN_APP = `${REPO}/ios/App.xcworkspace`
+const BIG_APP = `${BIG}/ios/App.xcworkspace`
+const OTHER_APP = '/elsewhere/Other.xcodeproj'
+const GONE_A = `${DERIVED_DATA}/Gone-a`
+const GONE_B = `${DERIVED_DATA}/Gone-b`
+
+type DerivedDataFixture = [name: string, workspacePath: string | null, kib: number | null][]
+
+const DERIVED_DATA_FOLDERS: DerivedDataFixture = [
+  ['ModuleCache.noindex', null, 1953125],
+  ['SDKExplicitPrecompiledModules', null, 976563],
+  ['cc-big-b4dd60-Debug-device', null, 0],
+  ['App-main', MAIN_APP, 4882813],
+  ['App-big', BIG_APP, 9765625],
+  ['Other-x', OTHER_APP, 97657],
+  ['Gone-a', '/old/Gone.xcworkspace', 976563],
+  ['Gone-b', `${REPO}/.claude/worktrees/gone/ios/App.xcworkspace`, null],
+]
+
+function derivedDataReplies(folders = DERIVED_DATA_FOLDERS): Replies {
+  return replies(
+    [WORKTREE_LIST, ok(PORCELAIN)],
+    ...folders.flatMap(([name, workspacePath, kib]): [string[], Reply][] => [
+      [plutil(name), workspacePath === null ? exit(1, '', 'No value at that key path or invalid key path: WorkspacePath') : ok(`${workspacePath}\n`)],
+      [['du', '-sk', `${DERIVED_DATA}/${name}`], kib === null ? exit(1, '', 'du: Gone-b: Permission denied') : ok(`${kib}\t${name}\n`)],
+      [rm(`${DERIVED_DATA}/${name}`), ok('')],
+    ]),
+  )
+}
+
+const xcodeList = (folders: DerivedDataFixture) => async (_$: unknown, e: { path: string }) =>
+  e.path === DERIVED_DATA
+    ? {
+        value: [
+          ...folders.map(([name]) => dir(name)),
+          { name: '.DS_Store', kind: 'file' as const, size: 0, mtimeMs: 0, isLink: false },
+          dir('Linked-elsewhere', 'other'),
+        ],
+      }
+    : { deny: `ENOENT: ${e.path}` }
+
+const fakeXcodeList = xcodeList(DERIVED_DATA_FOLDERS)
+
+const fakeXcodeExists = async (_$: unknown, e: { path: string }) => ({ value: [BIG, SMALL, MAIN_APP, BIG_APP, OTHER_APP].includes(e.path) })
+
+const ORPHAN_TABLE = ['| Folder | Size GB |', '|---|---:|', '| Gone-a | 1.0 |', '| Gone-b | ? |']
+
+test('/worktrees derived-data groups every DerivedData folder by where its WorkspacePath is, with a size per folder and a total per group', async ($, on) => {
+  const { argvs, run } = recording(derivedDataReplies())
+  on('session.cwd', async () => ({ value: REPO }))
+  on('process.run', run)
+  on('fs.exists', fakeXcodeExists)
+  on('fs.list', fakeXcodeList)
+  mock.env(on, { HOME })
+  const { text } = await $.command.run({ command: 'worktrees', args: 'derived-data' })
+  expect(text).toBe(
+    [
+      '**~/Library/Developer/Xcode/DerivedData** · 19.1 GB in 8 folders',
+      '',
+      '**Main checkout** · 5.0 GB in 1 folder',
+      '',
+      '| Folder | Size GB |',
+      '|---|---:|',
+      '| App-main | 5.0 |',
+      '',
+      '**Linked worktree big** · 10.0 GB in 1 folder',
+      '',
+      '| Folder | Size GB |',
+      '|---|---:|',
+      '| App-big | 10.0 |',
+      '',
+      '**Other location** · 0.1 GB in 1 folder',
+      '',
+      '| Folder | Size GB |',
+      '|---|---:|',
+      '| Other-x | 0.1 |',
+      '',
+      '**Orphan** · 1.0 GB in 2 folders',
+      '',
+      ...ORPHAN_TABLE,
+      '',
+      '**No source recorded** · 0.0 GB in 1 folder',
+      '',
+      '| Folder | Size GB |',
+      '|---|---:|',
+      '| cc-big-b4dd60-Debug-device | 0.0 |',
+      '',
+      '**Shared caches** · 3.0 GB in 2 folders',
+      '',
+      '| Folder | Size GB |',
+      '|---|---:|',
+      '| ModuleCache.noindex | 2.0 |',
+      '| SDKExplicitPrecompiledModules | 1.0 |',
+      '',
+      'An orphan was built from a project that no longer exists on disk.',
+      'Run `/worktrees prune-orphans --yes` to delete the orphans.',
+    ].join('\n'),
+  )
+  expect(rmCalls(argvs)).toEqual([])
+})
+
+test('/worktrees derived-data says so when DerivedData has no folders or cannot be read', async ($, on) => {
+  on('session.cwd', async () => ({ value: REPO }))
+  on('process.run', fakeRun(derivedDataReplies()))
+  on('fs.exists', fakeXcodeExists)
+  on('fs.list', async (_$: unknown, e: { path: string }) => ({ deny: `ENOENT: ${e.path}` }))
+  mock.env(on, { HOME })
+  const { text } = await $.command.run({ command: 'worktrees', args: 'derived-data' })
+  expect(text).toBe('No folders in ~/Library/Developer/Xcode/DerivedData.')
+})
+
+test('/worktrees prune-orphans lists only the orphans and deletes nothing', async ($, on) => {
+  const { argvs, run } = recording(derivedDataReplies())
+  on('session.cwd', async () => ({ value: REPO }))
+  on('process.run', run)
+  on('fs.exists', fakeXcodeExists)
+  on('fs.list', fakeXcodeList)
+  mock.env(on, { HOME })
+  const { text } = await $.command.run({ command: 'worktrees', args: 'prune-orphans' })
+  expect(text).toBe(
+    [
+      '**Prune orphans in ~/Library/Developer/Xcode/DerivedData** · dry run · 1.0 GB in 2 folders',
+      '',
+      ...ORPHAN_TABLE,
+      '',
+      'An orphan was built from a project that no longer exists on disk.',
+      'Run `/worktrees prune-orphans --yes` to delete them.',
+    ].join('\n'),
+  )
+  expect(rmCalls(argvs)).toEqual([])
+})
+
+test('/worktrees prune-orphans --yes runs rm -rf -- on each orphan and on no other folder', async ($, on) => {
+  const { argvs, run } = recording(derivedDataReplies())
+  on('session.cwd', async () => ({ value: REPO }))
+  on('process.run', run)
+  on('fs.exists', fakeXcodeExists)
+  on('fs.list', fakeXcodeList)
+  on('fs.stat', fakeRealFs())
+  mock.env(on, { HOME })
+  const { text } = await $.command.run({ command: 'worktrees', args: 'prune-orphans --yes' })
+  expect(text).toBe(['**Pruned orphans in ~/Library/Developer/Xcode/DerivedData** · 1.0 GB freed in 2 folders', '', ...ORPHAN_TABLE].join('\n'))
+  expect(rmCalls(argvs)).toEqual([rm(GONE_A), rm(GONE_B)])
+})
+
+test('/worktrees prune-orphans --yes skips a folder whose project came back before deletion, and a symbolic link', async ($, on) => {
+  const { argvs, run } = recording(derivedDataReplies())
+  let goneAsked = 0
+  on('session.cwd', async () => ({ value: REPO }))
+  on('process.run', run)
+  on('fs.exists', async (_$: unknown, e: { path: string }) => {
+    if (e.path !== '/old/Gone.xcworkspace') return fakeXcodeExists(_$, e)
+    goneAsked += 1
+    return { value: goneAsked > 1 }
+  })
+  on('fs.list', fakeXcodeList)
+  on('fs.stat', fakeRealFs({ links: [GONE_B] }))
+  mock.env(on, { HOME })
+  const { text } = await $.command.run({ command: 'worktrees', args: 'prune-orphans --yes' })
+  expect(text).toBe(
+    [
+      '**Pruned orphans in ~/Library/Developer/Xcode/DerivedData** · 0.0 GB freed in 0 folders',
+      '',
+      `Skipped ${GONE_A}: it is no longer an orphan.`,
+      `Skipped ${GONE_B}: it is a symbolic link.`,
+    ].join('\n'),
+  )
+  expect(rmCalls(argvs)).toEqual([])
+})
+
+test('/worktrees prune-orphans --yes skips an orphan whose real path is not directly inside the real DerivedData', async ($, on) => {
+  const { argvs, run } = recording(derivedDataReplies())
+  on('session.cwd', async () => ({ value: REPO }))
+  on('process.run', run)
+  on('fs.exists', fakeXcodeExists)
+  on('fs.list', fakeXcodeList)
+  on('fs.stat', fakeRealFs({ realPath: path => (path === GONE_A ? '/elsewhere/Gone-a' : path) }))
+  mock.env(on, { HOME })
+  const { text } = await $.command.run({ command: 'worktrees', args: 'prune-orphans --yes' })
+  expect(text.split('\n').at(-1)).toBe(`Skipped ${GONE_A}: it resolves to /elsewhere/Gone-a, which is not directly inside ${DERIVED_DATA}.`)
+  expect(rmCalls(argvs)).toEqual([rm(GONE_B)])
+})
+
+test('/worktrees prune-orphans says so when there are no orphans', async ($, on) => {
+  const { argvs, run } = recording(derivedDataReplies())
+  on('session.cwd', async () => ({ value: REPO }))
+  on('process.run', run)
+  on('fs.exists', async () => ({ value: true }))
+  on('fs.list', fakeXcodeList)
+  mock.env(on, { HOME })
+  const { text } = await $.command.run({ command: 'worktrees', args: 'prune-orphans --yes' })
+  expect(text).toBe('Nothing to prune: no orphans in ~/Library/Developer/Xcode/DerivedData.')
+  expect(rmCalls(argvs)).toEqual([])
+})
+
+const USB_APP = '/Volumes/USB/proj/App.xcworkspace'
+const SSD_GONE = '/Volumes/SSD/old/App.xcworkspace'
+const ESCAPED_APP = '/elsewhere/X.xcworkspace'
+const GONE_SSD = `${DERIVED_DATA}/Gone-ssd`
+
+const VOLUME_FOLDERS: DerivedDataFixture = [
+  ['App-usb', USB_APP, 1953125],
+  ['Gone-ssd', SSD_GONE, 976563],
+  ['Escaped', '/repo/../elsewhere/X.xcworkspace', 97657],
+]
+
+const fakeVolumeExists = async (_$: unknown, e: { path: string }) => ({ value: ['/Volumes/SSD', '/Volumes/Stale', ESCAPED_APP].includes(e.path) })
+
+const statDevice = (volume: string): string[] => ['/usr/bin/stat', '-L', '-f', '%d', volume]
+const VOLUMES_DEVICE = ok('16777230\n')
+
+/** /Volumes/SSD is a mounted disk, /Volumes/Stale an empty folder an unmount left behind, /Volumes/Macintosh HD the boot disk link to /, and /Volumes/USB is gone. */
+const volumeReplies = (folders = VOLUME_FOLDERS): Replies => ({
+  ...derivedDataReplies(folders),
+  ...replies(
+    [['/usr/bin/stat', '-f', '%d', '/Volumes'], VOLUMES_DEVICE],
+    [statDevice('/Volumes/SSD'), ok('16777233\n')],
+    [statDevice('/Volumes/Stale'), VOLUMES_DEVICE],
+    [statDevice('/Volumes/Macintosh HD'), VOLUMES_DEVICE],
+    [statDevice('/Volumes/USB'), exit(1, '', 'stat: /Volumes/USB: stat: No such file or directory')],
+  ),
+})
+
+const GONE_SSD_TABLE = ['| Folder | Size GB |', '|---|---:|', '| Gone-ssd | 1.0 |']
+
+test('/worktrees derived-data shows a folder whose disk is not connected in its own group, and resolves .. before it groups', async ($, on) => {
+  const { argvs, run } = recording(volumeReplies())
+  on('session.cwd', async () => ({ value: REPO }))
+  on('process.run', run)
+  on('fs.exists', fakeVolumeExists)
+  on('fs.list', xcodeList(VOLUME_FOLDERS))
+  mock.env(on, { HOME })
+  const { text } = await $.command.run({ command: 'worktrees', args: 'derived-data' })
+  expect(text).toBe(
+    [
+      '**~/Library/Developer/Xcode/DerivedData** · 3.1 GB in 3 folders',
+      '',
+      '**Other location** · 0.1 GB in 1 folder',
+      '',
+      '| Folder | Size GB |',
+      '|---|---:|',
+      '| Escaped | 0.1 |',
+      '',
+      '**Disk not connected** · 2.0 GB in 1 folder',
+      '',
+      '| Folder | Size GB |',
+      '|---|---:|',
+      '| App-usb | 2.0 |',
+      '',
+      'A folder here was built from a project on a disk that is not connected, so it is never deleted.',
+      '',
+      '**Orphan** · 1.0 GB in 1 folder',
+      '',
+      ...GONE_SSD_TABLE,
+      '',
+      'An orphan was built from a project that no longer exists on disk.',
+      'Run `/worktrees prune-orphans --yes` to delete the orphans.',
+    ].join('\n'),
+  )
+  expect(rmCalls(argvs)).toEqual([])
+})
+
+test('/worktrees prune-orphans leaves out a folder whose disk is not connected', async ($, on) => {
+  on('session.cwd', async () => ({ value: REPO }))
+  on('process.run', fakeRun(volumeReplies()))
+  on('fs.exists', fakeVolumeExists)
+  on('fs.list', xcodeList(VOLUME_FOLDERS))
+  mock.env(on, { HOME })
+  const { text } = await $.command.run({ command: 'worktrees', args: 'prune-orphans' })
+  expect(text).toBe(
+    [
+      '**Prune orphans in ~/Library/Developer/Xcode/DerivedData** · dry run · 1.0 GB in 1 folder',
+      '',
+      ...GONE_SSD_TABLE,
+      '',
+      'An orphan was built from a project that no longer exists on disk.',
+      'Run `/worktrees prune-orphans --yes` to delete them.',
+    ].join('\n'),
+  )
+})
+
+test('/worktrees prune-orphans --yes never deletes a folder whose disk is not connected', async ($, on) => {
+  const { argvs, run } = recording(volumeReplies())
+  on('session.cwd', async () => ({ value: REPO }))
+  on('process.run', run)
+  on('fs.exists', fakeVolumeExists)
+  on('fs.list', xcodeList(VOLUME_FOLDERS))
+  on('fs.stat', fakeRealFs())
+  mock.env(on, { HOME })
+  const { text } = await $.command.run({ command: 'worktrees', args: 'prune-orphans --yes' })
+  expect(text).toBe(['**Pruned orphans in ~/Library/Developer/Xcode/DerivedData** · 1.0 GB freed in 1 folder', '', ...GONE_SSD_TABLE].join('\n'))
+  expect(rmCalls(argvs)).toEqual([rm(GONE_SSD)])
+})
+
+test('/worktrees prune-orphans --yes skips an orphan whose disk was disconnected before deletion', async ($, on) => {
+  const { argvs, run } = recording(volumeReplies())
+  let ssdAsked = 0
+  on('session.cwd', async () => ({ value: REPO }))
+  on('process.run', async (_$: unknown, e: { argv: string[] }) => {
+    if (argvKey(e.argv) !== argvKey(statDevice('/Volumes/SSD'))) return run(_$, e)
+    ssdAsked += 1
+    return ssdAsked === 1 ? run(_$, e) : VOLUMES_DEVICE
+  })
+  on('fs.exists', fakeVolumeExists)
+  on('fs.list', xcodeList(VOLUME_FOLDERS))
+  on('fs.stat', fakeRealFs())
+  mock.env(on, { HOME })
+  const { text } = await $.command.run({ command: 'worktrees', args: 'prune-orphans --yes' })
+  expect(text.split('\n').at(-1)).toBe(`Skipped ${GONE_SSD}: it is no longer an orphan.`)
+  expect(rmCalls(argvs)).toEqual([])
+})
+
+const BOOT_DISK = '/Volumes/Macintosh HD'
+const GONE_BOOT = `${DERIVED_DATA}/Gone-boot`
+
+const STALE_FOLDERS: DerivedDataFixture = [
+  ...VOLUME_FOLDERS,
+  ['Gone-stale', '/Volumes/Stale/old/App.xcworkspace', 976563],
+  ['Gone-boot', `${BOOT_DISK}/Users/me/old/App.xcworkspace`, 976563],
+]
+
+const fakeBootLink = fakeRealFs({ links: [BOOT_DISK], realPath: path => (path === BOOT_DISK ? '/' : path) })
+
+test('/worktrees derived-data puts a folder whose /Volumes folder is only left behind under disk not connected, and one on the boot disk link under orphan', async ($, on) => {
+  on('session.cwd', async () => ({ value: REPO }))
+  on('process.run', fakeRun(volumeReplies(STALE_FOLDERS)))
+  on('fs.exists', fakeVolumeExists)
+  on('fs.list', xcodeList(STALE_FOLDERS))
+  on('fs.stat', fakeBootLink)
+  mock.env(on, { HOME })
+  const { text } = await $.command.run({ command: 'worktrees', args: 'derived-data' })
+  expect(text).toContain(['**Disk not connected** · 3.0 GB in 2 folders', '', '| Folder | Size GB |', '|---|---:|', '| App-usb | 2.0 |', '| Gone-stale | 1.0 |'].join('\n'))
+  expect(text).toContain(['**Orphan** · 2.0 GB in 2 folders', '', '| Folder | Size GB |', '|---|---:|', '| Gone-ssd | 1.0 |', '| Gone-boot | 1.0 |'].join('\n'))
+})
+
+test('/worktrees prune-orphans --yes deletes the orphans on a mounted disk and on the boot disk link, and never a folder whose /Volumes folder is only left behind', async ($, on) => {
+  const { argvs, run } = recording(volumeReplies(STALE_FOLDERS))
+  on('session.cwd', async () => ({ value: REPO }))
+  on('process.run', run)
+  on('fs.exists', fakeVolumeExists)
+  on('fs.list', xcodeList(STALE_FOLDERS))
+  on('fs.stat', fakeBootLink)
+  mock.env(on, { HOME })
+  await $.command.run({ command: 'worktrees', args: 'prune-orphans --yes' })
+  expect(rmCalls(argvs)).toEqual([rm(GONE_BOOT), rm(GONE_SSD)])
 })

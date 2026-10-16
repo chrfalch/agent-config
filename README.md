@@ -21,7 +21,9 @@ It ships five things:
   a table of the repo's linked git worktrees, largest first.
   `/worktrees prune <name>` lists that worktree's build folders, and `--yes`
   deletes them. It keeps `node_modules` and `Pods`, so the worktree still
-  builds.
+  builds. `/worktrees derived-data` groups Xcode's build folders by the
+  project they were built from. `/worktrees prune-orphans --yes` deletes the
+  ones whose project no longer exists.
 
 ## Why it is shaped this way
 
@@ -166,6 +168,11 @@ of a full answer.
 | `/worktrees` | Prints a table of the repo's linked git worktrees, largest first, with size, last commit, changed files, ledger and PR. |
 | `/worktrees prune <name>` | Lists the build folders of that worktree and their sizes. It deletes nothing. |
 | `/worktrees prune <name> --yes` | Deletes those build folders. It keeps `node_modules`, `Pods`, `.claude` and the worktree itself. |
+| `/worktrees derived-data` | Lists every folder in `~/Library/Developer/Xcode/DerivedData` with its size. It groups them by where the project is: the main checkout, a linked worktree, another location, or gone. |
+| `/worktrees prune-orphans` | Lists the DerivedData folders whose project no longer exists. It deletes nothing. |
+| `/worktrees prune-orphans --yes` | Deletes those folders. It never deletes shared caches or folders without a recorded project. |
+
+A build folder whose project is on a disk that is not connected goes in its own group, **Disk not connected**, and is never deleted.
 
 To start a separate task, type `/ledger:task <what the task is>`. Claude Code
 puts the plugin name in front of every command that a plugin writes as a

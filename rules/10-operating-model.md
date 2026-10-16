@@ -77,10 +77,9 @@ transcript is re-billed on every turn; the ledger is read once per fresh session
   constraints discovered, worktree path and branch, subagent reports (the
   structured report, not the transcript), open questions, and the exact next step.
   If the worktree does not exist yet at plan approval, create it first, then the
-  ledger. The ledger lives at `.claude/ledger.md` relative to the session's
-  working directory: the main checkout when you run one session for the task,
-  the worktree when you run one session per worktree. The SessionStart hook
-  reads both.
+  ledger. The ledger always lives at `.claude/ledger.md` in the task's
+  worktree. It never lives in the main checkout. A PreToolUse hook denies a
+  ledger write in the main checkout.
 - **New work, new task.** When the operator asks for work outside the current
   ledger's goal, it is a separate task by default. Run `bin/cc-task-new <slug>
   --goal '<one paragraph>'` from the agent-config repo; write each `'` inside

@@ -1,6 +1,6 @@
 {
   "name": "ledger",
-  "version": "0.2.0",
-  "description": "/ledger prints each task ledger's goal, current step and next step; /task starts a separate task with its own worktree and ledger",
+  "version": "0.3.0",
+  "description": "/ledger prints each task ledger's goal, current step and next step; /task starts a separate task with its own worktree and ledger; /update writes the latest results to the ledger",
   "author": { "name": "Christian Falch" }
 }

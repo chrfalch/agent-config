@@ -89,7 +89,7 @@ transcript is re-billed on every turn; the ledger is read once per fresh session
   current ledger's Decisions that names the new task, and give the operator
   the `start:` command the script printed. Do not add the work to the current
   ledger, and do not start it in this session. If you cannot tell whether the
-  work is separate, ask in one line. `/task <description>` asks for the same
+  work is separate, ask in one line. `/ledger:task <description>` asks for the same
   thing directly.
 - **Update the ledger at every pipeline boundary**: after plan approval, after red
   tests, after each implementer report, after each review verdict. Write facts,

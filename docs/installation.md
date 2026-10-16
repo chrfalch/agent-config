@@ -96,8 +96,14 @@ before replacing it. With no terminal attached it refuses and tells you to use
 
 ### The ledger mod
 
-The ledger mod is a Claude Code plugin in `mods/ledger`. It adds the `/ledger`
-command, which prints each task ledger's goal, current step and next step.
+The ledger mod is a Claude Code plugin in `mods/ledger`. It adds three
+commands:
+
+- `/ledger` prints each task ledger's goal, current step and next step.
+- `/ledger:task` starts a separate task with its own git worktree, branch and
+  ledger.
+- `/ledger:update` writes the latest results to the current task's ledger. When
+  there is no ledger, it starts a task.
 
 The worktrees mod, in `mods/worktrees`, adds the `/worktrees` command. It
 prints each linked git worktree's size, last commit, dirty files, ledger and PR.
@@ -165,13 +171,26 @@ repo edits need another deploy.
 
 ## The hooks
 
-Deploy asserts two hook events in `~/.claude/settings.json`:
+Deploy asserts four hook events in `~/.claude/settings.json`. They run six
+scripts from `hooks/`:
 
-- **SessionStart** — finds `.claude/ledger.md`, in the working directory or in a
-  worktree, and reads it into the new session. With several ledgers it prints a
-  summary of each instead. This is what makes `/clear` then `go` work.
-- **PreCompact** — tells the compaction pass that the ledger is authoritative,
-  and that its path and Next step must survive verbatim.
+- **SessionStart, `ledger-list.sh`** — reads the task ledger into the new
+  session. It reads ledgers from linked worktrees, never from the main
+  checkout. With several ledgers it prints a summary of each instead. This is
+  what makes `/clear` then `go` work.
+- **SessionStart, `deploy-drift.sh`** — warns when `~/.claude` is behind this
+  repo.
+- **PreCompact, `ledger-list.sh pre-compact`** — tells the compaction pass that
+  the ledger is authoritative, and that its path and Next step must survive
+  verbatim.
+- **PreToolUse, `derived-data-gate.sh`** — keeps one Xcode build folder per
+  worktree and configuration.
+- **PreToolUse, `worktree-gate.sh`** — denies removing a worktree whose ledger
+  is not archived.
+- **PreToolUse, `ledger-gate.sh`** — denies writing a ledger in a main
+  checkout.
+- **PermissionDenied, `denied-read-retry.sh`** — lets the model retry a denied
+  call that only reads.
 
 ## Undoing a deploy
 

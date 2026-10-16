@@ -4,10 +4,11 @@
 # paths prints only their absolute paths, one per line.
 #
 # Ledgers are found through git, not through a fixed directory layout:
-# - main checkout: the ledger here, plus one per git worktree, wherever that
-#   worktree lives (.claude/worktrees/, .worktrees/, a sibling folder, ...);
+# - main checkout: one per linked worktree, wherever that worktree lives
+#   (.claude/worktrees/, .worktrees/, a sibling folder, ...). Never the main
+#   checkout's own ledger: a ledger lives only in a linked worktree;
 # - linked worktree: only that worktree's own ledger.
-# Outside a git repo it falls back to the fixed globs.
+# Outside a git repo: the ledger here, plus the fixed globs.
 # Worktrees whose path no longer exists (prunable) are skipped.
 
 mode="${1:-session-start}"
@@ -22,21 +23,24 @@ add() {
   ledgers+=("$abs")
 }
 
-add ".claude/ledger.md"
-
 if top=$(git rev-parse --show-toplevel 2>/dev/null); then
-  add "$top/.claude/ledger.md"
   gitdir=$(git rev-parse --absolute-git-dir 2>/dev/null)
   common=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)
   if [ -n "$gitdir" ] && [ "$gitdir" = "$common" ]; then
+    main=1
     while IFS= read -r line; do
       case "$line" in
-        "worktree "*) add "${line#worktree }/.claude/ledger.md" ;;
+        "worktree "*)
+          [ -n "$main" ] && { main=; continue; }
+          add "${line#worktree }/.claude/ledger.md"
+          ;;
       esac
     done < <(git worktree list --porcelain 2>/dev/null)
+  else
+    add "$top/.claude/ledger.md"
   fi
 else
-  for f in .claude/worktrees/*/.claude/ledger.md .worktrees/*/.claude/ledger.md; do
+  for f in .claude/ledger.md .claude/worktrees/*/.claude/ledger.md .worktrees/*/.claude/ledger.md; do
     add "$f"
   done
 fi

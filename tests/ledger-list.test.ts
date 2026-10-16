@@ -68,13 +68,38 @@ function printedPaths(stdout: string): string[] {
   return lines.map((line) => realpathSync(line)).sort();
 }
 
-test('paths from a main checkout prints its ledger and the ledger of a worktree outside it', (t) => {
+test('paths from a main checkout prints the ledger of a worktree outside it, not its own', (t) => {
   const root = scratch(t);
   const main = repository(root, 'main');
   const sibling = worktree(root, main, path.join(root, 'sibling'));
-  const expected = [ledgerIn(main), ledgerIn(sibling)].sort();
+  ledgerIn(main);
+  const expected = [ledgerIn(sibling)];
 
   assert.deepEqual(printedPaths(ledgerList(root, main, 'paths')), expected);
+});
+
+test('a main checkout\'s own ledger is never read back or named on compaction', (t) => {
+  const root = scratch(t);
+  const main = repository(root, 'main');
+  worktree(root, main, path.join(root, 'sibling'));
+  ledgerIn(main);
+
+  assert.equal(ledgerList(root, main, 'session-start'), '');
+  assert.equal(ledgerList(root, main, 'pre-compact'), '');
+});
+
+test('session-start from a main checkout summarises worktree ledgers but not its own', (t) => {
+  const root = scratch(t);
+  const main = repository(root, 'main');
+  const own = ledgerIn(main);
+  const inside = ledgerIn(worktree(root, main, path.join(main, '.claude/worktrees/inside')));
+  const sibling = ledgerIn(worktree(root, main, path.join(root, 'sibling')));
+
+  const output = ledgerList(root, main, 'session-start');
+
+  assert.ok(!output.includes(own), `main checkout ledger printed:\n${output}`);
+  assert.ok(output.includes(inside), `worktree ledger missing:\n${output}`);
+  assert.ok(output.includes(sibling), `sibling ledger missing:\n${output}`);
 });
 
 test('paths from a linked worktree prints only that worktree\'s ledger', (t) => {
@@ -103,6 +128,24 @@ test('paths outside a git repository finds ledgers under .claude/worktrees', (t)
   assert.deepEqual(printedPaths(ledgerList(root, plain, 'paths')), [ledger]);
 });
 
+test('paths outside a git repository finds the ledger in the working directory', (t) => {
+  const root = scratch(t);
+  const plain = path.join(root, 'plain');
+  const ledger = ledgerIn(plain);
+
+  assert.deepEqual(printedPaths(ledgerList(root, plain, 'paths')), [ledger]);
+});
+
+test('paths from a subdirectory of a main checkout ignores a ledger in that subdirectory', (t) => {
+  const root = scratch(t);
+  const main = repository(root, 'main');
+  const sub = path.join(main, 'sub');
+  ledgerIn(sub);
+  const sibling = ledgerIn(worktree(root, main, path.join(root, 'sibling')));
+
+  assert.deepEqual(printedPaths(ledgerList(root, sub, 'paths')), [sibling]);
+});
+
 test('paths prints the same ledgers that session-start summarises', (t) => {
   const root = scratch(t);
   const main = repository(root, 'main');
@@ -116,6 +159,6 @@ test('paths prints the same ledgers that session-start summarises', (t) => {
     .map((line) => line.slice('=== '.length));
   const listed = ledgerList(root, main, 'paths').split('\n').filter(Boolean);
 
-  assert.equal(summarised.length, 3);
+  assert.equal(summarised.length, 2);
   assert.deepEqual(listed.sort(), summarised.sort());
 });

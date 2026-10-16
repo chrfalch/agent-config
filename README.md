@@ -12,8 +12,12 @@ It ships five things:
   lanes, each pinned to a model.
 - **A task ledger** — a small file that holds the task state, so a session can
   be cleared and restarted without losing anything.
-- **Two hooks** — they put the ledger back into context when a session starts,
-  and protect it when a session compacts.
+- **Six hooks** — they put the ledger back into context when a session starts,
+  and protect it when a session compacts. They block writes that would put a
+  ledger in the wrong place or lose it, and Xcode builds into a wrong folder.
+  They warn when the deployed config is old, and allow a retry of a denied
+  read-only call. See
+  [The hooks](docs/installation.md#the-hooks).
 - **A ledger mod** — a Claude Code plugin that adds `/ledger`, `/ledger:task`
   and `/ledger:update`.
   `/ledger` prints each task ledger's goal, current step and next step.

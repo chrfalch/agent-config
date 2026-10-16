@@ -14,9 +14,9 @@ It ships five things:
   be cleared and restarted without losing anything.
 - **Two hooks** — they put the ledger back into context when a session starts,
   and protect it when a session compacts.
-- **A ledger mod** — a Claude Code plugin that adds `/ledger` and `/task`.
-  `/ledger` prints each task ledger's goal, current step and next step. `/task`
-  starts a separate task with its own worktree and ledger.
+- **A ledger mod** — a Claude Code plugin that adds `/ledger` and `/ledger:task`.
+  `/ledger` prints each task ledger's goal, current step and next step.
+  `/ledger:task` starts a separate task with its own worktree and ledger.
 - **A worktrees mod** — a Claude Code plugin that adds `/worktrees`. It prints
   a table of the repo's linked git worktrees, largest first.
   `/worktrees prune <name>` lists that worktree's build folders, and `--yes`
@@ -54,6 +54,10 @@ has a flag to skip each one.
 
 Run `bin/deploy` with no flags in a terminal to start an interactive wizard.
 Flags work as before and skip the wizard.
+
+Claude Code reads the plugins in `mods/` directly from this checkout, not from
+a copy. After a plugin change is merged, run `git pull` here, then restart
+Claude Code or run `/reload-plugins`. You do not need to run `bin/deploy` again.
 
 Then add three variables to your shell profile:
 
@@ -163,7 +167,9 @@ of a full answer.
 | `/worktrees prune <name>` | Lists the build folders of that worktree and their sizes. It deletes nothing. |
 | `/worktrees prune <name> --yes` | Deletes those build folders. It keeps `node_modules`, `Pods`, `.claude` and the worktree itself. |
 
-To start a separate task, type `/task <what the task is>`. The agent picks a
+To start a separate task, type `/ledger:task <what the task is>`. Claude Code
+puts the plugin name in front of every command that a plugin writes as a
+markdown file, so a plain `/task` does not exist. The agent picks a
 short name and writes the goal. It then runs `bin/cc-task-new`, which creates
 a branch, a worktree and a ledger with the goal filled in. The reply is the one
 command that opens a new session in that worktree.
@@ -194,7 +200,7 @@ notes/                    rationale, not rules
 DECISIONS.md              why the setup is shaped this way
 settings.policy.json      Claude Code keys this repo asserts
 codex/policy.toml         Codex keys this repo asserts
-mods/ledger/              the /ledger and /task commands (a Claude Code plugin)
+mods/ledger/              the /ledger and /ledger:task commands (a Claude Code plugin)
 mods/worktrees/           the /worktrees command (a Claude Code plugin)
 tools/                    the settings merge and rule filter, plus their tests
 bin/deploy                installs everything above

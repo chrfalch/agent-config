@@ -17,6 +17,15 @@
             "command": "\"$HOME\"/.claude/hooks/worktree-gate.sh"
           }
         ]
+      },
+      {
+        "matcher": "Write|Edit|MultiEdit|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$HOME\"/.claude/hooks/ledger-gate.sh"
+          }
+        ]
       }
     ],
     "PermissionDenied": [

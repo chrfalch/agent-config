@@ -385,3 +385,20 @@ consequence: in a linked worktree, `/ledger` shows only that worktree's ledger.
 **The flag is `--no-mods`.** It follows the `--no-codex` convention. Deploy
 also skips the mod when `claude` is not on `PATH`. `--revert` does not remove
 the mod. It prints the two `claude plugin` commands that do.
+
+## 2026-10-16 — A new task starts with `/clear`, then `go <slug>`
+
+**The problem.** `bin/cc-task-new` printed `cd <worktree> && claude`. The
+operator had to leave the session, open a terminal and start Claude Code again.
+
+**`go <slug>` picks the task and moves the session.** The slug is the task
+name and the worktree folder name. After `/clear` in the main checkout, the
+SessionStart hook lists every ledger and the agent must ask which
+one to continue. The name answers that question. The agent then calls
+`EnterWorktree` with the worktree path from the ledger, so files and subagents
+work in the task's folder, not in the main checkout.
+
+**Not tested yet:** whether the session stays in the worktree after a later
+`/clear`. If it goes back to the main checkout, `go <slug>` moves it again.
+Also not run by hand yet: `EnterWorktree` with `path` to an existing worktree.
+The tool description documents that parameter. The first new task checks it.

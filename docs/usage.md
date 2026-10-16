@@ -180,7 +180,8 @@ Do not `cat` the ledger. The SessionStart hook has already put it in context.
 
 One ledger per task, and one per stacked PR. If more than one ledger exists, the
 hook shows a summary of each and the session asks which task you mean before
-reading the full file.
+reading the full file. Type `go <name>` to answer in advance. The session then
+moves into that task's worktree and continues from its ledger.
 
 ## The clear loop, in short
 

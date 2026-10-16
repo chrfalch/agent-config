@@ -87,7 +87,7 @@ transcript is re-billed on every turn; the ledger is read once per fresh session
   the goal as `'\''`. Add `--stack` only when the new work builds on the
   current branch. Then add one line under the
   current ledger's Decisions that names the new task, and give the operator
-  the `start:` command the script printed. Do not add the work to the current
+  the `start:` line the script printed. Do not add the work to the current
   ledger, and do not start it in this session. If you cannot tell whether the
   work is separate, ask in one line. `/ledger:task <description>` asks for the same
   thing directly.
@@ -111,7 +111,10 @@ transcript is re-billed on every turn; the ledger is read once per fresh session
 - **Resume from the ledger.** A SessionStart hook puts `.claude/ledger.md` in
   your context when it exists, or a summary of each when several exist. On
   "go", continue from that ledger's Next step. When several ledgers exist, ask
-  which task first, then read its full ledger.
+  which task first, then read its full ledger. On "go <slug>", do not ask.
+  If the session is not already in that task's worktree, move into it
+  with `EnterWorktree` (`path`: the worktree from the ledger's Location), then
+  continue.
   Do not re-read files or rerun tests to re-establish state; the ledger is the
   state. If every step is done, say so and ask whether to commit or open a PR.
 - The old session stays resumable after `/clear`. If the ledger turns out to be

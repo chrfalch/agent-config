@@ -25,7 +25,7 @@ If that request is empty, ask what the task is and stop.
    ```
 5. If this session has a current ledger, add one line under its Decisions that
    names the new task.
-6. Reply with the `start:` command the script printed, and nothing else of
+6. Reply with the `start:` line the script printed, and nothing else of
    substance.
 
 Do not plan the task and do not start it in this session.

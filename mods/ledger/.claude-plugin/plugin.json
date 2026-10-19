@@ -1,6 +1,7 @@
 {
   "name": "ledger",
-  "version": "0.3.0",
-  "description": "/ledger prints each task ledger's goal, current step and next step; /task starts a separate task with its own worktree and ledger; /update writes the latest results to the ledger",
-  "author": { "name": "Christian Falch" }
+  "version": "0.4.0",
+  "description": "/ledger prints each task ledger's goal, current step and next step; /task starts a separate task with its own worktree and ledger; /update writes the latest results to the ledger; /close writes the ledger and clears the session; /next does the same, then continues the task in the new session",
+  "author": { "name": "Christian Falch" },
+  "types": "./types/index.d.ts"
 }

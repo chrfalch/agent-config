@@ -18,11 +18,13 @@ It ships five things:
   They warn when the deployed config is old, and allow a retry of a denied
   read-only call. See
   [The hooks](docs/installation.md#the-hooks).
-- **A ledger mod** — a Claude Code plugin that adds `/ledger`, `/ledger:task`
-  and `/ledger:update`.
+- **A ledger mod** — a Claude Code plugin that adds `/ledger`, `/ledger:task`,
+  `/ledger:update`, `/ledger:close` and `/ledger:next`.
   `/ledger` prints each task ledger's goal, current step and next step.
   `/ledger:task` starts a separate task with its own worktree and ledger.
   `/ledger:update` writes the latest results to the current task's ledger.
+  `/ledger:close` writes the ledger, then clears the session.
+  `/ledger:next` writes the ledger, clears the session, then continues the task.
 - **A worktrees mod** — a Claude Code plugin that adds `/worktrees`. It prints
   a table of the repo's linked git worktrees, largest first.
   `/worktrees prune <name>` lists that worktree's build folders, and `--yes`
@@ -195,6 +197,12 @@ decisions and the next step to the ledger. The reply tells you to type
 not create one there. It starts a task with `bin/cc-task-new` instead, the same
 way `/ledger:task` does.
 
+To skip the manual `/clear`, type `/ledger:close` or `/ledger:next` instead.
+Both write the ledger the same way, but never start a task. With no ledger in
+the worktree, they print why and do nothing. When the reply ends,
+`/ledger:close` clears the session. `/ledger:next` also clears it, then sends
+`go <name>`, so the fresh session continues the task.
+
 To remove a finished worktree, use `bin/cc-worktree-retire <worktree>`. It
 archives the ledger first, then removes the worktree and its Xcode build
 folders.
@@ -221,7 +229,7 @@ notes/                    rationale, not rules
 DECISIONS.md              why the setup is shaped this way
 settings.policy.json      Claude Code keys this repo asserts
 codex/policy.toml         Codex keys this repo asserts
-mods/ledger/              the /ledger, /ledger:task and /ledger:update commands (a Claude Code plugin)
+mods/ledger/              the /ledger, /ledger:task, /ledger:update, /ledger:close and /ledger:next commands (a Claude Code plugin)
 mods/worktrees/           the /worktrees command (a Claude Code plugin)
 tools/                    the settings merge and rule filter, plus their tests
 bin/deploy                installs everything above

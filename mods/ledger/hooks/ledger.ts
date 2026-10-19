@@ -34,9 +34,9 @@ function currentStep(planLines: string[]): Row | 'all done' | null {
 }
 
 export function summarize(text: string, fallbackSlug: string, editedMs: number): LedgerSummary {
-  const title = text.match(/^# Task ledger\s*[—-]\s*(.+)$/m)
+  const title = text.match(/^# Task ledger[ \t]*[—-][ \t]*(.*)$/m)
   return {
-    slug: title?.[1]?.trim() ?? fallbackSlug,
+    slug: title?.[1]?.trim() || fallbackSlug,
     editedMs,
     goal: firstLine(section(text, 'Goal')),
     current: currentStep(section(text, 'Plan')),
@@ -81,4 +81,32 @@ export function ledgerPaths(stdout: string): string[] {
 
 export function folderSlug(ledgerPath: string): string {
   return ledgerPath.split('/').at(-3) ?? ''
+}
+
+export type ActiveLedger = { kind: 'none' } | { kind: 'one'; path: string } | { kind: 'several'; paths: string[] }
+
+const LEDGER_SUFFIX = '/.claude/ledger.md'
+
+export function activeLedger(paths: string[], cwd: string): ActiveLedger {
+  const matches = paths.filter(path => {
+    const root = path.slice(0, -LEDGER_SUFFIX.length)
+    return path.endsWith(LEDGER_SUFFIX) && (cwd === root || cwd.startsWith(`${root}/`))
+  })
+  const [only] = matches
+  if (only === undefined) return { kind: 'none' }
+  return matches.length === 1 ? { kind: 'one', path: only } : { kind: 'several', paths: matches }
+}
+
+const UNCHANGED = 'Nothing was written, and the session was not cleared.'
+
+export function noLedgerMessage(cwd: string): string {
+  return `No task ledger found for ${cwd}. ${UNCHANGED} Run this command from the task's worktree, or start a task with /ledger:task.`
+}
+
+export function severalLedgersMessage(cwd: string, slugs: string[]): string {
+  return `Several task ledgers hold ${cwd}: ${slugs.join(', ')}. ${UNCHANGED} Run this command from a task worktree that is not inside another one.`
+}
+
+export function lookupFailedMessage(error: string): string {
+  return `Could not check this task's ledger. ${error} ${UNCHANGED}`
 }

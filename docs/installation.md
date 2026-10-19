@@ -96,7 +96,7 @@ before replacing it. With no terminal attached it refuses and tells you to use
 
 ### The ledger mod
 
-The ledger mod is a Claude Code plugin in `mods/ledger`. It adds three
+The ledger mod is a Claude Code plugin in `mods/ledger`. It adds five
 commands:
 
 - `/ledger` prints each task ledger's goal, current step and next step.
@@ -104,6 +104,10 @@ commands:
   ledger.
 - `/ledger:update` writes the latest results to the current task's ledger. When
   there is no ledger, it starts a task.
+- `/ledger:close` writes the latest results to the current task's ledger, then
+  clears the session. When there is no ledger, it prints why and does nothing.
+- `/ledger:next` does the same as `/ledger:close`, then sends `go <name>`, so
+  the fresh session continues the task.
 
 The worktrees mod, in `mods/worktrees`, adds the `/worktrees` command. It
 prints each linked git worktree's size, last commit, dirty files, ledger and PR.

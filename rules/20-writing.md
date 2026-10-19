@@ -20,7 +20,8 @@ describe what happens step by step, explain each technical term the first time
 you use it, and keep file paths and function names out. When the operator must
 decide, say what changes compared with earlier decisions, then end with the
 options and your recommendation. If the operator asks for layman's terms, the
-default was wrong — fix the default.
+default was wrong — fix the default. Do not tell the operator to run a command you
+have not seen exist in this environment; check first, or say it is unverified.
 
 ## Result status marks
 

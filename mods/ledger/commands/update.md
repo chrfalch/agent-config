@@ -1,5 +1,5 @@
 ---
-description: Write the latest results to this task's ledger, or start a task when there is none
+description: Write the latest results to this task's ledger
 ---
 
 If `.claude/ledger.md` exists in the current working directory, this session
@@ -21,23 +21,6 @@ is in a task worktree. Update that ledger:
    Otherwise, say only that the ledger is updated. After the last review
    verdict there is no clear point: accept the work and finish.
 
-If `.claude/ledger.md` does not exist, do not create one here. A ledger lives
-only in a task worktree. Start a task instead:
-
-1. Take a short kebab-case slug and a one-paragraph goal from this
-   conversation. The goal states the problem first, then what done looks like.
-   If either is unclear, ask the operator in one line and stop.
-2. Run the script from the agent-config repo. The repo is two directories
-   above the real path of `~/.claude/rules/10-operating-model.md`. Put the goal
-   in single quotes, and write each `'` inside it as `'\''`:
-
-   ```bash
-   f=~/.claude/rules/10-operating-model.md
-   while [ -L "$f" ]; do
-     l=$(readlink "$f")
-     case "$l" in /*) f="$l" ;; *) f="$(dirname "$f")/$l" ;; esac
-   done
-   "$(cd -P "$(dirname "$f")/.." && pwd)/bin/cc-task-new" <slug> --goal '<goal>'
-   ```
-3. Reply with the `start:` line the script printed, and nothing else of
-   substance.
+If `.claude/ledger.md` does not exist, create nothing. Tell the operator to use
+`/ledger:task <what the task is>`. A ledger lives only in a task worktree, and
+this command only saves an open task.

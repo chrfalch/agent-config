@@ -203,8 +203,8 @@ export function retireHint(slug: string, branch: BranchState | null): string {
 
 export const HELP = [
   "- `/ledger` — Show each task ledger's goal, current step and next step. `/ledger <name>` shows one.",
-  '- `/ledger:task` — Start a separate task with its own git worktree, branch and ledger. `--here` adds a ledger to this worktree instead.',
-  "- `/ledger:update` — Write the latest results to this task's ledger, or start a task when there is none.",
+  '- `/ledger:task` — Start a separate task with its own git worktree, branch and ledger. With no current ledger, it continues in this session. `--here` adds a ledger to this worktree instead.',
+  "- `/ledger:update` — Write the latest results to this task's ledger. Without one, it points to `/ledger:task`.",
   "- `/ledger:next` — Write this task's ledger, clear the session, and continue from the next step. When every step is done, it first says how to retire the task.",
   "- `/ledger:close` — Write this task's ledger, then clear the session.",
   "- `/ledger:go <slug>` — Write this task's ledger, clear the session, and continue in the task named <slug>. When every step of this task is done, it first says how to retire it.",

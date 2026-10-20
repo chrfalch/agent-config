@@ -38,9 +38,16 @@ Otherwise, if that request is empty, ask what the task is and stop.
    done
    "$(cd -P "$(dirname "$f")/.." && pwd)/bin/cc-task-new" <slug> --goal '<goal>'
    ```
-5. If this session has a current ledger, add one line under its Decisions that
-   names the new task.
-6. Reply with the `start:` line the script printed, and nothing else of
-   substance.
-
-Do not plan the task and do not start it in this session.
+5. Check for a current ledger: `.claude/ledger.md` in the working directory of
+   this session. In the main checkout, treat it as none.
+6. If there is a current ledger, add one line under its Decisions that names
+   the new task. Reply with the `start:` line the script printed, and nothing
+   else of substance. Do not plan the task and do not start it in this
+   session.
+7. If there is no current ledger, there is no old task to clear. Move this
+   session into the new worktree with the EnterWorktree tool. Set `path` to the
+   path on the `worktree` line the script printed. Read `.claude/ledger.md` in
+   the new worktree: the SessionStart hook does not put it in context in this
+   case. Then continue with the operator's request in this session, through
+   the normal pipeline: get the plan approved, then write the approved plan
+   into the ledger.

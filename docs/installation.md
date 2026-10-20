@@ -114,6 +114,10 @@ commands:
   switches.
 - `/ledger:worktrees` prints each linked git worktree's size, last commit,
   dirty files, ledger and PR.
+- `/ledger:retire [<slug>]` shows what retiring a task would archive and
+  remove. `--yes` runs `bin/cc-worktree-retire`: it archives the task's
+  ledger, removes its worktree and deletes the worktree's build folders.
+  Uncommitted changes or an unmerged branch also need `--force`.
 - `/ledger:help` prints one line for each of these commands.
 
 `/ledger:worktrees prune <name>` lists the build folders of one worktree and

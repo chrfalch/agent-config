@@ -103,8 +103,8 @@ export function noLedgerMessage(cwd: string): string {
   return `No task ledger found for ${cwd}. ${UNCHANGED} Run this command from the task's worktree, or start a task with /ledger:task.`
 }
 
-export function severalLedgersMessage(cwd: string, slugs: string[]): string {
-  return `Several task ledgers hold ${cwd}: ${slugs.join(', ')}. ${UNCHANGED} Run this command from a task worktree that is not inside another one.`
+export function severalLedgersMessage(cwd: string, slugs: string[], outcome = UNCHANGED): string {
+  return `Several task ledgers hold ${cwd}: ${slugs.join(', ')}. ${outcome} Run this command from a task worktree that is not inside another one.`
 }
 
 export function lookupFailedMessage(error: string): string {
@@ -118,12 +118,12 @@ export function goArgs(target: string, ledgerPath: string | undefined): string {
 
 export const GO_USAGE = 'Usage: /ledger:go <slug>. Run /ledger to see the slug of each task.'
 
-export function unknownTaskMessage(target: string, slugs: string[]): string {
-  return `No task ledger is named "${target}". ${UNCHANGED} Task ledgers: ${slugs.join(', ') || 'none'}.`
+export function unknownTaskMessage(target: string, slugs: string[], outcome = UNCHANGED): string {
+  return `No task ledger is named "${target}". ${outcome} Task ledgers: ${slugs.join(', ') || 'none'}.`
 }
 
-export function sharedSlugMessage(target: string, paths: string[]): string {
-  return `Several task ledgers are named "${target}": ${paths.join(', ')}. ${UNCHANGED} Give each task its own slug in its ledger's title.`
+export function sharedSlugMessage(target: string, paths: string[], outcome = UNCHANGED): string {
+  return `Several task ledgers are named "${target}": ${paths.join(', ')}. ${outcome} Give each task its own slug in its ledger's title.`
 }
 
 export const HELP = [
@@ -134,5 +134,6 @@ export const HELP = [
   "- `/ledger:close` — Write this task's ledger, then clear the session.",
   "- `/ledger:go <slug>` — Write this task's ledger, clear the session, and continue in the task named <slug>.",
   "- `/ledger:worktrees` — Show each linked git worktree's size, last commit, dirty files, ledger and PR.",
+  '- `/ledger:retire [<slug>]` — Show what retiring a task would archive and remove; `--yes` archives its ledger and removes its worktree.',
   '- `/ledger:help` — Show this list.',
 ].join('\n')

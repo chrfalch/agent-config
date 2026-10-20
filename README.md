@@ -18,7 +18,7 @@ It ships five things:
   They warn when the deployed config is old, and allow a retry of a denied
   read-only call. See
   [The hooks](docs/installation.md#the-hooks).
-- **A ledger mod** — a Claude Code plugin that adds `/ledger` and seven
+- **A ledger mod** — a Claude Code plugin that adds `/ledger` and eight
   `/ledger:` commands. `/ledger:help` prints one line for each.
   `/ledger` prints each task ledger's goal, current step and next step.
   `/ledger:task` starts a separate task with its own worktree and ledger.
@@ -34,6 +34,8 @@ It ships five things:
   folders by the project they were built from.
   `/ledger:worktrees prune-orphans --yes` deletes the ones whose project no
   longer exists.
+  `/ledger:retire [<slug>]` shows what retiring a task would archive and remove.
+  `--yes` archives the task's ledger, then removes its worktree.
 
 ## Why it is shaped this way
 
@@ -184,6 +186,8 @@ want a quick look instead of a full answer.
 | `/ledger:worktrees derived-data` | Lists every folder in `~/Library/Developer/Xcode/DerivedData` with its size. It groups them by where the project is: the main checkout, a linked worktree, another location, or gone. |
 | `/ledger:worktrees prune-orphans` | Lists the DerivedData folders whose project no longer exists. It deletes nothing. |
 | `/ledger:worktrees prune-orphans --yes` | Deletes those folders. It never deletes shared caches or folders without a recorded project. |
+| `/ledger:retire [<slug>]` | Lists what retiring the task would do: its worktree, branch, uncommitted changes and archive path. It deletes nothing. Without a slug it takes the task this session is in. |
+| `/ledger:retire [<slug>] --yes` | Copies the task's ledger to `~/.claude/ledger-archive/<repo>/`, removes its worktree and deletes the worktree's build folders. It refuses uncommitted changes or an unmerged branch unless you add `--force`. |
 
 A build folder whose project is on a disk that is not connected goes in its own group, **Disk not connected**, and is never deleted.
 

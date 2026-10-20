@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
+import test, { after } from 'node:test';
 import { freshHome, REPO, snapshot } from './helpers.js';
 
 const EXPECT = '/usr/bin/expect';
@@ -46,10 +47,15 @@ const DEFAULT_SELECTIONS = [
   answer('Which models should the routing rules keep?', ENTER),
 ];
 
+// The wizard runs `gh extension list`, and gh 2.102 writes $XDG_STATE_HOME/gh/device-id. That file
+// is gh's, not deploy's, so it goes outside HOME and the HOME snapshots see only deploy's writes.
+const GH_STATE = mkdtempSync(path.join(tmpdir(), 'agent-config-gh-state-'));
+after(() => rmSync(GH_STATE, { recursive: true, force: true }));
+
 function wizard(home: string, steps: string[]) {
   const result = spawnSync(EXPECT, ['-c', SCRIPT_HEAD + steps.join('\n') + SCRIPT_TAIL], {
     cwd: REPO,
-    env: { ...process.env, HOME: home, GIT_CONFIG_GLOBAL: path.join(home, '.gitconfig') },
+    env: { ...process.env, HOME: home, GIT_CONFIG_GLOBAL: path.join(home, '.gitconfig'), XDG_STATE_HOME: GH_STATE },
     encoding: 'utf8',
     timeout: 120_000,
   });

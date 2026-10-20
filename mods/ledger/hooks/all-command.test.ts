@@ -63,6 +63,8 @@ test('/ledger:all renders every registered ledger newest first with its next ste
 
   expect(text).toBe(
     [
+      '**All task ledgers** · 4 tasks, 3 active',
+      '',
       HEADER,
       `| app | newer | active | ${local(newer.updated)} | Pick a \\| name. |`,
       `| app | gone | archived | ${local(archived.updated)} | ${'x'.repeat(79)}… |`,
@@ -82,11 +84,25 @@ test('/ledger:all shows an active ledger with a parked mark as parked, and an ar
 
   expect(text).toBe(
     [
+      '**All task ledgers** · 2 tasks, 0 active',
+      '',
       HEADER,
       `| app | parked | parked | ${local(parked.updated)} | Run the tests. |`,
       `| app | gone | archived | ${local(archived.updated)} | Run the tests. |`,
     ].join('\n'),
   )
+})
+
+test('/ledger:all starts with a title line, and the table header starts its own line', async ($, on) => {
+  const only = entry('only', '2026-10-05T09:30:00.000Z')
+  world(on, { 'bin/cc-ledgers list --json': exit(0, JSON.stringify([only])) }, { [only.path]: ledgerText('Ship it.') })
+
+  const { text } = await $.command.run({ command: 'ledger:all' })
+
+  const lines = text.split('\n')
+  expect(lines[0]).toBe('**All task ledgers** · 1 task, 1 active')
+  expect(lines[1]).toBe('')
+  expect(lines[2]).toBe('| repo | slug | status | updated | next |')
 })
 
 test('/ledger:all --scan rebuilds the registry and names the rebuild first', async ($, on) => {
@@ -100,7 +116,7 @@ test('/ledger:all --scan rebuilds the registry and names the rebuild first', asy
   const { text } = await $.command.run({ command: 'ledger:all', args: ' --scan ' })
 
   expect(text).toBe(
-    `rebuilt /home/.claude/ledgers.json: 1 active, 0 archived\n\n${HEADER}\n| app | only | active | ${local(only.updated)} | Ship it. |`,
+    `rebuilt /home/.claude/ledgers.json: 1 active, 0 archived\n\n**All task ledgers** · 1 task, 1 active\n\n${HEADER}\n| app | only | active | ${local(only.updated)} | Ship it. |`,
   )
   expect(calls.map(scriptKey)).toEqual(['bin/cc-ledgers scan --json'])
 })

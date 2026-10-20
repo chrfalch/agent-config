@@ -46,9 +46,13 @@ async function table($: EngineInterface, entries: Entry[]): Promise<string> {
       return [entry.repo, entry.slug, status, formatTime(Date.parse(entry.updated)), truncate(next)].map(cell)
     }),
   )
-  return [['repo', 'slug', 'status', 'updated', 'next'], ['---', '---', '---', '---', '---'], ...rows]
-    .map(row => `| ${row.join(' | ')} |`)
-    .join('\n')
+  const active = rows.filter(row => row[2] === 'active').length
+  // Claude Code puts "ledger: " in front of the first output line; a table on that line does not render.
+  const title = `**All task ledgers** · ${rows.length} ${rows.length === 1 ? 'task' : 'tasks'}, ${active} active`
+  const lines = [['repo', 'slug', 'status', 'updated', 'next'], ['---', '---', '---', '---', '---'], ...rows].map(
+    row => `| ${row.join(' | ')} |`,
+  )
+  return [title, '', ...lines].join('\n')
 }
 
 export async function allCommand($: EngineInterface, args: string): Promise<string> {

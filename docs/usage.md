@@ -186,7 +186,11 @@ with a status per step, each decision with its reason, constraints found along
 the way, the structured report from each subagent, open questions, and exactly
 one next step.
 
-Keep it under about 4k tokens. Finished steps roll up into one line each.
+Keep it under about 4k tokens. Every fresh session reads it whole. Finished
+steps roll up into one line each. Superseded detail is deleted, and facts that
+outlive the task move to a rule file or memory. A ledger that keeps growing
+past the limit anyway is a sign that the work is too big for one task. Split
+it into a parent task with child tasks; see [Parent tasks](#parent-tasks).
 
 ### What does not go in it
 
@@ -227,6 +231,77 @@ removes its worktree. It also deletes the local branch when every commit on it
 is in the default branch or in a merged PR. A branch with commits after its PR
 merged stays. `/ledger:archive <term>` finds the ledger of a task that was
 retired. Add `--all` to search the archive of every repo.
+
+### Parent tasks
+
+A parent task ties together two or more tasks that ship separately: one
+feature split into stacked PRs, or a group of related fixes. Each of those
+tasks is a child task. Do not make a parent task for a single PR, or for a task
+that only has many steps.
+
+A parent task is a normal task. Start it with `/ledger:task`, and start each
+child task with its own `/ledger:task`. Then attach each child task:
+
+```
+/ledger:parent <parent> add <child>
+```
+
+The orchestrator attaches child tasks itself. It runs
+`bin/cc-ledger-parent add <parent> <child>` from the agent-config repo, in a
+folder inside the task's repo. Retiring a task stays with you.
+
+A task becomes a parent task when its first child task is attached. There is
+no flag that starts a task as a child task.
+
+The parent ledger holds the overall goal, the split into child tasks, the
+decisions that cross tasks, and the order. Each child ledger holds its own plan
+and state. After a child task's review verdict or merge, update the parent
+ledger.
+
+`add` writes two ledgers and the task list:
+
+- The child ledger gets `- parent: <parent>` under `## Location`. This line is
+  the source of truth.
+- The parent ledger gets `- <child>` under `## Children`.
+- The child's entry in `~/.claude/ledgers.json` gets a `parent` field.
+  `/ledger:all --scan` rebuilds it from the ledger text.
+
+`/ledger:parent <parent> remove <child>` undoes all three. The command refuses
+a relation that breaks one of these rules:
+
+- The parent task and the child task are in the same repo.
+- There is one level only. A parent task cannot be a child task, and a child
+  task cannot be a parent task.
+- A child task has at most one parent task.
+- A retired child task's name cannot be attached to the same parent task
+  again.
+
+`/ledger:parent <parent>` prints the parent task, then one line per child task:
+its name, its status (`active`, `parked`, `retired` or `missing`) and its next
+step. Without a name, it shows the current task when it has child tasks, or
+else the current task's parent task.
+
+The other commands show the relation too:
+
+| Where | A parent task | A child task |
+|---|---|---|
+| `/ledger` | `- **Children:**`, then each child task with its goal, step and next step | Under its parent task; shows `- **Parent:** <parent>` when the parent is not listed |
+| `/ledger:all` | Its child tasks follow it as `↳ <child>` | `<child> (parent: <parent>)` when the parent is not listed |
+| `/ledger:go` with an unknown name | `<parent> (children: <a>, <b>)` | `<child> (parent: <parent>)` when the parent is not listed |
+| `/ledger:go <name>` | A line that lists its child tasks with their status | A line that names its parent task |
+| `/ledger:worktrees`, ledger column | `parent of <n>`, where n counts the child tasks not retired | `child of <parent>` |
+| Session start | `Child task: <child> (<status>).` or `Child task: <child> (retired YYYY-MM-DD).`, one line per child task | `Parent task: <parent> (<status>).` |
+
+When a child task merges, retire it with `/ledger:retire <child> --yes`. Its
+line in the parent ledger becomes `- <child> (retired YYYY-MM-DD)`. When no
+active child task remains, the command prints:
+
+```
+Parent <parent> has no active children left. Retire it with /ledger:retire <parent> --yes.
+```
+
+It does not retire the parent task itself. To retire a parent task that still
+has active child tasks, add `--force`; without it the command refuses.
 
 ## The clear loop, in short
 

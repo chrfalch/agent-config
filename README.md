@@ -64,7 +64,7 @@ file instead of in the conversation. It ships five things:
   They warn when the deployed config is old, and allow a retry of a denied
   read-only call. See
   [The hooks](docs/installation.md#the-hooks).
-- **A ledger mod** — a Claude Code plugin that adds `/ledger` and eleven
+- **A ledger mod** — a Claude Code plugin that adds `/ledger` and twelve
   `/ledger:` commands. [Commands](#commands) lists each one.
 
 To set it up, see [Install](#install).
@@ -242,7 +242,10 @@ to write a ledger, start a task, or switch to one.
 | `/ledger:worktrees prune-orphans` | Lists the DerivedData folders whose project no longer exists. It deletes nothing. |
 | `/ledger:worktrees prune-orphans --yes` | Deletes those folders. It never deletes shared caches or folders without a recorded project. |
 | `/ledger:retire [<slug>]` | Lists what retiring the task would do: its worktree, branch, uncommitted changes and archive path. It deletes nothing. Without a slug it takes the task this session is in. |
-| `/ledger:retire [<slug>] --yes [--force]` | Copies the task's ledger to `~/.claude/ledger-archive/<repo>/`, removes its worktree and deletes the worktree's build folders. It also deletes the local branch when every commit on it is in the default branch or in a merged PR. A branch with commits after its PR merged stays. It needs `--force` for uncommitted changes, and for a branch that has commits not in the default branch and no merged PR. |
+| `/ledger:retire [<slug>] --yes [--force]` | Copies the task's ledger to `~/.claude/ledger-archive/<repo>/`, removes its worktree and deletes the worktree's build folders. It also deletes the local branch when every commit on it is in the default branch or in a merged PR. A branch with commits after its PR merged stays. It needs `--force` for uncommitted changes, for a branch that has commits not in the default branch and no merged PR, and for a parent task with active child tasks. Retiring a child task marks it retired in its parent ledger. |
+| `/ledger:parent [<name>]` | Prints a parent task and, for each child task, its status and next step. Without a name it shows the task this session is in when it has child tasks, or else that task's parent task. |
+| `/ledger:parent <name> add <child>` | Makes `<child>` a child task of `<name>`. It writes both ledgers. A parent task ties together tasks that ship separately, such as stacked PRs. See [Parent tasks](docs/usage.md#parent-tasks). |
+| `/ledger:parent <name> remove <child>` | Removes that relation from both ledgers. |
 | `/ledger:all` | Prints a table of every task ledger on the machine, from every repo, active and archived, with its next step. A parked task shows as `parked`. The list lives in `~/.claude/ledgers.json`. A new task, a retire and each session start add to it. |
 | `/ledger:all --scan` | Rebuilds `~/.claude/ledgers.json` from the ledgers under `~/repos` and `~/issues` and the archive in `~/.claude/ledger-archive/`, then prints the table. |
 

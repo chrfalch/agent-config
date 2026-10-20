@@ -102,7 +102,9 @@ function runUnderNode(home: string, version: string, ...args: string[]) {
   mkdirSync(bin);
   const preload = path.join(bin, 'version.cjs');
   writeFileSync(preload, `Object.defineProperty(process.versions, 'node', { value: '${version}' });\n`);
-  writeFileSync(path.join(bin, 'node'), `#!/bin/sh\nexec '${process.execPath}' --require '${preload}' "$@"\n`, { mode: 0o755 });
+  // tsx picks module.register() over module.registerHooks() from the faked version, and the real
+  // Node may deprecate it (DEP0205). A real Node of the faked version prints no such warning.
+  writeFileSync(path.join(bin, 'node'), `#!/bin/sh\nexec '${process.execPath}' --disable-warning=DEP0205 --require '${preload}' "$@"\n`, { mode: 0o755 });
   return spawnSync(path.join(REPO, 'bin/deploy'), args, {
     cwd: home,
     env: { ...process.env, HOME: home, PATH: `${bin}${path.delimiter}${process.env.PATH ?? ''}`, GIT_CONFIG_GLOBAL: path.join(home, '.gitconfig') },

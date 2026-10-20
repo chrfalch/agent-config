@@ -1,4 +1,4 @@
-import type { Register } from 'claude-code'
+import type { EngineInterface, Register } from 'claude-code'
 
 import { allCommand } from './all-command'
 import {
@@ -15,6 +15,7 @@ import {
   park,
   parkArgs,
   parkMarker,
+  retireHint,
   severalLedgersMessage,
   sharedSlugMessage,
   summarize,
@@ -23,11 +24,20 @@ import {
   unparkFailedMessage,
 } from './ledger'
 import { archiveCommand } from './archive-command'
-import { findLedgers, message, namesOtherWorktree, titleSlug } from './lookup'
+import { findLedgers, lookUpBranch, message, namesOtherWorktree, titleSlug } from './lookup'
+import { worktreeOf } from './retire'
 import { retireCommand } from './retire-command'
 import { worktreesCommand } from './worktrees-command'
 
 const armed = { plugin: 'ledger', key: 'armed' } as const
+
+// Read at the turn's end, because the model may have just finished the last step. The line is only advice, so a failure skips it.
+async function showRetireHint($: EngineInterface, ledger: string): Promise<void> {
+  try {
+    const { slug, current } = summarize(await $.fs.read(ledger), folderSlug(ledger), 0)
+    if (current === 'all done') $.ui.log(retireHint(slug, await lookUpBranch($, worktreeOf(ledger))))
+  } catch {}
+}
 
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
@@ -61,7 +71,7 @@ export const register: Register = on => {
     if (active.kind === 'none') return { text: noLedgerMessage(cwd) }
     if (active.kind === 'several') return { text: severalLedgersMessage(cwd, active.paths.map(folderSlug)) }
     const slug = await titleSlug($, active.path)
-    await $.state.set(armed, { mode: e.command === 'ledger:next' ? 'next' : 'close', slug })
+    await $.state.set(armed, e.command === 'ledger:next' ? { mode: 'next', slug, ledger: active.path } : { mode: 'close', slug })
     return next(e)
   }).catch(async ($, e, next) => {
     await $.state.set(armed, null)
@@ -91,8 +101,9 @@ export const register: Register = on => {
         return { text: unparkFailedMessage(target, message(error)) }
       }
     }
-    await $.state.set(armed, { mode: 'go', slug: target })
-    return next({ ...e, args: goArgs(target, active.kind === 'one' ? active.path : undefined, parked) })
+    const current = active.kind === 'one' ? active.path : undefined
+    await $.state.set(armed, { mode: 'go', slug: target, ...(current && current !== match.path && { ledger: current }) })
+    return next({ ...e, args: goArgs(target, current, parked) })
   }).catch(async ($, e, next) => {
     await $.state.set(armed, null)
     return next.called ? next(e) : { text: lookupFailedMessage(next.error.message ?? next.error.kind) }
@@ -162,7 +173,7 @@ export const register: Register = on => {
       }
     }
     const go = `go ${value.slug}`
-    const continues = value.mode === 'next' || value.mode === 'go'
+    const continues = value.mode === 'next' || value.mode === 'go' ? value : null
     try {
       await $.command.run({ command: 'clear' })
     } catch (error) {
@@ -171,6 +182,7 @@ export const register: Register = on => {
       return next(e)
     }
     if (continues) {
+      if (continues.ledger) await showRetireHint($, continues.ledger)
       try {
         await $.prompt.submit({ text: go })
       } catch (error) {

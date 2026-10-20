@@ -187,13 +187,27 @@ export function sharedSlugMessage(target: string, paths: string[], outcome = UNC
   return `Several task ledgers are named "${target}": ${paths.join(', ')}. ${outcome} Give each task its own slug in its ledger's title.`
 }
 
+/** A task branch: commits ahead of origin's default branch, and every PR from it as `gh pr list --state all` lists them. */
+export type BranchState = { ahead: number; prs: { state: string; number: number }[] }
+
+/** The line shown after a finished task's session clears. `null` means git or gh could not tell whether the branch is merged. */
+export function retireHint(slug: string, branch: BranchState | null): string {
+  const finished = `Task ${slug} is finished`
+  if (branch && (branch.ahead === 0 || branch.prs.some(pr => pr.state === 'MERGED'))) {
+    return `${finished} and merged. Retire it with \`/ledger:retire ${slug} --yes\`.`
+  }
+  const open = branch?.prs.find(pr => pr.state === 'OPEN')
+  if (open) return `${finished}. After PR #${open.number} merges, run \`/ledger:retire ${slug} --yes\`.`
+  return `${finished}. Run \`/ledger:retire ${slug}\` to see what blocks retiring it.`
+}
+
 export const HELP = [
   "- `/ledger` — Show each task ledger's goal, current step and next step. `/ledger <name>` shows one.",
   '- `/ledger:task` — Start a separate task with its own git worktree, branch and ledger. `--here` adds a ledger to this worktree instead.',
   "- `/ledger:update` — Write the latest results to this task's ledger, or start a task when there is none.",
-  "- `/ledger:next` — Write this task's ledger, clear the session, and continue from the next step.",
+  "- `/ledger:next` — Write this task's ledger, clear the session, and continue from the next step. When every step is done, it first says how to retire the task.",
   "- `/ledger:close` — Write this task's ledger, then clear the session.",
-  "- `/ledger:go <slug>` — Write this task's ledger, clear the session, and continue in the task named <slug>.",
+  "- `/ledger:go <slug>` — Write this task's ledger, clear the session, and continue in the task named <slug>. When every step of this task is done, it first says how to retire it.",
   "- `/ledger:park [<slug>] <reason>` — Mark a task parked. Without a slug it writes this task's ledger, parks it, then clears the session.",
   "- `/ledger:worktrees` — Show each linked git worktree's size, last commit, dirty files, ledger and PR.",
   '- `/ledger:retire [<slug>]` — Show what retiring a task would archive and remove; `--yes` archives its ledger, removes its worktree, and deletes its branch when all of its commits are merged.',

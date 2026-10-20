@@ -1,7 +1,7 @@
 import type { On } from 'claude-code'
 import { expect, test } from 'claude-code/testing'
 
-import { activeLedger, folderSlug, format, formatAll, ledgerPaths, lookupFailedMessage, summarize } from './ledger'
+import { activeLedger, folderSlug, format, formatAll, ledgerPaths, lookupFailedMessage, retireHint, summarize } from './ledger'
 
 const LEDGER = `# Task ledger — fast-steps
 
@@ -97,26 +97,51 @@ test('activeLedger reports several when nested worktrees both hold cwd', () => {
   })
 })
 
-type World = { calls: string[]; logs: string[]; isMarkdownReached: () => boolean; markdownArgs: () => string | undefined }
+type World = {
+  /** clear, ui.log and prompt.submit, in the order they ran. */
+  calls: string[]
+  /** Every git and gh command run. */
+  commands: string[][]
+  isMarkdownReached: () => boolean
+  markdownArgs: () => string | undefined
+  /** Replaces the text of the FIX_LOGIN ledger, as the model does when it writes the ledger. */
+  writeLedger: (text: string) => void
+}
 
 type Broken = 'spawn' | 'lookup' | 'read' | 'markdown' | 'clear' | 'submit'
+
+type Reply = { value: { exitCode: number; stdout: string; stderr: string; isStdoutTruncated: false; isStderrTruncated: false } } | { deny: string }
+
+const exit = (exitCode: number, stdout: string, stderr = ''): Reply => ({
+  value: { exitCode, stdout, stderr, isStdoutTruncated: false, isStderrTruncated: false },
+})
+const ok = (stdout: string): Reply => exit(0, stdout)
+
+type Replies = Record<string, Reply>
 
 // The ledger at NEW_API has no slug in its title, so its slug is its folder name; every other ledger is fast-steps.
 const UNTITLED = LEDGER.replace('# Task ledger — fast-steps', '# Task ledger')
 
-function world(on: On, cwd: string, ledgers: string[], command: string, broken?: Broken): World {
+function world(on: On, cwd: string, ledgers: string[], command: string, broken?: Broken, replies: Replies = {}): World {
   const calls: string[] = []
-  const logs: string[] = []
+  const commands: string[][] = []
   let isMarkdownReached = false
   let markdownArgs: string | undefined
+  let fixLogin = LEDGER
   on('session.cwd', async () => ({ value: cwd }))
-  on('process.run', async () => broken === 'spawn' ? { deny: 'spawn bash ENOENT' } : ({
-    value: broken === 'lookup'
-      ? { exitCode: 1, stdout: '', stderr: 'not a repository', isStdoutTruncated: false, isStderrTruncated: false }
-      : { exitCode: 0, stdout: ledgers.join('\n'), stderr: '', isStdoutTruncated: false, isStderrTruncated: false },
-  }))
+  on('process.run', async (_, e) => {
+    if (e.argv[0] !== 'bash') {
+      commands.push([...e.argv])
+      return replies[JSON.stringify(e.argv)] ?? { deny: `unexpected command: ${JSON.stringify(e.argv)}` }
+    }
+    if (broken === 'spawn') return { deny: 'spawn bash ENOENT' }
+    return broken === 'lookup' ? exit(1, '', 'not a repository') : ok(ledgers.join('\n'))
+  })
   on('fs.stat', async () => ({ value: { kind: 'file', size: 0, mtimeMs: 0, isLink: false } }))
-  on('fs.read', async (_, e) => (broken === 'read' ? { deny: 'EACCES: ledger unreadable' } : { value: e.path === NEW_API ? UNTITLED : LEDGER }))
+  on('fs.read', async (_, e) => {
+    if (broken === 'read') return { deny: 'EACCES: ledger unreadable' }
+    return { value: e.path === NEW_API ? UNTITLED : e.path === FIX_LOGIN ? fixLogin : LEDGER }
+  })
   on('command.run', { command }, async (_, e) => {
     isMarkdownReached = true
     markdownArgs = e.args
@@ -134,11 +159,19 @@ function world(on: On, cwd: string, ledgers: string[], command: string, broken?:
     return { text: '' }
   })
   on('ui.log', async (_, e) => {
-    logs.push(e.text)
+    calls.push(`log: ${e.text}`)
     return { value: undefined }
   })
   on('turn.complete', async () => ({ text: '' }))
-  return { calls, logs, isMarkdownReached: () => isMarkdownReached, markdownArgs: () => markdownArgs }
+  return {
+    calls,
+    commands,
+    isMarkdownReached: () => isMarkdownReached,
+    markdownArgs: () => markdownArgs,
+    writeLedger: text => {
+      fixLogin = text
+    },
+  }
 }
 
 const turnEnd = { answer: '', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' } as const
@@ -243,30 +276,27 @@ test('a failure before the command runs answers with the reason and stays disarm
 })
 
 test('/ledger:close names the failed clear and does not ask for go', async ($, on) => {
-  const { calls, logs } = world(on, `${WORKTREES}/fix-login`, [FIX_LOGIN], 'ledger:close', 'clear')
+  const { calls } = world(on, `${WORKTREES}/fix-login`, [FIX_LOGIN], 'ledger:close', 'clear')
   await $.command.run({ command: 'ledger:close', args: '' })
   await $.turn.complete(turnEnd)
-  expect(calls).toEqual(['clear'])
-  expect(logs).toHaveLength(1)
-  expect(logs[0]).toMatch(/^\/ledger:close could not clear the session: .+\. Run \/clear\.$/)
+  expect(calls.slice(0, -1)).toEqual(['clear'])
+  expect(calls.at(-1)).toMatch(/^log: \/ledger:close could not clear the session: .+\. Run \/clear\.$/)
 })
 
 test('/ledger:next names the failed clear and asks for go <slug>', async ($, on) => {
-  const { calls, logs } = world(on, `${WORKTREES}/fix-login`, [FIX_LOGIN], 'ledger:next', 'clear')
+  const { calls } = world(on, `${WORKTREES}/fix-login`, [FIX_LOGIN], 'ledger:next', 'clear')
   await $.command.run({ command: 'ledger:next', args: '' })
   await $.turn.complete(turnEnd)
-  expect(calls).toEqual(['clear'])
-  expect(logs).toHaveLength(1)
-  expect(logs[0]).toMatch(/^\/ledger:next could not clear the session: .+\. Run \/clear, then say: go fast-steps\.$/)
+  expect(calls.slice(0, -1)).toEqual(['clear'])
+  expect(calls.at(-1)).toMatch(/^log: \/ledger:next could not clear the session: .+\. Run \/clear, then say: go fast-steps\.$/)
 })
 
 test('/ledger:next names the failed prompt after the clear worked', async ($, on) => {
-  const { calls, logs } = world(on, `${WORKTREES}/fix-login`, [FIX_LOGIN], 'ledger:next', 'submit')
+  const { calls } = world(on, `${WORKTREES}/fix-login`, [FIX_LOGIN], 'ledger:next', 'submit')
   await $.command.run({ command: 'ledger:next', args: '' })
   await $.turn.complete(turnEnd)
-  expect(calls).toEqual(['clear', 'submit: go fast-steps'])
-  expect(logs).toHaveLength(1)
-  expect(logs[0]).toMatch(/^\/ledger:next cleared the session but could not send "go fast-steps": .+\. Say: go fast-steps\.$/)
+  expect(calls.slice(0, -1)).toEqual(['clear', 'submit: go fast-steps'])
+  expect(calls.at(-1)).toMatch(/^log: \/ledger:next cleared the session but could not send "go fast-steps": .+\. Say: go fast-steps\.$/)
 })
 
 test('/ledger:help prints one line per /ledger command, in order, without a model turn', async ($, on) => {
@@ -333,7 +363,7 @@ test('/ledger:go from a task worktree runs the command, then clears and submits 
   await $.command.run({ command: 'ledger:go', args: '  new-api ' })
   expect(isMarkdownReached()).toBe(true)
   expect(markdownArgs()).toBe(`task: new-api\nledger: ${FIX_LOGIN}`)
-  expect(armed).toEqual([{ mode: 'go', slug: 'new-api' }])
+  expect(armed).toEqual([{ mode: 'go', slug: 'new-api', ledger: FIX_LOGIN }])
   expect(calls).toEqual([])
   await $.turn.complete(turnEnd)
   expect(calls).toEqual(['clear', 'submit: go new-api'])
@@ -378,19 +408,128 @@ test('/ledger:go reports a failed ledger lookup and clears nothing', async ($, o
 })
 
 test('/ledger:go names the failed clear and asks for go <target>', async ($, on) => {
-  const { calls, logs } = world(on, `${WORKTREES}/fix-login`, [FIX_LOGIN, NEW_API], 'ledger:go', 'clear')
+  const { calls } = world(on, `${WORKTREES}/fix-login`, [FIX_LOGIN, NEW_API], 'ledger:go', 'clear')
   await $.command.run({ command: 'ledger:go', args: 'new-api' })
   await $.turn.complete(turnEnd)
-  expect(calls).toEqual(['clear'])
-  expect(logs).toHaveLength(1)
-  expect(logs[0]).toMatch(/^\/ledger:go could not clear the session: .+\. Run \/clear, then say: go new-api\.$/)
+  expect(calls.slice(0, -1)).toEqual(['clear'])
+  expect(calls.at(-1)).toMatch(/^log: \/ledger:go could not clear the session: .+\. Run \/clear, then say: go new-api\.$/)
 })
 
 test('/ledger:go names the failed prompt after the clear worked', async ($, on) => {
-  const { calls, logs } = world(on, `${WORKTREES}/fix-login`, [FIX_LOGIN, NEW_API], 'ledger:go', 'submit')
+  const { calls } = world(on, `${WORKTREES}/fix-login`, [FIX_LOGIN, NEW_API], 'ledger:go', 'submit')
+  await $.command.run({ command: 'ledger:go', args: 'new-api' })
+  await $.turn.complete(turnEnd)
+  expect(calls.slice(0, -1)).toEqual(['clear', 'submit: go new-api'])
+  expect(calls.at(-1)).toMatch(/^log: \/ledger:go cleared the session but could not send "go new-api": .+\. Say: go new-api\.$/)
+})
+
+const DONE = LEDGER.replace('| todo |', '| done |')
+const MERGED_LINE = 'Task fast-steps is finished and merged. Retire it with `/ledger:retire fast-steps --yes`.'
+const OPEN_PR_LINE = 'Task fast-steps is finished. After PR #31 merges, run `/ledger:retire fast-steps --yes`.'
+const UNMERGED_LINE = 'Task fast-steps is finished. Run `/ledger:retire fast-steps` to see what blocks retiring it.'
+
+test('retireHint tells a merged task to retire', () => {
+  expect(retireHint('fast-steps', { ahead: 0, prs: [] })).toBe(MERGED_LINE)
+  expect(retireHint('fast-steps', { ahead: 4, prs: [{ state: 'MERGED', number: 30 }] })).toBe(MERGED_LINE)
+})
+
+test('retireHint names the open PR of a task that is not merged', () => {
+  expect(retireHint('fast-steps', { ahead: 4, prs: [{ state: 'OPEN', number: 31 }] })).toBe(OPEN_PR_LINE)
+})
+
+test('retireHint sends a task with no open or merged PR to the retire dry run', () => {
+  expect(retireHint('fast-steps', { ahead: 4, prs: [] })).toBe(UNMERGED_LINE)
+  expect(retireHint('fast-steps', { ahead: 4, prs: [{ state: 'CLOSED', number: 29 }] })).toBe(UNMERGED_LINE)
+  expect(retireHint('fast-steps', null)).toBe(UNMERGED_LINE)
+})
+
+const FIX_LOGIN_TREE = `${WORKTREES}/fix-login`
+const fixLoginGit = (...args: string[]): string[] => ['git', '-C', FIX_LOGIN_TREE, ...args]
+const FIX_LOGIN_PRS = ['gh', 'pr', 'list', '--head', 'me/fix-login', '--state', 'all', '--json', 'state,number']
+
+function branchReplies({ ahead = ok('2\n'), prs = ok('[]') }: { ahead?: Reply; prs?: Reply } = {}): Replies {
+  const entries: [string[], Reply][] = [
+    [fixLoginGit('branch', '--show-current'), ok('me/fix-login\n')],
+    [fixLoginGit('symbolic-ref', '--short', 'refs/remotes/origin/HEAD'), ok('origin/main\n')],
+    [fixLoginGit('rev-list', '--count', 'origin/main..HEAD'), ahead],
+    [FIX_LOGIN_PRS, prs],
+  ]
+  return Object.fromEntries(entries.map(([argv, reply]) => [JSON.stringify(argv), reply]))
+}
+
+// /ledger:next continues the finished task; /ledger:go here moves from it to new-api.
+const continuations = [
+  { command: 'ledger:next', args: '', go: 'go fast-steps' },
+  { command: 'ledger:go', args: 'new-api', go: 'go new-api' },
+]
+
+for (const { command, args, go } of continuations) {
+  const finishedCases: [name: string, replies: Replies, line: string][] = [
+    ['with no commits ahead of origin', branchReplies({ ahead: ok('0\n') }), MERGED_LINE],
+    ['with a merged PR', branchReplies({ prs: ok('[{"state":"MERGED","number":30}]') }), MERGED_LINE],
+    ['with an open PR', branchReplies({ prs: ok('[{"state":"OPEN","number":31}]') }), OPEN_PR_LINE],
+    ['with no PR', branchReplies(), UNMERGED_LINE],
+    ['when gh fails', branchReplies({ prs: exit(1, '', 'gh: not logged in') }), UNMERGED_LINE],
+    ['when git cannot run', {}, UNMERGED_LINE],
+  ]
+  for (const [name, replies, line] of finishedCases) {
+    test(`/${command} on a finished task ${name} logs one retire line between the clear and ${go}`, async ($, on) => {
+      const { calls, writeLedger } = world(on, FIX_LOGIN_TREE, [FIX_LOGIN, NEW_API], command, undefined, replies)
+      writeLedger(DONE)
+      await $.command.run({ command, args })
+      await $.turn.complete(turnEnd)
+      expect(calls).toEqual(['clear', `log: ${line}`, `submit: ${go}`])
+    })
+  }
+
+  test(`/${command} on a task with open steps logs no retire line and runs no git`, async ($, on) => {
+    const { calls, commands } = world(on, FIX_LOGIN_TREE, [FIX_LOGIN, NEW_API], command, undefined, branchReplies({ ahead: ok('0\n') }))
+    await $.command.run({ command, args })
+    await $.turn.complete(turnEnd)
+    expect(calls).toEqual(['clear', `submit: ${go}`])
+    expect(commands).toEqual([])
+  })
+
+  test(`/${command} reads the ledger again at the end of the turn, after the model finished its last step`, async ($, on) => {
+    const { calls, writeLedger } = world(on, FIX_LOGIN_TREE, [FIX_LOGIN, NEW_API], command, undefined, branchReplies({ ahead: ok('0\n') }))
+    await $.command.run({ command, args })
+    writeLedger(DONE)
+    await $.turn.complete(turnEnd)
+    expect(calls).toEqual(['clear', `log: ${MERGED_LINE}`, `submit: ${go}`])
+  })
+
+  test(`/${command} logs no retire line when the clear fails`, async ($, on) => {
+    const { calls, writeLedger } = world(on, FIX_LOGIN_TREE, [FIX_LOGIN, NEW_API], command, 'clear', branchReplies({ ahead: ok('0\n') }))
+    writeLedger(DONE)
+    await $.command.run({ command, args })
+    await $.turn.complete(turnEnd)
+    expect(calls.slice(0, -1)).toEqual(['clear'])
+    expect(calls.at(-1)).toContain('could not clear the session')
+  })
+}
+
+test('/ledger:go from outside every task worktree logs no retire line', async ($, on) => {
+  const { calls, commands, writeLedger } = world(on, '/repo', [FIX_LOGIN, NEW_API], 'ledger:go', undefined, branchReplies({ ahead: ok('0\n') }))
+  writeLedger(DONE)
   await $.command.run({ command: 'ledger:go', args: 'new-api' })
   await $.turn.complete(turnEnd)
   expect(calls).toEqual(['clear', 'submit: go new-api'])
-  expect(logs).toHaveLength(1)
-  expect(logs[0]).toMatch(/^\/ledger:go cleared the session but could not send "go new-api": .+\. Say: go new-api\.$/)
+  expect(commands).toEqual([])
+})
+
+test('/ledger:go to the current task logs no retire line', async ($, on) => {
+  const { calls, commands, writeLedger } = world(on, FIX_LOGIN_TREE, [FIX_LOGIN, NEW_API], 'ledger:go', undefined, branchReplies({ ahead: ok('0\n') }))
+  writeLedger(DONE)
+  await $.command.run({ command: 'ledger:go', args: 'fast-steps' })
+  await $.turn.complete(turnEnd)
+  expect(calls).toEqual(['clear', 'submit: go fast-steps'])
+  expect(commands).toEqual([])
+})
+
+test('/ledger:close logs no retire line', async ($, on) => {
+  const { calls, writeLedger } = world(on, FIX_LOGIN_TREE, [FIX_LOGIN, NEW_API], 'ledger:close', undefined, branchReplies({ ahead: ok('0\n') }))
+  writeLedger(DONE)
+  await $.command.run({ command: 'ledger:close', args: '' })
+  await $.turn.complete(turnEnd)
+  expect(calls).toEqual(['clear'])
 })

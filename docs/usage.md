@@ -142,6 +142,16 @@ It clears the session and sends `go <name>`, so the fresh session continues
 from the ledger. `/ledger:close` clears without continuing. If either command
 cannot clear the session, it says so; then type `/clear`, then `go`.
 
+When every plan step of the task is done, `/ledger:next` first shows one line
+in the fresh session on how to retire the task:
+
+- The branch is merged: ``Task <name> is finished and merged. Retire it with `/ledger:retire <name> --yes`.``
+- The branch has an open PR: ``Task <name> is finished. After PR #<n> merges, run `/ledger:retire <name> --yes`.``
+- Anything else, or git or gh could not tell: ``Task <name> is finished. Run `/ledger:retire <name>` to see what blocks retiring it.``
+
+A branch is merged when it has no commits ahead of the default branch on
+origin, or when a PR from it was merged. This is the rule `/ledger:retire` uses.
+
 A session sees only the ledgers of its own repo. `/ledger:all` lists every task
 ledger on the machine, from every repo, with its next step. `/ledger:all --scan`
 rebuilds that list from the ledgers on disk.
@@ -203,6 +213,9 @@ To set a task aside, type `/ledger:park <reason>` in its session, or
 `/ledger:park <name> <reason>` in a session in the main checkout. `/ledger`
 shows a parked task with the date and the reason. `/ledger:go <name>` resumes
 it and removes the mark.
+
+When the task you leave with `/ledger:go <name>` has every plan step done,
+the fresh session first shows the same retire line as `/ledger:next`.
 
 When a task is done, `/ledger:retire <name> --yes` archives its ledger and
 removes its worktree. It also deletes the local branch when every commit on it

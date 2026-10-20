@@ -2,6 +2,9 @@ export type Row = { number: string; step: string; status: string }
 
 export type Parked = { date: string; reason: string }
 
+/** A line of a parent's Children section, as bin/cc-ledger-parent writes it. */
+export type ChildLine = { slug: string; retired?: string }
+
 export type LedgerSummary = {
   slug: string
   editedMs: number
@@ -9,13 +12,16 @@ export type LedgerSummary = {
   current: Row | 'all done' | null
   next: string
   parked?: Parked
+  parent?: string
+  children?: ChildLine[]
 }
 
 const FINISHED = /^(done|accepted|reviewed|dropped|skipped)\b/i
 
-function section(text: string, heading: string): string[] {
+// Location and Children are matched exactly, as bin/cc-ledger-parent does; other headings carry a suffix such as "(approved …)".
+function section(text: string, heading: string, exact = false): string[] {
   const lines = text.split('\n')
-  const start = lines.findIndex(line => line.startsWith(`## ${heading}`))
+  const start = lines.findIndex(line => (exact ? line.trimEnd() === `## ${heading}` : line.startsWith(`## ${heading}`)))
   if (start === -1) return []
   const rest = lines.slice(start + 1)
   const end = rest.findIndex(line => line.startsWith('## '))
@@ -44,10 +50,27 @@ function parkedOf(line: string): Parked | null {
   return match ? { date: match[1] ?? '', reason: match[2]?.trim() ?? '' } : null
 }
 
+function parentOf(text: string): string | undefined {
+  return section(text, 'Location', true)
+    .map(line => line.trimEnd().match(/^- parent:[ \t]*(\S+)$/)?.[1])
+    .find(value => value !== undefined && !value.startsWith('<'))
+}
+
+const CHILD = /^- ([A-Za-z0-9._-]+)(?: \(retired (\d{4}-\d\d-\d\d)\))?$/
+
+function childrenOf(text: string): ChildLine[] {
+  return section(text, 'Children', true).flatMap(line => {
+    const [, slug, retired] = line.trim().match(CHILD) ?? []
+    return slug ? [{ slug, ...(retired && { retired }) }] : []
+  })
+}
+
 export function summarize(text: string, fallbackSlug: string, editedMs: number): LedgerSummary {
   const title = text.match(/^# Task ledger[ \t]*[—-][ \t]*(.*)$/m)
   const nextStep = section(text, 'Next step')
   const parked = parkedOf(firstLine(nextStep))
+  const parent = parentOf(text)
+  const children = childrenOf(text)
   return {
     slug: title?.[1]?.trim() || fallbackSlug,
     editedMs,
@@ -55,7 +78,36 @@ export function summarize(text: string, fallbackSlug: string, editedMs: number):
     current: currentStep(section(text, 'Plan')),
     next: firstLine(nextStep.filter(line => parkedOf(line) === null)),
     ...(parked && { parked }),
+    ...(parent && { parent }),
+    ...(children.length > 0 && { children }),
   }
+}
+
+export type Grouped<T> = { item: T; children: T[] }
+
+/**
+ * Puts each item under the first listed item its parent key names, one level deep, keeping the order of both.
+ * An item whose parent is not listed, or is itself listed under a parent, stays at the top.
+ */
+export function groupByParent<T>(items: T[], key: (item: T) => string, parentKey: (item: T) => string | undefined): Grouped<T>[] {
+  const keys = new Set(items.map(key))
+  const listedParent = (item: T) => {
+    const parent = parentKey(item)
+    return parent !== undefined && parent !== key(item) && keys.has(parent) ? parent : undefined
+  }
+  const tops = new Set(items.filter(item => listedParent(item) === undefined).map(key))
+  const nestedUnder = (item: T) => {
+    const parent = listedParent(item)
+    return parent !== undefined && tops.has(parent) ? parent : undefined
+  }
+  const groups = items.filter(item => nestedUnder(item) === undefined).map((item): Grouped<T> => ({ item, children: [] }))
+  const byKey = new Map<string, Grouped<T>>()
+  for (const group of groups) if (!byKey.has(key(group.item))) byKey.set(key(group.item), group)
+  for (const item of items) {
+    const parent = nestedUnder(item)
+    if (parent !== undefined) byKey.get(parent)?.children.push(item)
+  }
+  return groups
 }
 
 export const isoDate = (date: Date): string =>
@@ -98,26 +150,31 @@ export function formatTime(ms: number): string {
 }
 
 function formatStep({ current, parked }: LedgerSummary): string {
-  if (parked) return `- **Parked:** ${parked.date} — ${parked.reason}`
+  if (parked) return `**Parked:** ${parked.date} — ${parked.reason}`
   if (current === null) return ''
-  if (current === 'all done') return '- **Now:** all plan steps done'
-  return `- **Now:** step ${current.number} · ${current.step} — *${current.status}*`
+  if (current === 'all done') return '**Now:** all plan steps done'
+  return `**Now:** step ${current.number} · ${current.step} — *${current.status}*`
 }
 
-export function format(ledger: LedgerSummary): string {
+function fields(ledger: LedgerSummary): string[] {
+  return [ledger.goal && `**Goal:** ${ledger.goal}`, formatStep(ledger), ledger.next && `**Next:** ${ledger.next}`].filter(field => field !== '')
+}
+
+export function format(ledger: LedgerSummary, children: LedgerSummary[] = []): string {
   return [
     `#### ${ledger.slug} · edited ${formatTime(ledger.editedMs)}`,
-    ledger.goal && `- **Goal:** ${ledger.goal}`,
-    formatStep(ledger),
-    ledger.next && `- **Next:** ${ledger.next}`,
-  ]
-    .filter(line => line !== '')
-    .join('\n')
+    ...fields(ledger).map(field => `- ${field}`),
+    ...(ledger.parent ? [`- **Parent:** ${ledger.parent}`] : []),
+    ...(children.length > 0 ? ['- **Children:**'] : []),
+    ...children.flatMap(child => [`  - **${child.slug}** · edited ${formatTime(child.editedMs)}`, ...fields(child).map(field => `    - ${field}`)]),
+  ].join('\n')
 }
 
 export function formatAll(ledgers: LedgerSummary[]): string {
-  const count = ledgers.length === 1 ? '1 ledger' : `${ledgers.length} ledgers, newest first`
-  return [`**Task ledgers** · ${count}`, ...ledgers.map(format)].join('\n\n')
+  const groups = groupByParent(ledgers, ledger => ledger.slug, ledger => ledger.parent)
+  const order = groups.some(({ children }) => children.length > 0) ? 'newest first, children under their parent' : 'newest first'
+  const count = ledgers.length === 1 ? '1 ledger' : `${ledgers.length} ledgers, ${order}`
+  return [`**Task ledgers** · ${count}`, ...groups.map(({ item, children }) => format(item, children))].join('\n\n')
 }
 
 export function ledgerPaths(stdout: string): string[] {
@@ -159,10 +216,17 @@ export function lookupFailedMessage(error: string): string {
   return `Could not check this task's ledger. ${error} ${UNCHANGED}`
 }
 
+/** A child task as `cc-ledger-parent show --json` reports it. */
+export type ChildStatus = { slug: string; status: string; next: string }
+
+export type Family = { parent?: string; children?: ChildStatus[] }
+
 // One field per line, because a slug and a path can both hold spaces. go.md reads this format.
-export function goArgs(target: string, ledgerPath: string | undefined, parked: Parked | null = null): string {
+export function goArgs(target: string, ledgerPath: string | undefined, parked: Parked | null = null, family: Family = {}): string {
   const fields = [`task: ${target}`, `ledger: ${ledgerPath ?? 'none'}`]
   if (parked) fields.push(`parked: ${parked.date} — ${parked.reason}`)
+  if (family.parent) fields.push(`parent: ${family.parent}`)
+  if (family.children?.length) fields.push(`children: ${family.children.map(({ slug, status }) => `${slug} (${status})`).join(', ')}`)
   return fields.join('\n')
 }
 
@@ -175,8 +239,19 @@ export function parkArgs(slug: string, ledgerPath: string, reason: string): stri
 
 export const GO_USAGE = 'Usage: /ledger:go <slug>. Run /ledger to see the slug of each task.'
 
-export function unknownTaskMessage(target: string, slugs: string[], outcome = UNCHANGED): string {
-  return `No task ledger is named "${target}". ${outcome} Task ledgers: ${slugs.join(', ') || 'none'}.`
+export type TaskName = { slug: string; parent?: string }
+
+function taskList(tasks: TaskName[]): string {
+  const groups = groupByParent(tasks, task => task.slug, task => task.parent)
+  const name = ({ item, children }: Grouped<TaskName>) => {
+    if (children.length > 0) return `${item.slug} (children: ${children.map(child => child.slug).join(', ')})`
+    return item.parent ? `${item.slug} (parent: ${item.parent})` : item.slug
+  }
+  return groups.map(name).join(', ')
+}
+
+export function unknownTaskMessage(target: string, tasks: TaskName[], outcome = UNCHANGED): string {
+  return `No task ledger is named "${target}". ${outcome} Task ledgers: ${taskList(tasks) || 'none'}.`
 }
 
 export function unparkFailedMessage(target: string, error: string): string {
@@ -209,6 +284,7 @@ export const HELP = [
   "- `/ledger:close` — Write this task's ledger, then clear the session.",
   "- `/ledger:go <slug>` — Write this task's ledger, clear the session, and continue in the task named <slug>. When every step of this task is done, it first says how to retire it.",
   "- `/ledger:park [<slug>] <reason>` — Mark a task parked. Without a slug it writes this task's ledger, parks it, then clears the session.",
+  "- `/ledger:parent [<slug>]` — Show a parent task and each child's status and next step; without a slug, this task or its parent. `<slug> add <child>` and `<slug> remove <child>` change its children.",
   "- `/ledger:worktrees` — Show each linked git worktree's size, last commit, dirty files, ledger and PR.",
   '- `/ledger:retire [<slug>]` — Show what retiring a task would archive and remove; `--yes` archives its ledger, removes its worktree, and deletes its branch when all of its commits are merged.',
   "- `/ledger:archive [<term>]` — List this repo's archived ledgers, newest first; a term keeps those that contain it, and `--all` lists every repo.",

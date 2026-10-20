@@ -1,3 +1,5 @@
+import type { LedgerSummary } from './ledger'
+
 export type Worktree = { path: string; branch: string }
 
 export type PullRequest = { state: string; number: number }
@@ -8,7 +10,13 @@ export type WorktreeRow = {
   lastCommit: string | null
   dirty: number | null
   hasLedger: boolean
+  ledgerRole?: string
   pr: string
+}
+
+export function ledgerRole({ parent, children }: LedgerSummary): string | undefined {
+  if (children) return `parent of ${children.filter(({ retired }) => retired === undefined).length}`
+  return parent ? `child of ${parent}` : undefined
 }
 
 /** Reads `git worktree list --porcelain -z`: fields end in NUL and an empty field ends a block, so a path is never quoted. */
@@ -86,7 +94,7 @@ export function formatTable(rows: WorktreeRow[], prError?: string): string {
     '| Worktree | Size GB | Last commit | Dirty | Ledger | PR |',
     '|---|---:|---|---:|---|---|',
     ...sorted.map(row => {
-      const cells = [row.name, cell(row.sizeGb?.toFixed(1) ?? null), cell(row.lastCommit), cell(row.dirty), row.hasLedger ? 'yes' : 'no', row.pr]
+      const cells = [row.name, cell(row.sizeGb?.toFixed(1) ?? null), cell(row.lastCommit), cell(row.dirty), row.hasLedger ? (row.ledgerRole ?? 'yes') : 'no', row.pr]
       return `| ${cells.join(' | ')} |`
     }),
     ...(prError ? ['', `PR is ? because ${prError}`] : []),

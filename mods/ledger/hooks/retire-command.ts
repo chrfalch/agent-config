@@ -41,7 +41,7 @@ async function findTarget($: EngineInterface, slug: string | null, cwd: string):
   const slugs = await Promise.all(paths.map(path => titleSlug($, path)))
   const matches = paths.filter((_, index) => slugs[index] === slug)
   const [match] = matches
-  if (match === undefined) return { text: unknownTaskMessage(slug, slugs, UNRETIRED) }
+  if (match === undefined) return { text: unknownTaskMessage(slug, slugs.map(name => ({ slug: name })), UNRETIRED) }
   if (matches.length > 1) return { text: sharedSlugMessage(slug, matches, UNRETIRED) }
   return { slug, ledgerPath: match }
 }

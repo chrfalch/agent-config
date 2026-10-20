@@ -251,6 +251,92 @@ test('session-start in a main checkout with one worktree ledger shows it without
   assert.equal(output.additionalContext, fullLedgerText(ledger));
 });
 
+function familyLedger(slug: string, location: string[], rest = '## Next step\nA step.\n'): string {
+  return [`# Task ledger — ${slug}`, '', '## Goal', 'A goal.', '', '## Location', ...location, '', rest].join('\n');
+}
+
+function relationText(ledger: string, ...lines: string[]): string {
+  const [first, ...contents] = fullLedgerText(ledger).split('\n');
+  return [first, ...lines, ...contents].join('\n');
+}
+
+test('session-start in a child task names its parent and the parent status', (t) => {
+  const root = scratch(t);
+  const main = repository(root, 'main');
+  const child = worktree(root, main, path.join(root, 'child'));
+  const ledger = ledgerIn(child, familyLedger('child', ['- parent: epic']));
+  ledgerIn(worktree(root, main, path.join(root, 'epic')), familyLedger('epic', [], '## Children\n- child\n\n## Next step\nParked: 2026-10-01 — waiting.\nA step.\n'));
+
+  assert.equal(sessionStart(root, child).additionalContext, relationText(ledger, 'Parent task: epic (parked).'));
+});
+
+test('session-start in a child task whose parent has no ledger names the parent as missing', (t) => {
+  const root = scratch(t);
+  const main = repository(root, 'main');
+  const child = worktree(root, main, path.join(root, 'child'));
+  const ledger = ledgerIn(child, familyLedger('child', ['- parent: epic']).replace(/\n/g, '\r\n'));
+
+  assert.equal(sessionStart(root, child).additionalContext, relationText(ledger, 'Parent task: epic (missing).'));
+});
+
+test('session-start in a parent task names each child and its status', (t) => {
+  const root = scratch(t);
+  const main = repository(root, 'main');
+  const epic = worktree(root, main, path.join(root, 'epic'));
+  const children = '## Children\n- child-a\n- child-b\n- old (retired 2026-10-01)\n- lost\n\n## Next step\nA step.\n';
+  const ledger = ledgerIn(epic, familyLedger('epic', [], children));
+  ledgerIn(worktree(root, main, path.join(root, 'child-a')), familyLedger('child-a', ['- parent: epic']));
+  ledgerIn(worktree(root, main, path.join(root, 'child-b')), familyLedger('child-b', ['- parent: epic'], '## Next step\n\nParked: 2026-10-02 - later.\n'));
+
+  assert.equal(
+    sessionStart(root, epic).additionalContext,
+    relationText(
+      ledger,
+      'Child task: child-a (active).',
+      'Child task: child-b (parked).',
+      'Child task: old (retired 2026-10-01).',
+      'Child task: lost (missing).',
+    ),
+  );
+});
+
+test('session-start in a main checkout names the parent or children under each ledger summary', (t) => {
+  const root = scratch(t);
+  const main = repository(root, 'main');
+  const epic = ledgerIn(worktree(root, main, path.join(root, 'epic')), familyLedger('epic', [], '## Children\n- child-a\n- child-b\n\n## Next step\nA step.\n'));
+  const childA = ledgerIn(worktree(root, main, path.join(root, 'child-a')), familyLedger('child-a', ['- parent: epic']));
+  const childB = ledgerIn(
+    worktree(root, main, path.join(root, 'child-b')),
+    familyLedger('child-b', ['- parent: epic'], '## Next step\nParked: 2026-10-02 — later.\n'),
+  );
+  const ledgers = ledgerList(root, main, 'paths').split('\n').filter(Boolean);
+  const relations: Record<string, string[]> = {
+    [epic]: ['Child task: child-a (active).', 'Child task: child-b (parked).'],
+    [childA]: ['Parent task: epic (active).'],
+    [childB]: ['Parent task: epic (active).'],
+  };
+
+  const context = sessionStart(root, main).additionalContext;
+
+  assert.equal(ledgers.length, 3);
+  assert.deepEqual(
+    context.split('\n=== ').slice(1),
+    ledgers.map((ledger) => {
+      const next = realpathSync(ledger) === childB ? 'Parked: 2026-10-02 — later.' : 'A step.';
+      return [ledger, ...(relations[realpathSync(ledger)] ?? []), 'A goal.', '', next, ''].join('\n');
+    }),
+  );
+});
+
+test('session-start reads only the Location parent bullet and the section headed exactly Children', (t) => {
+  const root = scratch(t);
+  const main = repository(root, 'main');
+  const sibling = worktree(root, main, path.join(root, 'sibling'));
+  const ledger = ledgerIn(sibling, familyLedger('sibling', ['- parent: <slug>'], '## Children (old)\n- child-a\n\n## Notes\n- parent: epic\n'));
+
+  assert.equal(sessionStart(root, sibling).additionalContext, fullLedgerText(ledger));
+});
+
 test('session-start prints nothing when there is no ledger', (t) => {
   const root = scratch(t);
   const main = repository(root, 'main');

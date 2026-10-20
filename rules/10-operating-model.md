@@ -95,11 +95,34 @@ transcript is re-billed on every turn; the ledger is read once per fresh session
   only when the new work builds on the current branch.
 - **Update the ledger at every pipeline boundary**: after plan approval, after red
   tests, after each implementer report, after each review verdict. Use
-  `/ledger:update`; you invoke it yourself through the Skill tool. Write facts,
-  not narrative. Keep it under ~4k tokens; roll finished steps into one line each.
+  `/ledger:update`; you invoke it yourself through the Skill tool.
   During long in-thread reasoning, also write each decision and each ruled-out
   option to the ledger as you make it, so a compaction mid-problem loses only the
   current step.
+- **Keep the ledger under ~4k tokens.** Every fresh session reads all of it.
+  Write facts, not narrative. Roll finished steps into one line each. Delete
+  superseded detail. Move facts that outlive the task to a rule file or auto
+  memory. If the ledger still grows past ~4k tokens, the work is too big for
+  one task: split it into child tasks that ship separately, under a parent
+  task.
+- **Parent tasks are for big work only.** Make a parent task only when the work
+  is two or more tasks that ship separately, as separate PRs or separate
+  merges. Examples: one feature split into stacked PRs, or a group of related
+  fixes. Never make a parent task for small work, for a single-PR task, or for
+  a task that only has many steps. This is a hard rule, not a preference.
+- **Making a parent task.** Start the parent task with `/ledger:task`. Start
+  each child task with its own `/ledger:task`. Then attach each child task
+  yourself: run the agent-config repo's
+  `bin/cc-ledger-parent add <parent> <child>` from a folder inside the task's
+  repo. The operator can also type `/ledger:parent <parent> add <child>`.
+  `/ledger:parent <parent>` shows the parent task and its child tasks.
+- **Keep the parent ledger current.** The parent ledger holds the overall goal,
+  the split into child tasks, the decisions that cross child tasks, and their
+  order. Each child ledger holds its own plan and state. After each child
+  task's review verdict or merge, update the parent ledger: cross-task
+  decisions, order, next child task. Ask the operator to retire each child task
+  when it merges. When every child task is retired, ask the operator to retire
+  the parent task.
 - **Clear between cycles.** You cannot see your own context size and you cannot
   run `/clear`; the user does. So the trigger is structural and you announce it:
   whenever an implement→review cycle finishes **and more work remains**, update

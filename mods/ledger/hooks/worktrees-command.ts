@@ -1,5 +1,6 @@
 import type { EngineInterface, FsStat } from 'claude-code'
 
+import { summarize } from './ledger'
 import {
   basename,
   classifyDerivedData,
@@ -18,6 +19,7 @@ import {
   isEmptyFolder,
   isOrphan,
   isOwnXcodeFolder,
+  ledgerRole,
   parseCommand,
   parseMainWorktree,
   parsePrs,
@@ -71,12 +73,22 @@ async function isFile($: EngineInterface, path: string): Promise<boolean> {
   }
 }
 
+async function ledgerCell($: EngineInterface, ledger: string): Promise<Pick<WorktreeRow, 'hasLedger' | 'ledgerRole'>> {
+  if (!(await isFile($, ledger))) return { hasLedger: false }
+  try {
+    const role = ledgerRole(summarize(await $.fs.read(ledger), '', 0))
+    return role === undefined ? { hasLedger: true } : { hasLedger: true, ledgerRole: role }
+  } catch {
+    return { hasLedger: true }
+  }
+}
+
 async function probe($: EngineInterface, { path, branch }: Worktree, cwd: string): Promise<{ row: WorktreeRow; prError?: string }> {
-  const [du, status, log, hasLedger, { prs, error }] = await Promise.all([
+  const [du, status, log, ledger, { prs, error }] = await Promise.all([
     run($, ['du', '-sk', path], cwd),
     run($, ['git', '-C', path, 'status', '--porcelain'], cwd),
     run($, ['git', '-C', path, 'log', '-1', '--format=%cs'], cwd),
-    isFile($, `${path}/.claude/ledger.md`),
+    ledgerCell($, `${path}/.claude/ledger.md`),
     lookUpPrs($, branch, cwd),
   ])
   const statusStdout = okStdout(status)
@@ -87,7 +99,7 @@ async function probe($: EngineInterface, { path, branch }: Worktree, cwd: string
     sizeGb: sizeGb(du.stdout),
     lastCommit: logStdout === null ? null : shortDate(logStdout),
     dirty: statusStdout === null ? null : dirtyCount(statusStdout),
-    hasLedger,
+    ...ledger,
     pr: prLabel(prs),
   }
   return { row, prError: error }

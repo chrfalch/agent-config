@@ -25,6 +25,7 @@ import {
 } from './ledger'
 import { archiveCommand } from './archive-command'
 import { findLedgers, lookUpBranch, message, namesOtherWorktree, titleSlug } from './lookup'
+import { familyOf, parentCommand } from './parent-command'
 import { worktreeOf } from './retire'
 import { retireCommand } from './retire-command'
 import { worktreesCommand } from './worktrees-command'
@@ -85,10 +86,11 @@ export const register: Register = on => {
     if (target === '') return { text: GO_USAGE }
     const found = await findLedgers($)
     if ('error' in found) return { text: lookupFailedMessage(found.error) }
-    const slugs = await Promise.all(found.map(ledger => titleSlug($, ledger.path)))
-    const matches = found.filter((_, index) => slugs[index] === target)
+    const tasks = await Promise.all(found.map(async ledger => summarize(await $.fs.read(ledger.path), folderSlug(ledger.path), 0)))
+    const matches = found.filter((_, index) => tasks[index]?.slug === target)
     const [match] = matches
-    if (match === undefined) return { text: unknownTaskMessage(target, slugs) }
+    const task = tasks.find(({ slug }) => slug === target)
+    if (match === undefined || task === undefined) return { text: unknownTaskMessage(target, tasks) }
     if (matches.length > 1) return { text: sharedSlugMessage(target, matches.map(ledger => ledger.path)) }
     const cwd = await $.session.cwd()
     const active = activeLedger(found.map(ledger => ledger.path), cwd)
@@ -102,8 +104,9 @@ export const register: Register = on => {
       }
     }
     const current = active.kind === 'one' ? active.path : undefined
+    const family = await familyOf($, task, cwd)
     await $.state.set(armed, { mode: 'go', slug: target, ...(current && current !== match.path && { ledger: current }) })
-    return next({ ...e, args: goArgs(target, current, parked) })
+    return next({ ...e, args: goArgs(target, current, parked, family) })
   }).catch(async ($, e, next) => {
     await $.state.set(armed, null)
     return next.called ? next(e) : { text: lookupFailedMessage(next.error.message ?? next.error.kind) }
@@ -153,6 +156,8 @@ export const register: Register = on => {
   on('command.run', { command: 'ledger:archive' }, async ($, e) => ({ text: await archiveCommand($, e.args ?? '') }))
 
   on('command.run', { command: 'ledger:all' }, async ($, e) => ({ text: await allCommand($, e.args ?? '') }))
+
+  on('command.run', { command: 'ledger:parent' }, async ($, e) => ({ text: await parentCommand($, e.args ?? '') }))
 
   on('command.run', { command: 'ledger:help' }, async () => ({ text: HELP }))
 

@@ -15,6 +15,7 @@ type Entry = {
   created: string;
   updated: string;
   archivePath?: string;
+  parent?: string;
 };
 
 const ISO = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/;
@@ -411,4 +412,81 @@ test('scan takes the slug of an untitled archive copy from its file name without
   ledgers(h, 'scan', path.join(h, 'nothing-here'));
 
   assert.deepEqual(registry(h).map(({ slug }) => slug).sort(), ['foo-bar', 'foo-bar-2']);
+});
+
+const withParent = (parent: string) => `\n## Location\n- worktree: /work/child\n- branch: me/child\n- parent: ${parent}\n`;
+
+test('upsert takes the parent from the Location section', (t) => {
+  const h = home(t);
+  const child = ledgerIn(path.join(h, 'issues/child'), 'child', withParent('epic'));
+  const placeholder = ledgerIn(path.join(h, 'issues/template'), 'template', withParent('<slug>'));
+  const orphan = ledgerIn(path.join(h, 'issues/orphan'), 'orphan');
+
+  ledgers(h, 'upsert', child, placeholder, orphan);
+
+  const bySlug = Object.fromEntries(registry(h).map((entry) => [entry.slug, entry]));
+  assert.equal(bySlug.child?.parent, 'epic');
+  assert.equal(Object.hasOwn(bySlug.template ?? {}, 'parent'), false);
+  assert.equal(Object.hasOwn(bySlug.orphan ?? {}, 'parent'), false);
+});
+
+test('upsert takes the parent from --parent', (t) => {
+  const h = home(t);
+  const ledger = ledgerIn(path.join(h, 'issues/child'), 'child');
+
+  ledgers(h, 'upsert', ledger, '--parent', 'epic');
+
+  assert.deepEqual(registry(h).map(({ slug, parent }) => ({ slug, parent })), [{ slug: 'child', parent: 'epic' }]);
+  assert.deepEqual(JSON.parse(ledgers(h, 'list', '--json').stdout), registry(h));
+});
+
+test('a later upsert drops the parent once the ledger no longer names one', (t) => {
+  const h = home(t);
+  const ledger = ledgerIn(path.join(h, 'issues/child'), 'child', withParent('epic'));
+  ledgers(h, 'upsert', ledger);
+
+  writeFileSync(ledger, readFileSync(ledger, 'utf8').replace('- parent: epic\n', ''));
+  ledgers(h, 'upsert', ledger);
+
+  assert.equal(Object.hasOwn(registry(h)[0] ?? {}, 'parent'), false);
+});
+
+test('archive keeps the parent of the active entry', (t) => {
+  const h = home(t);
+  const ledger = ledgerIn(path.join(h, 'issues/child'), 'child', withParent('epic'));
+  ledgers(h, 'upsert', ledger);
+  const copy = archiveCopy(h, 'child', '2026-10-20-child.md', readFileSync(ledger, 'utf8'));
+
+  ledgers(h, 'archive', ledger, copy);
+
+  assert.deepEqual(registry(h).map(({ status, parent }) => ({ status, parent })), [{ status: 'archived', parent: 'epic' }]);
+});
+
+test('archive with no entry takes the parent from the archive copy', (t) => {
+  const h = home(t);
+  const copy = archiveCopy(h, 'app', '2026-10-20-child.md', `# Task ledger — child\n${withParent('epic')}`);
+
+  ledgers(h, 'archive', '/given/.claude/ledger.md', copy);
+
+  assert.equal(registry(h)[0]?.parent, 'epic');
+});
+
+test('scan rebuilds the parent of active and archived entries', (t) => {
+  const h = home(t);
+  ledgerIn(path.join(h, 'repos/app/child'), 'child', withParent('epic'));
+  ledgerIn(path.join(h, 'repos/app/epic'), 'epic');
+  archiveCopy(h, 'app', '2026-10-01-old-child.md', `# Task ledger — old-child\n${withParent('epic')}`);
+
+  ledgers(h, 'scan');
+
+  const entries = registry(h);
+  assert.deepEqual(
+    entries.map(({ slug, status, parent }) => ({ slug, status, parent })).sort((a, b) => a.slug.localeCompare(b.slug)),
+    [
+      { slug: 'child', status: 'active', parent: 'epic' },
+      { slug: 'epic', status: 'active', parent: undefined },
+      { slug: 'old-child', status: 'archived', parent: 'epic' },
+    ],
+  );
+  assert.equal(Object.hasOwn(entries.find((entry) => entry.slug === 'epic') ?? {}, 'parent'), false);
 });

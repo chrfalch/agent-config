@@ -111,9 +111,55 @@ fi
 n=${#ledgers[@]}
 [ "$n" -eq 0 ] && exit 0
 
+# Parent and child formats and statuses as bin/cc-ledger-parent writes and shows them.
+section() {
+  awk -v heading="## $2" '/^## / { title = $0; sub(/[ \t\r]+$/, "", title); inside = title == heading; next } inside' "$1" | tr -d '\r'
+}
+
+ledger_titled() {
+  local line candidate
+  while IFS= read -r line; do
+    case "$line" in
+      "worktree "*)
+        candidate="${line#worktree }/.claude/ledger.md"
+        if [ -f "$candidate" ] && [ "$(slug "$candidate")" = "$1" ]; then
+          printf '%s\n' "$candidate"
+          return 0
+        fi
+        ;;
+    esac
+  done < <(git worktree list --porcelain 2>/dev/null)
+  return 1
+}
+
+task_status() {
+  local ledger
+  ledger=$(ledger_titled "$1") || { echo missing; return; }
+  if section "$ledger" 'Next step' | grep -v -m 1 '^[[:space:]]*$' | grep -q -E '^[[:space:]]*Parked:[[:space:]]*[0-9]{4}-[0-9]{2}-[0-9]{2}[[:space:]]*(—|-)'; then
+    echo parked
+  else
+    echo active
+  fi
+}
+
+relations() {
+  local parent child retired
+  parent=$(section "$1" Location | sed -n -E '/^- parent:[[:space:]]*</d; s/^- parent:[[:space:]]*([^[:space:]]+)[[:space:]]*$/\1/p' | head -n 1)
+  [ -n "$parent" ] && echo "Parent task: $parent ($(task_status "$parent"))."
+  section "$1" Children | sed -n -E 's/^- ([A-Za-z0-9._-]+)( \(retired ([0-9]{4}-[0-9]{2}-[0-9]{2})\))?[[:space:]]*$/\1 \3/p' |
+    while read -r child retired; do
+      if [ -n "$retired" ]; then
+        echo "Child task: $child (retired $retired)."
+      else
+        echo "Child task: $child ($(task_status "$child"))."
+      fi
+    done
+}
+
 session_start_text() {
   if [ "$n" -eq 1 ]; then
     echo "A task ledger exists at ${ledgers[0]}. Contents follow. If it has open steps, continue from Next step without re-verifying finished steps."
+    relations "${ledgers[0]}"
     echo
     cat "${ledgers[0]}"
   else
@@ -121,6 +167,7 @@ session_start_text() {
     for f in "${ledgers[@]}"; do
       echo
       echo "=== $f"
+      relations "$f"
       awk '/^## Goal/{g=1;next} /^## Location/{g=0} /^## Next step/{n=1;next} /^## /{n=0} g||n{print}' "$f"
     done
   fi

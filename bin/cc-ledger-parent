@@ -1,0 +1,229 @@
+#!/usr/bin/env node
+// Makes one task the parent of another in the same repository, and shows a parent's children.
+// Usage: cc-ledger-parent add <parent> <child>
+//        cc-ledger-parent remove <parent> <child>
+//        cc-ledger-parent show <parent> [--json]
+// A slug is a ledger's title slug, looked up in the ledgers of every worktree of the repository
+// that holds the current folder. The child's `- parent: <slug>` bullet under ## Location is the
+// source of truth. The parent's ## Children section lists its children, so that a retired child,
+// whose ledger is gone, keeps a line there: `- <slug> (retired YYYY-MM-DD)`.
+'use strict';
+const { spawnSync } = require('node:child_process');
+const fs = require('node:fs');
+const path = require('node:path');
+
+const usage = [
+  'usage: cc-ledger-parent add <parent> <child>',
+  '       cc-ledger-parent remove <parent> <child>',
+  '       cc-ledger-parent show <parent> [--json]',
+].join('\n');
+
+const SLUG = /^[A-Za-z0-9._-]+$/;
+const CHILD = /^- ([A-Za-z0-9._-]+)(?: \(retired (\d{4}-\d\d-\d\d)\))?$/;
+// Same marker as parkedOf() in mods/ledger/hooks/ledger.ts.
+const PARKED = /^Parked:[ \t]*\d{4}-\d{2}-\d{2}[ \t]*[—-]/;
+
+function fail(message) {
+  console.error(message);
+  process.exit(1);
+}
+
+// Same match as titleSlug() in cc-ledgers.
+function titleSlug(text) {
+  return text.match(/^# Task ledger[ \t]*(?:—|-)[ \t]*(.*)$/m)?.[1].trim() ?? '';
+}
+
+function ledgersBySlug() {
+  const result = spawnSync('git', ['worktree', 'list', '--porcelain'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+  if (result.status !== 0) fail(`not inside a git repository: ${process.cwd()}`);
+  const found = new Map();
+  for (const line of result.stdout.split('\n')) {
+    if (!line.startsWith('worktree ')) continue;
+    const ledger = path.join(line.slice('worktree '.length), '.claude', 'ledger.md');
+    if (!fs.statSync(ledger, { throwIfNoEntry: false })?.isFile()) continue;
+    const slug = titleSlug(fs.readFileSync(ledger, 'utf8'));
+    if (slug) found.set(slug, [...(found.get(slug) ?? []), ledger]);
+  }
+  return found;
+}
+
+function lookup(found, slug) {
+  const files = found.get(slug) ?? [];
+  if (files.length > 1) fail(`${files.length} ledgers in this repository have the slug ${slug}: ${files.join(', ')}`);
+  if (files.length === 0) return undefined;
+  const text = fs.readFileSync(files[0], 'utf8');
+  // Lines keep their own `\r`, so a save changes only the lines it adds or drops.
+  return { slug, file: files[0], lines: text.split('\n'), cr: text.includes('\r\n') ? '\r' : '' };
+}
+
+function resolve(found, slug) {
+  return lookup(found, slug) ?? fail(`no task ledger with the slug ${slug} in this repository`);
+}
+
+function insert(task, index, ...lines) {
+  task.lines.splice(index, 0, ...lines.map((line) => line + task.cr));
+}
+
+// The heading's line index, and the index of the next heading or the end of the file.
+function section(lines, heading) {
+  const start = lines.findIndex((line) => line.trimEnd() === `## ${heading}`);
+  if (start === -1) return undefined;
+  const next = lines.findIndex((line, index) => index > start && line.startsWith('## '));
+  return { start, end: next === -1 ? lines.length : next };
+}
+
+function body(lines, heading) {
+  const found = section(lines, heading);
+  return found ? lines.slice(found.start + 1, found.end) : [];
+}
+
+function afterLastText(lines, { start, end }) {
+  let index = end;
+  while (index > start + 1 && lines[index - 1].trim() === '') index--;
+  return index;
+}
+
+const firstText = (lines) => lines.map((line) => line.trim()).find((line) => line !== '') ?? '';
+
+function parentBullet(lines) {
+  const found = section(lines, 'Location');
+  if (!found) return undefined;
+  for (let index = found.start + 1; index < found.end; index++) {
+    // One word, and not a template placeholder, the same as the parent cc-worktree-retire reads.
+    const value = lines[index].trimEnd().match(/^- parent:[ \t]*(\S+)$/)?.[1];
+    if (value !== undefined && !value.startsWith('<')) return { index, value };
+  }
+  return undefined;
+}
+
+function children(lines) {
+  const found = section(lines, 'Children');
+  if (!found) return [];
+  const listed = [];
+  for (let index = found.start + 1; index < found.end; index++) {
+    const [, slug, retired] = lines[index].trim().match(CHILD) ?? [];
+    if (slug) listed.push({ index, slug, retired: retired !== undefined });
+  }
+  return listed;
+}
+
+function location(task) {
+  return section(task.lines, 'Location') ?? fail(`${task.file} has no ## Location section`);
+}
+
+// A temporary file and a rename, so a failed write leaves the ledger as it was.
+function save(task) {
+  const temporary = `${task.file}.tmp-${process.pid}`;
+  try {
+    fs.writeFileSync(temporary, task.lines.join('\n'), { mode: fs.statSync(task.file).mode });
+    fs.renameSync(temporary, task.file);
+  } catch (error) {
+    fs.rmSync(temporary, { force: true });
+    throw error;
+  }
+}
+
+// Best effort, as register_ledger in cc-task-new: the ledger is the record, the registry an index of it.
+function register(ledger, ...flags) {
+  const result = spawnSync(path.join(__dirname, 'cc-ledgers'), ['upsert', ledger, ...flags], { stdio: ['ignore', 'inherit', 'inherit'] });
+  if (result.status !== 0) console.error('warning: registry not updated');
+}
+
+function add(parentSlug, childSlug) {
+  if (parentSlug === childSlug) fail(`${childSlug} cannot be its own parent`);
+  const found = ledgersBySlug();
+  const parent = resolve(found, parentSlug);
+  const child = resolve(found, childSlug);
+  if (children(parent.lines).some(({ slug, retired }) => retired && slug === child.slug)) {
+    fail(`${child.slug} is a retired child of ${parent.slug}; give the new task another slug`);
+  }
+  const current = parentBullet(child.lines)?.value;
+  if (current !== undefined && current !== parent.slug) {
+    fail(`${child.slug} already has the parent ${current}; first run cc-ledger-parent remove ${current} ${child.slug}`);
+  }
+  const grandparent = parentBullet(parent.lines)?.value;
+  if (grandparent !== undefined) fail(`${parent.slug} has the parent ${grandparent}, so it cannot be a parent`);
+  const grandchildren = children(child.lines).map(({ slug }) => slug);
+  if (grandchildren.length > 0) fail(`${child.slug} has the children ${grandchildren.join(', ')}, so it cannot be a child`);
+  const childLocation = location(child);
+  const parentLocation = location(parent);
+
+  // The child's bullet first: once it is written, a rerun of the same add finishes the parent.
+  if (current === undefined) {
+    insert(child, afterLastText(child.lines, childLocation), `- parent: ${parent.slug}`);
+    save(child);
+  }
+  if (!children(parent.lines).some(({ slug }) => slug === child.slug)) {
+    const listed = section(parent.lines, 'Children');
+    if (listed) insert(parent, afterLastText(parent.lines, listed), `- ${child.slug}`);
+    else insert(parent, afterLastText(parent.lines, parentLocation), '', '## Children', `- ${child.slug}`);
+    save(parent);
+  }
+  register(child.file, '--parent', parent.slug);
+}
+
+function remove(parentSlug, childSlug) {
+  const found = ledgersBySlug();
+  const parent = resolve(found, parentSlug);
+  const child = resolve(found, childSlug);
+  const bullet = parentBullet(child.lines);
+  if (bullet?.value !== parent.slug) fail(`${child.slug} is not a child of ${parent.slug}`);
+
+  // The parent first: until the child's bullet is gone, a rerun of the same remove still finds the pair.
+  const lines = children(parent.lines).filter(({ slug }) => slug === child.slug);
+  if (lines.length > 0) {
+    for (const { index } of lines.reverse()) parent.lines.splice(index, 1);
+    const listed = section(parent.lines, 'Children');
+    if (firstText(body(parent.lines, 'Children')) === '') parent.lines.splice(listed.start, listed.end - listed.start);
+    save(parent);
+  }
+  child.lines.splice(bullet.index, 1);
+  save(child);
+  register(child.file);
+}
+
+function childStatus(found, { slug, retired }) {
+  if (retired) return { slug, status: 'retired', next: '' };
+  const child = lookup(found, slug);
+  if (!child) return { slug, status: 'missing', next: '' };
+  const next = body(child.lines, 'Next step');
+  return {
+    slug,
+    status: PARKED.test(firstText(next)) ? 'parked' : 'active',
+    next: firstText(next.filter((line) => !PARKED.test(line.trim()))),
+  };
+}
+
+function show(parentSlug, json) {
+  const found = ledgersBySlug();
+  const parent = resolve(found, parentSlug);
+  const shown = {
+    parent: parent.slug,
+    goal: firstText(body(parent.lines, 'Goal')),
+    children: children(parent.lines).map((listed) => childStatus(found, listed)),
+  };
+  if (json) {
+    console.log(JSON.stringify(shown, null, 2));
+    return;
+  }
+  console.log([shown.parent, shown.goal].join('\t'));
+  for (const { slug, status, next } of shown.children) console.log([slug, status, next].join('\t'));
+}
+
+const [command, ...args] = process.argv.slice(2);
+const slugs = args.filter((arg) => arg !== '--json');
+const json = slugs.length < args.length;
+
+// The Children line format and cc-worktree-retire read a slug as one word of these characters.
+function supported(...given) {
+  for (const slug of given) if (!SLUG.test(slug)) fail(`unsupported slug ${JSON.stringify(slug)}: a slug must match ^[A-Za-z0-9._-]+$`);
+  return given;
+}
+
+try {
+  if ((command === 'add' || command === 'remove') && args.length === 2 && !json) (command === 'add' ? add : remove)(...supported(...args));
+  else if (command === 'show' && slugs.length === 1) show(...supported(slugs[0]), json);
+  else fail(usage);
+} catch (error) {
+  fail(`cc-ledger-parent ${command}: ${error.message}`);
+}

@@ -96,12 +96,13 @@ before replacing it. With no terminal attached it refuses and tells you to use
 
 ### The ledger mod
 
-The ledger mod is a Claude Code plugin in `mods/ledger`. It adds eight
+The ledger mod is a Claude Code plugin in `mods/ledger`. It adds twelve
 commands:
 
 - `/ledger` prints each task ledger's goal, current step and next step.
 - `/ledger:task` starts a separate task with its own git worktree, branch and
-  ledger.
+  ledger. `/ledger:task --here [<slug>]` adds a ledger to the linked worktree
+  the session is in, without a new branch or worktree.
 - `/ledger:update` writes the latest results to the current task's ledger. When
   there is no ledger, it starts a task.
 - `/ledger:close` writes the latest results to the current task's ledger, then
@@ -111,13 +112,26 @@ commands:
 - `/ledger:go <name>` does the same as `/ledger:next`, but sends
   `go <name>` for the task you name. The name must be the name of a task
   ledger. Without a ledger in the session, it writes nothing and still
-  switches.
+  switches. When that task is parked, it removes the parked mark.
+- `/ledger:park [<slug>] <reason>` marks a task parked, with the date and the
+  reason, as the first line under `## Next step`. `/ledger` then shows it as
+  parked. Without a slug it does the same as `/ledger:close` for the current
+  task, and adds the mark. With the slug of another task it only adds the mark.
 - `/ledger:worktrees` prints each linked git worktree's size, last commit,
   dirty files, ledger and PR.
 - `/ledger:retire [<slug>]` shows what retiring a task would archive and
   remove. `--yes` runs `bin/cc-worktree-retire`: it archives the task's
   ledger, removes its worktree and deletes the worktree's build folders.
-  Uncommitted changes or an unmerged branch also need `--force`.
+  It also deletes the local branch when every commit on it is in the default
+  branch or in a merged PR. A branch with commits after its PR merged stays.
+  Uncommitted changes also need `--force`, and so does a branch that has
+  commits not in the default branch and no merged PR.
+- `/ledger:archive [<term>]` lists this repo's archived ledgers in
+  `~/.claude/ledger-archive/`, newest first. A term keeps the ledgers that
+  contain it. `--all` lists the archive of every repo.
+- `/ledger:all` lists every task ledger on this machine, from every repo,
+  active, parked and archived, with its next step. `--scan` rebuilds that
+  list from disk.
 - `/ledger:help` prints one line for each of these commands.
 
 `/ledger:worktrees prune <name>` lists the build folders of one worktree and

@@ -185,6 +185,20 @@ hook shows a summary of each and the session asks which task you mean before
 reading the full file. Type `go <name>` to answer in advance. The session then
 moves into that task's worktree and continues from its ledger.
 
+To give a linked worktree that has no ledger one, type `/ledger:task --here` in
+its session. It adds the ledger without a new branch or worktree.
+
+To set a task aside, type `/ledger:park <reason>` in its session, or
+`/ledger:park <name> <reason>` in a session in the main checkout. `/ledger`
+shows a parked task with the date and the reason. `/ledger:go <name>` resumes
+it and removes the mark.
+
+When a task is done, `/ledger:retire <name> --yes` archives its ledger and
+removes its worktree. It also deletes the local branch when every commit on it
+is in the default branch or in a merged PR. A branch with commits after its PR
+merged stays. `/ledger:archive <term>` finds the ledger of a task that was
+retired. Add `--all` to search the archive of every repo.
+
 ## The clear loop, in short
 
 ```

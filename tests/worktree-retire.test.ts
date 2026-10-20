@@ -154,3 +154,100 @@ test('retire of an already archived ledger registers the existing copy', (t) => 
     [{ status: 'archived', archivePath: existing }],
   );
 });
+
+function hasBranch(home: string, directory: string, branch: string): boolean {
+  return run(home, ['git', '-C', directory, 'show-ref', '--verify', '--quiet', `refs/heads/${branch}`]).status === 0;
+}
+
+const mainOf = (home: string) => path.join(home, 'main');
+const headOf = (home: string, directory: string) => git(home, directory, 'rev-parse', 'HEAD');
+
+test('retire keeps the branch without --delete-branch', (t) => {
+  const { home, worktree } = worktreeWithBuildFolders(t, []);
+  const result = run(home, retire, worktree);
+  assert.equal(result.status, 0, result.stderr);
+  assert.ok(hasBranch(home, mainOf(home), 'test/wt-a'));
+  assert.doesNotMatch(result.stdout, /branch/);
+});
+
+for (const order of ['before', 'after'] as const) {
+  test(`retire --delete-branch <sha> ${order} --force deletes the branch after removing the worktree`, (t) => {
+    const { home, worktree } = worktreeWithBuildFolders(t, ['Debug-sim']);
+    const deleteBranch = ['--delete-branch', headOf(home, worktree)];
+    const result = run(home, retire, worktree, ...(order === 'before' ? [...deleteBranch, '--force'] : ['--force', ...deleteBranch]));
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(existsSync(worktree), false);
+    assert.equal(hasBranch(home, mainOf(home), 'test/wt-a'), false);
+    assert.match(result.stdout, /\ndeleted  branch test\/wt-a\n$/);
+  });
+}
+
+test('retire --delete-branch <sha> deletes a branch git does not count as merged', (t) => {
+  const { home, worktree } = worktreeWithBuildFolders(t, []);
+  writeFileSync(path.join(worktree, 'file.txt'), 'squashed elsewhere\n');
+  git(home, worktree, 'commit', '--quiet', '-am', 'unmerged in git terms');
+  const result = run(home, retire, worktree, '--delete-branch', headOf(home, worktree));
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(hasBranch(home, mainOf(home), 'test/wt-a'), false);
+});
+
+test('retire --delete-branch <sha> removes the branch config, as git branch -D does', (t) => {
+  const { home, worktree } = worktreeWithBuildFolders(t, []);
+  git(home, worktree, 'config', 'branch.test/wt-a.merge', 'refs/heads/test/wt-a');
+  const result = run(home, retire, worktree, '--delete-branch', headOf(home, worktree));
+  assert.equal(result.status, 0, result.stderr);
+  assert.notEqual(run(home, ['git', '-C', mainOf(home), 'config', '--get-regexp', '^branch\\.test/wt-a\\.']).status, 0);
+});
+
+test('retire --delete-branch <sha> keeps a branch that moved past that commit, and still succeeds', (t) => {
+  const { home, worktree } = worktreeWithBuildFolders(t, []);
+  const checked = headOf(home, worktree);
+  writeFileSync(path.join(worktree, 'file.txt'), 'landed after the check\n');
+  git(home, worktree, 'commit', '--quiet', '-am', 'landed after the check');
+  const moved = headOf(home, worktree);
+  const result = run(home, retire, worktree, '--delete-branch', checked);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(existsSync(worktree), false);
+  assert.equal(git(home, mainOf(home), 'rev-parse', 'refs/heads/test/wt-a'), moved);
+  assert.match(result.stdout, /\nkept {5}branch test\/wt-a, because it moved after retire checked it\n$/);
+  assert.doesNotMatch(result.stdout, /deleted {2}branch/);
+});
+
+for (const [name, args] of [
+  ['without a sha', ['--delete-branch']],
+  ['with a flag in place of the sha', ['--delete-branch', '--force']],
+  ['with an abbreviated sha', ['--delete-branch', 'c0ffee1']],
+  ['with a sha that is not hex', ['--delete-branch', 'z'.repeat(40)]],
+] as const) {
+  test(`retire --delete-branch ${name} is a usage error and changes nothing`, (t) => {
+    const { home, worktree } = worktreeWithBuildFolders(t, []);
+    const result = run(home, retire, worktree, ...args);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /^usage: cc-worktree-retire <worktree-path> \[--delete-branch <sha>\] \[--force\]$/m);
+    assert.equal(result.stdout, '');
+    assert.ok(existsSync(worktree));
+    assert.ok(hasBranch(home, mainOf(home), 'test/wt-a'));
+  });
+}
+
+test('retire --delete-branch <sha> keeps the branch when git refuses to remove the worktree', (t) => {
+  const { home, worktree } = worktreeWithBuildFolders(t, []);
+  writeFileSync(path.join(worktree, 'file.txt'), 'changed\n');
+  const result = run(home, retire, worktree, '--delete-branch', headOf(home, worktree));
+  assert.notEqual(result.status, 0);
+  assert.ok(existsSync(worktree));
+  assert.ok(hasBranch(home, mainOf(home), 'test/wt-a'));
+});
+
+test('retire --delete-branch <sha> marks the ledger archived and deletes the branch', (t) => {
+  const { home, worktree, ledger } = worktreeWithLedger(t);
+
+  const result = run(home, retire, worktree, '--delete-branch', headOf(home, worktree));
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(hasBranch(home, mainOf(home), 'test/wt-a'), false);
+  assert.deepEqual(
+    registered(home).map(({ path, status, archivePath }) => ({ path, status, archivePath })),
+    [{ path: ledger, status: 'archived', archivePath: archivedPath(result.stdout) }],
+  );
+});

@@ -325,3 +325,123 @@ test('fails outside a git repository', (t) => {
   assert.match(result.stderr, /git/);
   assert.equal(existsSync(path.join(home, '.claude/worktrees')), false);
 });
+
+function ownerWorktree(home: string, main: string, branch: string) {
+  const worktree = path.join(main, '.claude/worktrees', branch.split('/').at(-1) ?? branch);
+  git(home, main, 'worktree', 'add', '--quiet', '-b', branch, worktree);
+  git(home, worktree, 'commit', '--quiet', '--allow-empty', '-m', `work on ${branch}`);
+  return worktree;
+}
+
+test('--here adds a ledger to the current worktree, named after its branch without the owner prefix', (t) => {
+  const { home, main } = checkout(t);
+  const worktree = ownerWorktree(home, main, 'chrfalch/fix-login');
+  const head = git(home, worktree, 'rev-parse', 'HEAD');
+  const short = git(home, worktree, 'rev-parse', '--short', head);
+  const branchesBefore = branches(home, main);
+  const worktreesBefore = git(home, main, 'worktree', 'list', '--porcelain');
+
+  const result = taskNew(home, worktree, '--here', '--goal', 'Users can log in again.');
+  assert.equal(result.status, 0, result.stderr);
+
+  const ledger = path.join(worktree, '.claude/ledger.md');
+  assert.equal(
+    readFileSync(ledger, 'utf8'),
+    expectedLedger('fix-login', 'Users can log in again.', worktree, 'chrfalch/fix-login', `HEAD @ ${short}`),
+  );
+  assert.equal(
+    result.stdout,
+    [
+      `worktree ${worktree}`,
+      'branch   chrfalch/fix-login',
+      `base     HEAD @ ${short}`,
+      `ledger   ${ledger}`,
+      'start:   /ledger:go fix-login',
+      '',
+    ].join('\n'),
+  );
+  assert.equal(branches(home, main), branchesBefore);
+  assert.equal(git(home, main, 'worktree', 'list', '--porcelain'), worktreesBefore);
+  assert.equal(git(home, worktree, 'rev-parse', 'HEAD'), head);
+});
+
+test('--here <slug> names the ledger after the slug given', (t) => {
+  const { home, main } = checkout(t);
+  const worktree = ownerWorktree(home, main, 'chrfalch/fix-login');
+  const result = taskNew(home, worktree, '--here', 'login-again');
+  assert.equal(result.status, 0, result.stderr);
+  const ledger = readFileSync(path.join(worktree, '.claude/ledger.md'), 'utf8');
+  assert.ok(ledger.startsWith('# Task ledger — login-again\n'), ledger);
+  assert.ok(ledger.includes(`## Goal\n${GOAL_PLACEHOLDER}\n`), ledger);
+  assert.ok(ledger.includes('- branch: chrfalch/fix-login\n'), ledger);
+});
+
+test('--here registers the ledger as active in ~/.claude/ledgers.json', (t) => {
+  const { home, main } = checkout(t);
+  const worktree = ownerWorktree(home, main, 'chrfalch/fix-login');
+  const result = taskNew(home, worktree, '--here');
+  assert.equal(result.status, 0, result.stderr);
+
+  const entries = JSON.parse(readFileSync(path.join(home, '.claude/ledgers.json'), 'utf8')) as Record<string, string>[];
+  assert.deepEqual(
+    entries.map(({ repo, slug, path, branch, status }) => ({ repo, slug, path, branch, status })),
+    [
+      {
+        repo: 'main',
+        slug: 'fix-login',
+        path: path.join(worktree, '.claude/ledger.md'),
+        branch: 'chrfalch/fix-login',
+        status: 'active',
+      },
+    ],
+  );
+});
+
+test('--here from a subfolder writes the ledger at the worktree root', (t) => {
+  const { home, main } = checkout(t);
+  const worktree = ownerWorktree(home, main, 'fix-login');
+  const cwd = path.join(worktree, 'src/deep');
+  mkdirSync(cwd, { recursive: true });
+  const result = taskNew(home, cwd, '--here');
+  assert.equal(result.status, 0, result.stderr);
+  assert.ok(existsSync(path.join(worktree, '.claude/ledger.md')));
+  assert.equal(existsSync(path.join(cwd, '.claude')), false);
+});
+
+const hereFailures: { name: string; args: string[]; inMain?: boolean; arrange?: (worktree: string) => void }[] = [
+  { name: 'the main checkout', args: ['--here'], inMain: true },
+  {
+    name: 'a worktree that already has a ledger',
+    args: ['--here'],
+    arrange: (worktree) => {
+      mkdirSync(path.join(worktree, '.claude'), { recursive: true });
+      writeFileSync(path.join(worktree, '.claude/ledger.md'), '# Task ledger — mine\n');
+    },
+  },
+  { name: '--here with --stack', args: ['--here', '--stack'] },
+  { name: '--here with --base', args: ['--here', '--base', 'main'] },
+  { name: '--here with --branch', args: ['--here', '--branch', 'other'] },
+  { name: '--here with a branch that is not a valid slug', args: ['--here'], arrange: () => undefined },
+];
+
+for (const { name, args, inMain, arrange } of hereFailures) {
+  test(`--here fails and writes nothing on ${name}`, (t) => {
+    const { home, main } = checkout(t);
+    const branch = name.includes('not a valid slug') ? 'Feature_X' : 'fix-login';
+    const worktree = ownerWorktree(home, main, branch);
+    arrange?.(worktree);
+    const cwd = inMain ? main : worktree;
+    const ledger = path.join(cwd, '.claude/ledger.md');
+    const ledgerBefore = existsSync(ledger) ? readFileSync(ledger, 'utf8') : null;
+    const branchesBefore = branches(home, main);
+    const worktreesBefore = git(home, main, 'worktree', 'list', '--porcelain');
+
+    const result = taskNew(home, cwd, ...args);
+    assert.equal(result.status, 1, result.stderr);
+    assert.notEqual(result.stderr.trim(), '');
+    assert.equal(result.stdout, '');
+    assert.equal(existsSync(ledger) ? readFileSync(ledger, 'utf8') : null, ledgerBefore);
+    assert.equal(branches(home, main), branchesBefore);
+    assert.equal(git(home, main, 'worktree', 'list', '--porcelain'), worktreesBefore);
+  });
+}

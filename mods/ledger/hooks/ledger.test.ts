@@ -280,8 +280,10 @@ test('/ledger:help prints one line per /ledger command, in order, without a mode
     '/ledger:next',
     '/ledger:close',
     '/ledger:go <slug>',
+    '/ledger:park [<slug>] <reason>',
     '/ledger:worktrees',
     '/ledger:retire [<slug>]',
+    '/ledger:archive [<term>]',
     '/ledger:all',
     '/ledger:help',
   ])

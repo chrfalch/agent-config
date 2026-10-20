@@ -72,6 +72,23 @@ test('/ledger:all renders every registered ledger newest first with its next ste
   )
 })
 
+test('/ledger:all shows an active ledger with a parked mark as parked, and an archived one as archived', async ($, on) => {
+  const parked = entry('parked', '2026-10-05T09:30:00.000Z')
+  const archived = entry('gone', '2026-10-03T12:00:00.000Z', { status: 'archived', archivePath: '/home/.claude/ledger-archive/app/2026-10-03-gone.md' })
+  const marked = ledgerText('Parked: 2026-10-04 — waiting for the API.\nRun the tests.')
+  world(on, { 'bin/cc-ledgers list --json': exit(0, JSON.stringify([parked, archived])) }, { [parked.path]: marked, [archived.archivePath ?? '']: marked })
+
+  const { text } = await $.command.run({ command: 'ledger:all' })
+
+  expect(text).toBe(
+    [
+      HEADER,
+      `| app | parked | parked | ${local(parked.updated)} | Run the tests. |`,
+      `| app | gone | archived | ${local(archived.updated)} | Run the tests. |`,
+    ].join('\n'),
+  )
+})
+
 test('/ledger:all --scan rebuilds the registry and names the rebuild first', async ($, on) => {
   const only = entry('only', '2026-10-05T09:30:00.000Z')
   const calls = world(

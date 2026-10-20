@@ -29,19 +29,22 @@ const cell = (text: string): string => text.replaceAll('|', '\\|')
 
 const truncate = (text: string): string => (text.length > NEXT_WIDTH ? `${text.slice(0, NEXT_WIDTH - 1)}…` : text)
 
-async function nextStep($: EngineInterface, file: string): Promise<string> {
+async function statusAndNext($: EngineInterface, entry: Entry): Promise<[string, string]> {
   try {
-    return summarize(await $.fs.read(file), '', 0).next
+    const { next, parked } = summarize(await $.fs.read(entry.archivePath ?? entry.path), '', 0)
+    return [parked && entry.status === 'active' ? 'parked' : entry.status, next]
   } catch {
-    return '(unreadable)'
+    return [entry.status, '(unreadable)']
   }
 }
 
 async function table($: EngineInterface, entries: Entry[]): Promise<string> {
   const newestFirst = [...entries].sort((a, b) => Date.parse(b.updated) - Date.parse(a.updated))
-  const steps = await Promise.all(newestFirst.map(entry => nextStep($, entry.archivePath ?? entry.path)))
-  const rows = newestFirst.map(({ repo, slug, status, updated }, index) =>
-    [repo, slug, status, formatTime(Date.parse(updated)), truncate(steps[index] ?? '')].map(cell),
+  const rows = await Promise.all(
+    newestFirst.map(async entry => {
+      const [status, next] = await statusAndNext($, entry)
+      return [entry.repo, entry.slug, status, formatTime(Date.parse(entry.updated)), truncate(next)].map(cell)
+    }),
   )
   return [['repo', 'slug', 'status', 'updated', 'next'], ['---', '---', '---', '---', '---'], ...rows]
     .map(row => `| ${row.join(' | ')} |`)

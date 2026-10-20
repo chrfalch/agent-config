@@ -1,11 +1,14 @@
 export type Row = { number: string; step: string; status: string }
 
+export type Parked = { date: string; reason: string }
+
 export type LedgerSummary = {
   slug: string
   editedMs: number
   goal: string
   current: Row | 'all done' | null
   next: string
+  parked?: Parked
 }
 
 const FINISHED = /^(done|accepted|reviewed|dropped|skipped)\b/i
@@ -33,16 +36,60 @@ function currentStep(planLines: string[]): Row | 'all done' | null {
   return rows.find(row => !FINISHED.test(row.status)) ?? 'all done'
 }
 
+const NEXT_STEP = '## Next step'
+const PARKED = /^Parked:[ \t]*(\d{4}-\d{2}-\d{2})[ \t]*[—-][ \t]*(.*)$/
+
+function parkedOf(line: string): Parked | null {
+  const match = PARKED.exec(line.trim())
+  return match ? { date: match[1] ?? '', reason: match[2]?.trim() ?? '' } : null
+}
+
 export function summarize(text: string, fallbackSlug: string, editedMs: number): LedgerSummary {
   const title = text.match(/^# Task ledger[ \t]*[—-][ \t]*(.*)$/m)
+  const nextStep = section(text, 'Next step')
+  const parked = parkedOf(firstLine(nextStep))
   return {
     slug: title?.[1]?.trim() || fallbackSlug,
     editedMs,
     goal: firstLine(section(text, 'Goal')),
     current: currentStep(section(text, 'Plan')),
-    next: firstLine(section(text, 'Next step')),
+    next: firstLine(nextStep.filter(line => parkedOf(line) === null)),
+    ...(parked && { parked }),
   }
 }
+
+export const isoDate = (date: Date): string =>
+  [date.getFullYear(), date.getMonth() + 1, date.getDate()].map(part => String(part).padStart(2, '0')).join('-')
+
+export function parkMarker(today: Date, reason: string): string {
+  return `Parked: ${isoDate(today)} — ${reason.trim().split(/\s+/).join(' ')}`
+}
+
+/** Removes every parked marker under Next step, and reports the first. */
+export function unpark(text: string): { text: string; parked: Parked | null } {
+  const lines = text.split('\n')
+  const start = lines.findIndex(line => line.startsWith(NEXT_STEP))
+  if (start === -1) return { text, parked: null }
+  const rest = lines.slice(start + 1)
+  const end = rest.findIndex(line => line.startsWith('## '))
+  const body = end === -1 ? rest : rest.slice(0, end)
+  const parked = body.map(parkedOf).find(marker => marker !== null) ?? null
+  if (parked === null) return { text, parked }
+  const kept = body.filter(line => parkedOf(line) === null)
+  return { text: [...lines.slice(0, start + 1), ...kept, ...(end === -1 ? [] : rest.slice(end))].join('\n'), parked }
+}
+
+/** Puts the marker first under Next step, replacing any earlier marker, and adds the section when there is none. */
+export function park(text: string, marker: string): string {
+  const unparked = unpark(text).text
+  const lines = unparked.split('\n')
+  const start = lines.findIndex(line => line.startsWith(NEXT_STEP))
+  if (start === -1) return `${unparked.replace(/\n*$/, '')}\n\n${NEXT_STEP}\n${marker}\n`
+  return [...lines.slice(0, start + 1), marker, ...lines.slice(start + 1)].join('\n')
+}
+
+export const PARK_USAGE =
+  'Usage: /ledger:park [<slug>] <reason>. Without a slug it writes this task\'s ledger, parks it and clears the session. Run /ledger to see each slug.'
 
 export function formatTime(ms: number): string {
   const date = new Date(ms)
@@ -50,7 +97,8 @@ export function formatTime(ms: number): string {
   return `${date.getFullYear()}-${two(date.getMonth() + 1)}-${two(date.getDate())} ${two(date.getHours())}:${two(date.getMinutes())}`
 }
 
-function formatStep(current: LedgerSummary['current']): string {
+function formatStep({ current, parked }: LedgerSummary): string {
+  if (parked) return `- **Parked:** ${parked.date} — ${parked.reason}`
   if (current === null) return ''
   if (current === 'all done') return '- **Now:** all plan steps done'
   return `- **Now:** step ${current.number} · ${current.step} — *${current.status}*`
@@ -60,7 +108,7 @@ export function format(ledger: LedgerSummary): string {
   return [
     `#### ${ledger.slug} · edited ${formatTime(ledger.editedMs)}`,
     ledger.goal && `- **Goal:** ${ledger.goal}`,
-    formatStep(ledger.current),
+    formatStep(ledger),
     ledger.next && `- **Next:** ${ledger.next}`,
   ]
     .filter(line => line !== '')
@@ -112,8 +160,17 @@ export function lookupFailedMessage(error: string): string {
 }
 
 // One field per line, because a slug and a path can both hold spaces. go.md reads this format.
-export function goArgs(target: string, ledgerPath: string | undefined): string {
-  return `task: ${target}\nledger: ${ledgerPath ?? 'none'}`
+export function goArgs(target: string, ledgerPath: string | undefined, parked: Parked | null = null): string {
+  const fields = [`task: ${target}`, `ledger: ${ledgerPath ?? 'none'}`]
+  if (parked) fields.push(`parked: ${parked.date} — ${parked.reason}`)
+  return fields.join('\n')
+}
+
+export const otherTaskMessage = (word: string): string =>
+  `${word} is another task. Park it from the main checkout, or from that task's own session.`
+
+export function parkArgs(slug: string, ledgerPath: string, reason: string): string {
+  return [`task: ${slug}`, `ledger: ${ledgerPath}`, `reason: ${reason}`].join('\n')
 }
 
 export const GO_USAGE = 'Usage: /ledger:go <slug>. Run /ledger to see the slug of each task.'
@@ -122,19 +179,25 @@ export function unknownTaskMessage(target: string, slugs: string[], outcome = UN
   return `No task ledger is named "${target}". ${outcome} Task ledgers: ${slugs.join(', ') || 'none'}.`
 }
 
+export function unparkFailedMessage(target: string, error: string): string {
+  return `Could not remove the parked marker from ${target}. ${error} ${UNCHANGED}`
+}
+
 export function sharedSlugMessage(target: string, paths: string[], outcome = UNCHANGED): string {
   return `Several task ledgers are named "${target}": ${paths.join(', ')}. ${outcome} Give each task its own slug in its ledger's title.`
 }
 
 export const HELP = [
   "- `/ledger` — Show each task ledger's goal, current step and next step. `/ledger <name>` shows one.",
-  '- `/ledger:task` — Start a separate task with its own git worktree, branch and ledger.',
+  '- `/ledger:task` — Start a separate task with its own git worktree, branch and ledger. `--here` adds a ledger to this worktree instead.',
   "- `/ledger:update` — Write the latest results to this task's ledger, or start a task when there is none.",
   "- `/ledger:next` — Write this task's ledger, clear the session, and continue from the next step.",
   "- `/ledger:close` — Write this task's ledger, then clear the session.",
   "- `/ledger:go <slug>` — Write this task's ledger, clear the session, and continue in the task named <slug>.",
+  "- `/ledger:park [<slug>] <reason>` — Mark a task parked. Without a slug it writes this task's ledger, parks it, then clears the session.",
   "- `/ledger:worktrees` — Show each linked git worktree's size, last commit, dirty files, ledger and PR.",
-  '- `/ledger:retire [<slug>]` — Show what retiring a task would archive and remove; `--yes` archives its ledger and removes its worktree.',
+  '- `/ledger:retire [<slug>]` — Show what retiring a task would archive and remove; `--yes` archives its ledger, removes its worktree, and deletes its branch when all of its commits are merged.',
+  "- `/ledger:archive [<term>]` — List this repo's archived ledgers, newest first; a term keeps those that contain it, and `--all` lists every repo.",
   '- `/ledger:all` — Show every task ledger on this machine, active and archived; `--scan` rebuilds the list from disk.',
   '- `/ledger:help` — Show this list.',
 ].join('\n')

@@ -6,7 +6,7 @@
     {
       "name": "ledger",
       "source": "./mods/ledger",
-      "description": "/ledger prints each task ledger's goal, current step and next step; /ledger:task, /ledger:update, /ledger:next, /ledger:close and /ledger:go start, write and switch tasks; /ledger:worktrees prints each linked git worktree; /ledger:retire archives a task's ledger and removes its worktree; /ledger:help lists every command"
+      "description": "/ledger prints each task ledger's goal, current step and next step; /ledger:task, /ledger:update, /ledger:next, /ledger:close and /ledger:go start, write and switch tasks; /ledger:worktrees prints each linked git worktree; /ledger:retire archives a task's ledger and removes its worktree; /ledger:park marks a task parked; /ledger:archive searches archived ledgers; /ledger:all lists every task ledger on this machine; /ledger:help lists every command"
     }
   ]
 }

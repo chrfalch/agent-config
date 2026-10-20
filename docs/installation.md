@@ -104,7 +104,7 @@ commands:
   ledger. `/ledger:task --here [<slug>]` adds a ledger to the linked worktree
   the session is in, without a new branch or worktree.
 - `/ledger:update` writes the latest results to the current task's ledger. When
-  there is no ledger, it starts a task.
+  there is no ledger, it creates nothing and points you to `/ledger:task`.
 - `/ledger:close` writes the latest results to the current task's ledger, then
   clears the session. When there is no ledger, it prints why and does nothing.
 - `/ledger:next` does the same as `/ledger:close`, then sends `go <name>`, so

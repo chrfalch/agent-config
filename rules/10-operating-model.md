@@ -83,14 +83,16 @@ transcript is re-billed on every turn; the ledger is read once per fresh session
 - **New work, new task.** When the operator asks for work outside the current
   ledger's goal, it is a separate task by default. Start it with
   `/ledger:task <what the task is>`. You invoke it yourself through the Skill
-  tool; the operator can also type it. It runs `bin/cc-task-new`, adds one line
-  under the current ledger's Decisions that names the new task, and gives the
-  operator the `start:` line the script printed. Do not add the work to the
-  current ledger, and do not start it in this session. If you cannot tell
-  whether the work is separate, ask in one line. Without the ledger mod, run
-  `bin/cc-task-new <slug> --goal '<one paragraph>'` from the agent-config repo;
-  write each `'` inside the goal as `'\''`. Add `--stack` only when the new
-  work builds on the current branch.
+  tool; the operator can also type it. It runs `bin/cc-task-new`. With a
+  current ledger, it adds one line under that ledger's Decisions that names
+  the new task, and gives the operator the `start:` line the script printed.
+  Do not add the work to the current ledger, and do not start it in this
+  session. Without a current ledger, it moves the session into the new
+  worktree with `EnterWorktree` and continues the work in this session. If
+  you cannot tell whether the work is separate, ask in one line. Without the
+  ledger mod, run `bin/cc-task-new <slug> --goal '<one paragraph>'` from the
+  agent-config repo; write each `'` inside the goal as `'\''`. Add `--stack`
+  only when the new work builds on the current branch.
 - **Update the ledger at every pipeline boundary**: after plan approval, after red
   tests, after each implementer report, after each review verdict. Use
   `/ledger:update`; you invoke it yourself through the Skill tool. Write facts,

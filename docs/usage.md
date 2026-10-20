@@ -24,7 +24,7 @@ investigate -> resolve ambiguity -> plan -> ledger -> red tests -> implement
             -> verify -> review -> clear point (if more remains) -> you accept
 ```
 
-Three things need you: plan approval, typing the `start:` line that a new task prints, and typing `/ledger:next` at a clear point.
+Three things need you: plan approval, typing the `start:` line that a new task prints when another task is open, and typing `/ledger:next` at a clear point.
 
 ## A worked example
 
@@ -39,8 +39,13 @@ during a sync. Repo is ~/repos/acme/mobile.
 
 This is a new task, so the orchestrator invokes
 `/ledger:task` before it plans anything. The command creates a worktree and a
-ledger from `~/.claude/ledger.template.md`, with the goal filled in. It replies
-with one line:
+ledger from `~/.claude/ledger.template.md`, with the goal filled in. No task
+is open, so the session has nothing to clear. The command moves the session
+into the new worktree with the EnterWorktree tool. The orchestrator continues
+there without `/ledger:go`.
+
+When another task is open, the command does not start the new task in this
+session. It replies with one line:
 
 ```
 start:   /ledger:go offline-queue-loss

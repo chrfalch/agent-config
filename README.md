@@ -204,20 +204,21 @@ To start a separate task, type `/ledger:task <what the task is>`. Claude Code
 puts the plugin name in front of every command that a plugin writes as a
 markdown file, so a plain `/task` does not exist. The agent picks a
 short name and writes the goal. It then runs `bin/cc-task-new`, which creates
-a branch, a worktree and a ledger with the goal filled in. The reply tells you
-to type `/clear`, then `go <name>`. The fresh session moves into the new
-worktree and starts from its ledger. You do not open a new terminal.
+a branch, a worktree and a ledger with the goal filled in. When no task is
+open, the session moves into the new worktree and continues there. When
+another task is open, the reply gives you a `start:` line to type. The fresh
+session moves into the new worktree and starts from its ledger. Either way,
+you do not open a new terminal.
 
 To save the latest results before a `/clear`, type `/ledger:update`. In a task
 worktree, the agent writes the step status, the subagent reports, the
 decisions and the next step to the ledger. The reply tells you to type
-`/clear`, then `go`. With no ledger in the working directory, the agent does
-not create one there. It starts a task with `bin/cc-task-new` instead, the same
-way `/ledger:task` does.
+`/clear`, then `go`. With no ledger in the working directory, the agent creates
+nothing and tells you to use `/ledger:task`.
 
 To skip the manual `/clear`, type `/ledger:close` or `/ledger:next` instead.
-Both write the ledger the same way, but never start a task. With no ledger in
-the worktree, they print why and do nothing. When the reply ends,
+Both write the ledger the same way. With no ledger in the worktree, they print
+why and do nothing. When the reply ends,
 `/ledger:close` clears the session. `/ledger:next` also clears it, then sends
 `go <name>`, so the fresh session continues the task.
 

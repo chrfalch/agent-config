@@ -71,27 +71,29 @@ That context is `runner`.
 Your session transcript is not the record of the task. The **task ledger** is. The
 transcript is re-billed on every turn; the ledger is read once per fresh session.
 
-- Every non-trivial task has a ledger at `.claude/ledger.md` inside its worktree,
-  created from `~/.claude/ledger.template.md` when the plan is approved. It holds:
+- Every non-trivial task has a ledger at `.claude/ledger.md` inside its worktree.
+  `/ledger:task` creates the worktree and the ledger when the task starts,
+  before any plan, from `~/.claude/ledger.template.md`. When the plan is
+  approved, write it into the ledger. The ledger holds:
   goal, approved plan with per-step status, decisions and the reason for each,
   constraints discovered, worktree path and branch, subagent reports (the
   structured report, not the transcript), open questions, and the exact next step.
-  If the worktree does not exist yet at plan approval, create it first, then the
-  ledger. The ledger always lives at `.claude/ledger.md` in the task's
-  worktree. It never lives in the main checkout. A PreToolUse hook denies a
+  The ledger always lives at `.claude/ledger.md` in the task's worktree. It never lives in the main checkout. A PreToolUse hook denies a
   ledger write in the main checkout.
 - **New work, new task.** When the operator asks for work outside the current
-  ledger's goal, it is a separate task by default. Run `bin/cc-task-new <slug>
-  --goal '<one paragraph>'` from the agent-config repo; write each `'` inside
-  the goal as `'\''`. Add `--stack` only when the new work builds on the
-  current branch. Then add one line under the
-  current ledger's Decisions that names the new task, and give the operator
-  the `start:` line the script printed. Do not add the work to the current
-  ledger, and do not start it in this session. If you cannot tell whether the
-  work is separate, ask in one line. `/ledger:task <description>` asks for the same
-  thing directly.
+  ledger's goal, it is a separate task by default. Start it with
+  `/ledger:task <what the task is>`. You invoke it yourself through the Skill
+  tool; the operator can also type it. It runs `bin/cc-task-new`, adds one line
+  under the current ledger's Decisions that names the new task, and gives the
+  operator the `start:` line the script printed. Do not add the work to the
+  current ledger, and do not start it in this session. If you cannot tell
+  whether the work is separate, ask in one line. Without the ledger mod, run
+  `bin/cc-task-new <slug> --goal '<one paragraph>'` from the agent-config repo;
+  write each `'` inside the goal as `'\''`. Add `--stack` only when the new
+  work builds on the current branch.
 - **Update the ledger at every pipeline boundary**: after plan approval, after red
-  tests, after each implementer report, after each review verdict. Write facts,
+  tests, after each implementer report, after each review verdict. Use
+  `/ledger:update`; you invoke it yourself through the Skill tool. Write facts,
   not narrative. Keep it under ~4k tokens; roll finished steps into one line each.
   During long in-thread reasoning, also write each decision and each ruled-out
   option to the ledger as you make it, so a compaction mid-problem loses only the
@@ -130,11 +132,15 @@ transcript is re-billed on every turn; the ledger is read once per fresh session
 
 Absolute. A worktree is disposable. Its ledger is the record of the task.
 
-- Retire a worktree with `bin/cc-worktree-retire <worktree> [--force]` from the
-  agent-config repo. It copies `.claude/ledger.md` to
+- Retire a worktree with `/ledger:retire <slug>`. Ask the operator to type it.
+  A hook answers it, so you cannot invoke it yourself. Alone it only shows what
+  it would archive and remove. With `--yes` it runs `bin/cc-worktree-retire`.
+  Uncommitted changes or an unmerged branch also need `--force`.
+- `bin/cc-worktree-retire` copies `.claude/ledger.md` to
   `~/.claude/ledger-archive/<repo>/<YYYY-MM-DD>-<slug>.md`, checks the copy,
   then runs `git worktree remove`. Running it twice archives once. It also
-  deletes the worktree's `cc-dd-path` build folders.
+  deletes the worktree's `cc-dd-path` build folders. Without the ledger mod,
+  run `bin/cc-worktree-retire <worktree> [--force]` from the agent-config repo.
 - `<repo>` is the main checkout's directory name. `<slug>` is the branch name
   without its owner prefix.
 - Never remove a worktree, and never delete its directory, while its ledger is

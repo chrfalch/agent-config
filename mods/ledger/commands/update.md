@@ -13,9 +13,13 @@ is in a task worktree. Update that ledger:
    - the exact next step.
 3. Roll each finished step into one line. Keep the ledger under about 4k
    tokens.
-4. End your reply with exactly this line:
+4. End your reply with one line. If an implement→review cycle just finished
+   and more work remains, use exactly this line:
 
    Clear point. Ledger updated. Type `/ledger:next` to clear the session and continue, or `/ledger:close` to clear it and stop.
+
+   Otherwise, say only that the ledger is updated. After the last review
+   verdict there is no clear point: accept the work and finish.
 
 If `.claude/ledger.md` does not exist, do not create one here. A ledger lives
 only in a task worktree. Start a task instead:

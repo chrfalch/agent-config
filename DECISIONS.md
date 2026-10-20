@@ -443,3 +443,20 @@ this hook. `ledger-list.sh prompt-submit` acts on a prompt that is exactly
 **A title from `/rename` stays.** The hook replaces a title only when it is
 empty, or when it is the slug of an active or archived ledger. Any other
 title was given by the operator.
+
+## 2026-10-20 — The ledger stays out of the main checkout; resume goes through `/ledger:next`
+
+**This replaces two points of the 2026-09-17 ledger entry.** That entry put
+the ledger relative to the working directory and dropped the main-checkout
+ban. It also made resume `/clear` then `go`.
+
+**The main-checkout ban is back, as a hook.** An agent asked to update the
+ledger with no task open wrote `.claude/ledger.md` in the main checkout. Since
+2026-10-16, `hooks/ledger-gate.sh` denies that write. A ledger lives only in a
+linked worktree. `/ledger:task` creates the worktree and the ledger together,
+when the task starts.
+
+**Resume is `/ledger:next` or `/ledger:close`.** `/ledger:next` updates the
+ledger, clears the session and sends `go <slug>`. `/ledger:close` updates the
+ledger and clears without continuing. `/clear`, then `go`, is the fallback
+when one of them reports that it could not clear the session.

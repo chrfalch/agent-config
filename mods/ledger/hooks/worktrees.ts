@@ -100,7 +100,7 @@ export type WorktreesCommand =
   | { kind: 'prune-orphans'; confirmed: boolean }
   | { kind: 'usage' }
 
-export const USAGE = 'Usage: `/worktrees`, `/worktrees prune <name> [--yes]`, `/worktrees derived-data` or `/worktrees prune-orphans [--yes]`'
+export const USAGE = 'Usage: `/ledger:worktrees`, `/ledger:worktrees prune <name> [--yes]`, `/ledger:worktrees derived-data` or `/ledger:worktrees prune-orphans [--yes]`'
 
 export function parseCommand(args: string): WorktreesCommand {
   const trimmed = args.trim()
@@ -202,7 +202,7 @@ export function formatPrunePlan(name: string, folders: PruneFolder[]): string {
     '',
     'Folders inside a `.claude` folder are never deleted.',
     '`node_modules` and `Pods` folders are kept, so the worktree still builds.',
-    `Run \`/worktrees prune ${name} --yes\` to delete them.`,
+    `Run \`/ledger:worktrees prune ${name} --yes\` to delete them.`,
   ].join('\n')
 }
 
@@ -340,7 +340,7 @@ export function formatDerivedData(folders: DerivedDataFolder[]): string {
   return [
     `**${DERIVED_DATA_LABEL}** · ${gb(folders)} GB in ${folderCount(folders)}`,
     ...[...groups.values()].flatMap(groupLines),
-    ...(groups.has('orphan') ? ['', ORPHAN_NOTE, 'Run `/worktrees prune-orphans --yes` to delete the orphans.'] : []),
+    ...(groups.has('orphan') ? ['', ORPHAN_NOTE, 'Run `/ledger:worktrees prune-orphans --yes` to delete the orphans.'] : []),
   ].join('\n')
 }
 
@@ -354,7 +354,7 @@ export function formatOrphanPlan(orphans: PruneFolder[]): string {
     ...pruneTable(orphans),
     '',
     ORPHAN_NOTE,
-    'Run `/worktrees prune-orphans --yes` to delete them.',
+    'Run `/ledger:worktrees prune-orphans --yes` to delete them.',
   ].join('\n')
 }
 

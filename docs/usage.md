@@ -119,19 +119,17 @@ Step 3: delegate to sol-implementer, de-duplicate on id in flushQueue().
 
 Steps 1 and 2 are done and step 3 remains, so the orchestrator stops:
 
-> Clear point. Ledger updated. Run `/clear`, then say: go.
+> Clear point. Ledger updated. Type `/ledger:next` to clear the session and continue, or `/ledger:close` to clear it and stop.
 
 You type:
 
 ```
-/clear
+/ledger:next
 ```
 
-then:
-
-```
-go
-```
+It clears the session and sends `go <name>`, so the fresh session continues
+from the ledger. `/ledger:close` clears without continuing. If either command
+cannot clear the session, it says so; then type `/clear`, then `go`.
 
 The SessionStart hook reads the ledger into the fresh session. The session knows
 the goal, the worktree, what is done, and the next step. It continues with step
@@ -186,7 +184,7 @@ moves into that task's worktree and continues from its ledger.
 ## The clear loop, in short
 
 ```
-implement -> review -> ledger updated -> "Clear point" -> /clear -> go -> next step
+implement -> review -> ledger updated -> "Clear point" -> /ledger:next -> next step
 ```
 
 Why it is worth the keystrokes: a cold start from the ledger costs a few

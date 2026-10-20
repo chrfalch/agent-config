@@ -13,7 +13,7 @@ const STUB_ROOT = mkdtempSync(path.join(tmpdir(), 'agent-config-claude-stub-'));
 process.on('exit', () => rmSync(STUB_ROOT, { recursive: true, force: true }));
 
 // A fake `claude` that answers the two plugin list commands from per-HOME state, so a
-// marketplace add or plugin install changes what later lists report. The state lives
+// marketplace add, plugin install or plugin uninstall changes what later lists report. The state lives
 // outside HOME: --dry-run tests assert that HOME is byte-for-byte unchanged.
 const CLAUDE_STUB = `#!${process.execPath}
 const { createHash } = require('node:crypto');
@@ -48,6 +48,12 @@ else if (sub === 'marketplace' && verb === 'add' && target) {
   if (!read('marketplaces').some((entry) => entry.name === marketplace)) fail('Error: marketplace ' + marketplace + ' not found');
   const now = new Date().toISOString();
   write('plugins', [...read('plugins'), { id: verb, version: '0.1.0', scope: 'user', enabled: true, installPath: path.join(home, '.claude/plugins/cache', marketplace, plugin, '0.1.0'), installedAt: now, lastUpdated: now }]);
+} else if (sub === 'uninstall' && verb) {
+  failIfAsked('uninstall');
+  const scope = args[args.indexOf('--scope') + 1];
+  const plugins = read('plugins');
+  if (!plugins.some((entry) => entry.id === verb && entry.scope === scope)) fail('Error: plugin ' + verb + ' is not installed at scope ' + scope);
+  write('plugins', plugins.filter((entry) => !(entry.id === verb && entry.scope === scope)));
 } else fail('stub claude: unexpected arguments: ' + args.join(' '));
 `;
 
@@ -73,7 +79,7 @@ export function claudeLists(home: string, lists: { marketplaces?: string; plugin
 }
 
 /** Makes the stub claude exit 1 with an error on stderr for every later `step` under this HOME. */
-export function failClaude(home: string, step: 'add' | 'install'): void {
+export function failClaude(home: string, step: 'add' | 'install' | 'uninstall'): void {
   mkdirSync(stubState(home), { recursive: true });
   writeFileSync(path.join(stubState(home), `fail-${step}`), '');
 }

@@ -73,7 +73,9 @@ function command(program: string, args: string[], allowFailure = false): string 
 }
 
 const MARKETPLACE = 'agent-config';
-const MODS = ['ledger', 'worktrees'];
+const MODS = ['ledger'];
+// Mods an earlier deploy installed that now live inside another mod, each with the command that replaces it.
+const RETIRED_MODS = { worktrees: '/ledger:worktrees' } as const;
 const modId = (name: string): string => `${name}@${MARKETPLACE}`;
 const MOD_COMMANDS = MODS.map((name) => `/${name}`).join(', ');
 
@@ -105,7 +107,7 @@ function samePath(first: string, second: string): boolean {
   return real(first) === real(second);
 }
 
-const PAST = { add: 'added', install: 'installed' } as const;
+const PAST = { add: 'added', install: 'installed', uninstall: 'uninstalled' } as const;
 
 // Installed from this repo as a folder marketplace, so repo edits reach a session through
 // /reload-plugins without a reinstall. --revert leaves both in place: they live in Claude
@@ -137,11 +139,18 @@ function deployMods(opts: DeployOptions): void {
     console.log(`mods     skipped install of ${MODS.map(modId).join(', ')} until the marketplace points at this repo`);
     return;
   }
-  const plugins = claudeList<{ id: string }>(['plugin']);
+  const plugins = claudeList<{ id: string; scope?: string }>(['plugin']);
   for (const name of MODS) {
     const mod = modId(name);
     if (plugins.some(({ id }) => id === mod)) console.log(`mods     ${mod} already installed`);
     else change('install', ['plugin', 'install', mod], `${mod} (/${name})`);
+  }
+  for (const [name, replacement] of Object.entries(RETIRED_MODS)) {
+    const mod = modId(name);
+    // Deploy installs at user scope only; an install at another scope is the operator's own.
+    if (plugins.some(({ id, scope }) => id === mod && scope === 'user')) {
+      change('uninstall', ['plugin', 'uninstall', mod], `${mod} (now ${replacement})`);
+    }
   }
 }
 

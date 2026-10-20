@@ -99,9 +99,12 @@ transcript is re-billed on every turn; the ledger is read once per fresh session
 - **Clear between cycles.** You cannot see your own context size and you cannot
   run `/clear`; the user does. So the trigger is structural and you announce it:
   whenever an implement→review cycle finishes **and more work remains**, update
-  the ledger, then stop and say: "Clear point. Ledger updated. Run `/clear`,
-  then say: go." The SessionStart hook puts the ledger back in context, so the
-  user types nothing else. Do not start
+  the ledger, then stop and say: "Clear point. Ledger updated. Type
+  `/ledger:next` to clear the session and continue, or `/ledger:close` to
+  clear it and stop." `/ledger:next` clears and sends `go <slug>`; the
+  SessionStart hook puts the ledger back in context, so the user types nothing
+  else. Name `/clear`, then `go`, only as the fallback when one of those
+  commands reports that it could not clear the session. Do not start
   the next cycle in the same session. When the review
   verdict is the last one, accept and finish — a clear before acceptance saves
   nothing. A cold start from the ledger costs a few thousand tokens; carrying the

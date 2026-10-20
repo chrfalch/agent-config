@@ -97,14 +97,18 @@ test('activeLedger reports several when nested worktrees both hold cwd', () => {
   })
 })
 
-type World = { calls: string[]; logs: string[]; isMarkdownReached: () => boolean }
+type World = { calls: string[]; logs: string[]; isMarkdownReached: () => boolean; markdownArgs: () => string | undefined }
 
 type Broken = 'spawn' | 'lookup' | 'read' | 'markdown' | 'clear' | 'submit'
+
+// The ledger at NEW_API has no slug in its title, so its slug is its folder name; every other ledger is fast-steps.
+const UNTITLED = LEDGER.replace('# Task ledger — fast-steps', '# Task ledger')
 
 function world(on: On, cwd: string, ledgers: string[], command: string, broken?: Broken): World {
   const calls: string[] = []
   const logs: string[] = []
   let isMarkdownReached = false
+  let markdownArgs: string | undefined
   on('session.cwd', async () => ({ value: cwd }))
   on('process.run', async () => broken === 'spawn' ? { deny: 'spawn bash ENOENT' } : ({
     value: broken === 'lookup'
@@ -112,9 +116,10 @@ function world(on: On, cwd: string, ledgers: string[], command: string, broken?:
       : { exitCode: 0, stdout: ledgers.join('\n'), stderr: '', isStdoutTruncated: false, isStderrTruncated: false },
   }))
   on('fs.stat', async () => ({ value: { kind: 'file', size: 0, mtimeMs: 0, isLink: false } }))
-  on('fs.read', async () => (broken === 'read' ? { deny: 'EACCES: ledger unreadable' } : { value: LEDGER }))
-  on('command.run', { command }, async () => {
+  on('fs.read', async (_, e) => (broken === 'read' ? { deny: 'EACCES: ledger unreadable' } : { value: e.path === NEW_API ? UNTITLED : LEDGER }))
+  on('command.run', { command }, async (_, e) => {
     isMarkdownReached = true
+    markdownArgs = e.args
     if (broken === 'markdown') throw new Error('markdown command failed')
     return { text: '' }
   })
@@ -133,7 +138,7 @@ function world(on: On, cwd: string, ledgers: string[], command: string, broken?:
     return { value: undefined }
   })
   on('turn.complete', async () => ({ text: '' }))
-  return { calls, logs, isMarkdownReached: () => isMarkdownReached }
+  return { calls, logs, isMarkdownReached: () => isMarkdownReached, markdownArgs: () => markdownArgs }
 }
 
 const turnEnd = { answer: '', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' } as const
@@ -262,4 +267,126 @@ test('/ledger:next names the failed prompt after the clear worked', async ($, on
   expect(calls).toEqual(['clear', 'submit: go fast-steps'])
   expect(logs).toHaveLength(1)
   expect(logs[0]).toMatch(/^\/ledger:next cleared the session but could not send "go fast-steps": .+\. Say: go fast-steps\.$/)
+})
+
+test('/ledger:help prints one line per /ledger command, in order, without a model turn', async ($, on) => {
+  const { isMarkdownReached } = world(on, '/repo', [], 'ledger:help')
+  const { text } = await $.command.run({ command: 'ledger:help', args: '' })
+  const commands = text.split('\n').map(line => line.match(/^- `(\/ledger[^`]*)` — \S/)?.[1])
+  expect(commands).toEqual([
+    '/ledger',
+    '/ledger:task',
+    '/ledger:update',
+    '/ledger:next',
+    '/ledger:close',
+    '/ledger:go <slug>',
+    '/ledger:worktrees',
+    '/ledger:help',
+  ])
+  expect(isMarkdownReached()).toBe(false)
+})
+
+for (const args of ['', '   ']) {
+  test(`/ledger:go with ${args ? 'only spaces' : 'no slug'} prints the usage and clears nothing`, async ($, on) => {
+    const { calls, isMarkdownReached } = world(on, `${WORKTREES}/fix-login`, [FIX_LOGIN, NEW_API], 'ledger:go')
+    const { text } = await $.command.run({ command: 'ledger:go', args })
+    expect(text.startsWith('Usage: /ledger:go <slug>')).toBe(true)
+    expect(isMarkdownReached()).toBe(false)
+    await $.turn.complete(turnEnd)
+    expect(calls).toEqual([])
+  })
+}
+
+test('/ledger:go to a slug no ledger has names the task ledgers and clears nothing', async ($, on) => {
+  const { calls, isMarkdownReached } = world(on, `${WORKTREES}/fix-login`, [FIX_LOGIN, NEW_API], 'ledger:go')
+  const { text } = await $.command.run({ command: 'ledger:go', args: 'fast' })
+  expect(text).toContain('"fast"')
+  expect(text).toContain('fast-steps, new-api')
+  expect(text).toContain('Nothing was written, and the session was not cleared.')
+  expect(isMarkdownReached()).toBe(false)
+  await $.turn.complete(turnEnd)
+  expect(calls).toEqual([])
+})
+
+test('/ledger:go to a slug two ledgers share names both and clears nothing', async ($, on) => {
+  const twin = `${WORKTREES}/twin/.claude/ledger.md`
+  const { calls, isMarkdownReached } = world(on, `${WORKTREES}/fix-login`, [FIX_LOGIN, twin], 'ledger:go')
+  const { text } = await $.command.run({ command: 'ledger:go', args: 'fast-steps' })
+  expect(text).toContain(FIX_LOGIN)
+  expect(text).toContain(twin)
+  expect(isMarkdownReached()).toBe(false)
+  await $.turn.complete(turnEnd)
+  expect(calls).toEqual([])
+})
+
+test('/ledger:go from a task worktree runs the command, then clears and submits go <target>', async ($, on) => {
+  const { calls, isMarkdownReached, markdownArgs } = world(on, `${WORKTREES}/fix-login/src`, [FIX_LOGIN, NEW_API], 'ledger:go')
+  const armed: unknown[] = []
+  on('state.set', async (_, e, next) => {
+    if (e.plugin === 'ledger' && e.key === 'armed') armed.push(e.value)
+    return next(e)
+  })
+  await $.command.run({ command: 'ledger:go', args: '  new-api ' })
+  expect(isMarkdownReached()).toBe(true)
+  expect(markdownArgs()).toBe(`task: new-api\nledger: ${FIX_LOGIN}`)
+  expect(armed).toEqual([{ mode: 'go', slug: 'new-api' }])
+  expect(calls).toEqual([])
+  await $.turn.complete(turnEnd)
+  expect(calls).toEqual(['clear', 'submit: go new-api'])
+})
+
+test('/ledger:go outside every task worktree still clears and submits go <target>', async ($, on) => {
+  const { calls, isMarkdownReached, markdownArgs } = world(on, '/repo', [FIX_LOGIN, NEW_API], 'ledger:go')
+  await $.command.run({ command: 'ledger:go', args: 'fast-steps' })
+  expect(isMarkdownReached()).toBe(true)
+  expect(markdownArgs()).toBe('task: fast-steps\nledger: none')
+  await $.turn.complete(turnEnd)
+  expect(calls).toEqual(['clear', 'submit: go fast-steps'])
+})
+
+test('/ledger:go to the current task behaves like /ledger:next', async ($, on) => {
+  const { calls, isMarkdownReached } = world(on, `${WORKTREES}/fix-login`, [FIX_LOGIN, NEW_API], 'ledger:go')
+  await $.command.run({ command: 'ledger:go', args: 'fast-steps' })
+  expect(isMarkdownReached()).toBe(true)
+  await $.turn.complete(turnEnd)
+  expect(calls).toEqual(['clear', 'submit: go fast-steps'])
+})
+
+test('/ledger:go in several nested worktrees names each and clears nothing', async ($, on) => {
+  const inner = `${WORKTREES}/fix-login/.claude/worktrees/inner`
+  const { calls, isMarkdownReached } = world(on, inner, [FIX_LOGIN, `${inner}/.claude/ledger.md`, NEW_API], 'ledger:go')
+  const { text } = await $.command.run({ command: 'ledger:go', args: 'new-api' })
+  expect(text).toContain('fix-login')
+  expect(text).toContain('inner')
+  expect(isMarkdownReached()).toBe(false)
+  await $.turn.complete(turnEnd)
+  expect(calls).toEqual([])
+})
+
+test('/ledger:go reports a failed ledger lookup and clears nothing', async ($, on) => {
+  const { calls, isMarkdownReached } = world(on, `${WORKTREES}/fix-login`, [FIX_LOGIN, NEW_API], 'ledger:go', 'lookup')
+  const { text } = await $.command.run({ command: 'ledger:go', args: 'new-api' })
+  expect(text.startsWith("Could not check this task's ledger.")).toBe(true)
+  expect(text).toContain('failed (exit 1): not a repository')
+  expect(isMarkdownReached()).toBe(false)
+  await $.turn.complete(turnEnd)
+  expect(calls).toEqual([])
+})
+
+test('/ledger:go names the failed clear and asks for go <target>', async ($, on) => {
+  const { calls, logs } = world(on, `${WORKTREES}/fix-login`, [FIX_LOGIN, NEW_API], 'ledger:go', 'clear')
+  await $.command.run({ command: 'ledger:go', args: 'new-api' })
+  await $.turn.complete(turnEnd)
+  expect(calls).toEqual(['clear'])
+  expect(logs).toHaveLength(1)
+  expect(logs[0]).toMatch(/^\/ledger:go could not clear the session: .+\. Run \/clear, then say: go new-api\.$/)
+})
+
+test('/ledger:go names the failed prompt after the clear worked', async ($, on) => {
+  const { calls, logs } = world(on, `${WORKTREES}/fix-login`, [FIX_LOGIN, NEW_API], 'ledger:go', 'submit')
+  await $.command.run({ command: 'ledger:go', args: 'new-api' })
+  await $.turn.complete(turnEnd)
+  expect(calls).toEqual(['clear', 'submit: go new-api'])
+  expect(logs).toHaveLength(1)
+  expect(logs[0]).toMatch(/^\/ledger:go cleared the session but could not send "go new-api": .+\. Say: go new-api\.$/)
 })

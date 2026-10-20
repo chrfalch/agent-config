@@ -15,7 +15,7 @@ is in a task worktree. Update that ledger:
    tokens.
 4. End your reply with exactly this line:
 
-   Clear point. Ledger updated. Run `/clear`, then say: go.
+   Clear point. Ledger updated. Type `/ledger:next` to clear the session and continue, or `/ledger:close` to clear it and stop.
 
 If `.claude/ledger.md` does not exist, do not create one here. A ledger lives
 only in a task worktree. Start a task instead:

@@ -1,4 +1,4 @@
-import type { EngineInterface, FsStat, Register } from 'claude-code'
+import type { EngineInterface, FsStat } from 'claude-code'
 
 import {
   basename,
@@ -128,7 +128,9 @@ async function xcodeBuildFolders($: EngineInterface, { derivedData, prefix }: Pr
   }
 }
 
-const resolve = ($: EngineInterface, path: string): Promise<FsStat | undefined> => $.fs.stat(path, { resolve: true }).catch(() => undefined)
+function resolve($: EngineInterface, path: string): Promise<FsStat | undefined> {
+  return $.fs.stat(path, { resolve: true }).catch(() => undefined)
+}
 
 /** Why `rm -rf` must not touch the path, judged on where it really lands rather than how it is spelled; undefined when it may. */
 async function deletionProblem($: EngineInterface, path: string, scope: PruneScope): Promise<string | undefined> {
@@ -243,33 +245,21 @@ async function pruneOrphans($: EngineInterface, layout: RepoLayout, confirmed: b
   )
 }
 
-export const register: Register = on => {
-  on('session.start', async ($, e, next) => {
-    await $.command.register({
-      name: 'worktrees',
-      description:
-        "Show each linked git worktree's size, last commit, dirty files, ledger and PR, largest first. `prune <name>` lists a worktree's build folders; add `--yes` to delete them. `derived-data` groups Xcode's DerivedData folders by the project they were built from. `prune-orphans` lists the folders whose project is gone; add `--yes` to delete them.",
-      argumentHint: '[prune <name> [--yes] | derived-data | prune-orphans [--yes]]',
-    })
-    return next(e)
-  })
-
-  on('command.run', { command: 'worktrees' }, async ($, e) => {
-    // Typed as always a string, but `claude plugin test` leaves it undefined when the caller omits it.
-    const command = parseCommand(e.args ?? '')
-    if (command.kind === 'usage') return { text: USAGE }
-    const cwd = await $.session.cwd()
-    const { error, ...layout } = await linkedWorktrees($, cwd)
-    if (error !== undefined) return { text: error }
-    switch (command.kind) {
-      case 'table':
-        return { text: await table($, layout.worktrees, cwd) }
-      case 'prune':
-        return { text: await prune($, layout.worktrees, command.name, command.confirmed, cwd) }
-      case 'derived-data':
-        return { text: await derivedDataReport($, layout, cwd) }
-      case 'prune-orphans':
-        return { text: await pruneOrphans($, layout, command.confirmed, cwd) }
-    }
-  })
+/** The text /ledger:worktrees answers with for the arguments the operator typed. */
+export async function worktreesCommand($: EngineInterface, args: string): Promise<string> {
+  const command = parseCommand(args)
+  if (command.kind === 'usage') return USAGE
+  const cwd = await $.session.cwd()
+  const { error, ...layout } = await linkedWorktrees($, cwd)
+  if (error !== undefined) return error
+  switch (command.kind) {
+    case 'table':
+      return table($, layout.worktrees, cwd)
+    case 'prune':
+      return prune($, layout.worktrees, command.name, command.confirmed, cwd)
+    case 'derived-data':
+      return derivedDataReport($, layout, cwd)
+    case 'prune-orphans':
+      return pruneOrphans($, layout, command.confirmed, cwd)
+  }
 }

@@ -110,3 +110,29 @@ export function severalLedgersMessage(cwd: string, slugs: string[]): string {
 export function lookupFailedMessage(error: string): string {
   return `Could not check this task's ledger. ${error} ${UNCHANGED}`
 }
+
+// One field per line, because a slug and a path can both hold spaces. go.md reads this format.
+export function goArgs(target: string, ledgerPath: string | undefined): string {
+  return `task: ${target}\nledger: ${ledgerPath ?? 'none'}`
+}
+
+export const GO_USAGE = 'Usage: /ledger:go <slug>. Run /ledger to see the slug of each task.'
+
+export function unknownTaskMessage(target: string, slugs: string[]): string {
+  return `No task ledger is named "${target}". ${UNCHANGED} Task ledgers: ${slugs.join(', ') || 'none'}.`
+}
+
+export function sharedSlugMessage(target: string, paths: string[]): string {
+  return `Several task ledgers are named "${target}": ${paths.join(', ')}. ${UNCHANGED} Give each task its own slug in its ledger's title.`
+}
+
+export const HELP = [
+  "- `/ledger` — Show each task ledger's goal, current step and next step. `/ledger <name>` shows one.",
+  '- `/ledger:task` — Start a separate task with its own git worktree, branch and ledger.',
+  "- `/ledger:update` — Write the latest results to this task's ledger, or start a task when there is none.",
+  "- `/ledger:next` — Write this task's ledger, clear the session, and continue from the next step.",
+  "- `/ledger:close` — Write this task's ledger, then clear the session.",
+  "- `/ledger:go <slug>` — Write this task's ledger, clear the session, and continue in the task named <slug>.",
+  "- `/ledger:worktrees` — Show each linked git worktree's size, last commit, dirty files, ledger and PR.",
+  '- `/ledger:help` — Show this list.',
+].join('\n')

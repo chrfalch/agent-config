@@ -139,6 +139,14 @@ session_start_json() {
   fi
 }
 
+# The hook is deployed as a symlink, so readlink -f finds the repo's bin/. The registry is best
+# effort: it must never change this hook's output or exit code.
+register_ledgers() {
+  [ "${#ledgers[@]}" -gt 0 ] || return 0
+  command -v node >/dev/null 2>&1 || return 0
+  "$(dirname "$(readlink -f "$0")")/../bin/cc-ledgers" upsert "${ledgers[@]}" >/dev/null 2>&1 || true
+}
+
 case "$mode" in
   paths)
     printf '%s\n' "${ledgers[@]}"
@@ -152,6 +160,7 @@ case "$mode" in
     fi
     ;;
   *)
+    register_ledgers
     title=""
     [ "$n" -eq 1 ] && [ "$own" -eq 1 ] && title=$(slug "${ledgers[0]}")
     session_start_text | session_start_json "$title"

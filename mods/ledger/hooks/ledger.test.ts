@@ -282,6 +282,7 @@ test('/ledger:help prints one line per /ledger command, in order, without a mode
     '/ledger:go <slug>',
     '/ledger:worktrees',
     '/ledger:retire [<slug>]',
+    '/ledger:all',
     '/ledger:help',
   ])
   expect(isMarkdownReached()).toBe(false)

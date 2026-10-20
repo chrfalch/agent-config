@@ -95,6 +95,8 @@ TASK_SLUG="$slug" TASK_GOAL="$goal" TASK_WORKTREE="$wt" TASK_BRANCH="$branch" TA
     section == "## Location" && /^- base: / { $0 = "- base: " ENVIRON["TASK_BASE"] }
     { print }
   ' "$template" > "$ledger"
+"$(dirname "$self")/cc-ledgers" upsert "$ledger" --repo "$(basename "$main")" --slug "$slug" --branch "$branch" ||
+  echo "warning: registry not updated" >&2
 trap - EXIT
 
 echo "worktree $wt"

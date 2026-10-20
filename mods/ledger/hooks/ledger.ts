@@ -44,7 +44,7 @@ export function summarize(text: string, fallbackSlug: string, editedMs: number):
   }
 }
 
-function formatTime(ms: number): string {
+export function formatTime(ms: number): string {
   const date = new Date(ms)
   const two = (value: number) => String(value).padStart(2, '0')
   return `${date.getFullYear()}-${two(date.getMonth() + 1)}-${two(date.getDate())} ${two(date.getHours())}:${two(date.getMinutes())}`
@@ -135,5 +135,6 @@ export const HELP = [
   "- `/ledger:go <slug>` — Write this task's ledger, clear the session, and continue in the task named <slug>.",
   "- `/ledger:worktrees` — Show each linked git worktree's size, last commit, dirty files, ledger and PR.",
   '- `/ledger:retire [<slug>]` — Show what retiring a task would archive and remove; `--yes` archives its ledger and removes its worktree.',
+  '- `/ledger:all` — Show every task ledger on this machine, active and archived; `--scan` rebuilds the list from disk.',
   '- `/ledger:help` — Show this list.',
 ].join('\n')

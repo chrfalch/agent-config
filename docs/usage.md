@@ -131,6 +131,10 @@ It clears the session and sends `go <name>`, so the fresh session continues
 from the ledger. `/ledger:close` clears without continuing. If either command
 cannot clear the session, it says so; then type `/clear`, then `go`.
 
+A session sees only the ledgers of its own repo. `/ledger:all` lists every task
+ledger on the machine, from every repo, with its next step. `/ledger:all --scan`
+rebuilds that list from the ledgers on disk.
+
 The SessionStart hook reads the ledger into the fresh session. The session knows
 the goal, the worktree, what is done, and the next step. It continues with step
 3. You type nothing else.

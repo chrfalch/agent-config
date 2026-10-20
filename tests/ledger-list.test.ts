@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test, { type TestContext } from 'node:test';
@@ -19,6 +19,7 @@ function scratch(t: TestContext): string {
 function environment(root: string): NodeJS.ProcessEnv {
   return {
     ...process.env,
+    HOME: root,
     GIT_CONFIG_GLOBAL: path.join(root, '.gitconfig'),
     GIT_CONFIG_NOSYSTEM: '1',
     GIT_CEILING_DIRECTORIES: path.dirname(root),
@@ -268,6 +269,65 @@ test('session-start keeps quotes, backslashes and non-ASCII text intact', (t) =>
 
   assert.equal(output.sessionTitle, '"quoted" \\ slug æøå');
   assert.equal(output.additionalContext, fullLedgerText(ledger));
+});
+
+const registeredPaths = (root: string): string[] =>
+  (JSON.parse(readFileSync(path.join(root, '.claude/ledgers.json'), 'utf8')) as { path: string }[]).map((entry) => entry.path).sort();
+
+test('session-start registers its one ledger in ~/.claude/ledgers.json', (t) => {
+  const root = scratch(t);
+  const main = repository(root, 'main');
+  const ledger = ledgerIn(worktree(root, main, path.join(root, 'sibling')));
+
+  sessionStart(root, main);
+
+  assert.deepEqual(registeredPaths(root), [ledger]);
+});
+
+test('session-start registers each of several ledgers', (t) => {
+  const root = scratch(t);
+  const main = repository(root, 'main');
+  const first = ledgerIn(worktree(root, main, path.join(root, 'first')));
+  const second = ledgerIn(worktree(root, main, path.join(root, 'second')));
+
+  const shims = path.join(root, 'shims');
+  const calls = path.join(root, 'node-calls');
+  mkdirSync(shims);
+  writeFileSync(path.join(shims, 'node'), `#!/bin/bash\necho >> '${calls}'\nexec '${process.execPath}' "$@"\n`, { mode: 0o755 });
+
+  const result = spawnSync('bash', [LEDGER_LIST, 'session-start'], {
+    cwd: main,
+    env: { ...environment(root), PATH: `${shims}:${process.env.PATH ?? ''}` },
+    encoding: 'utf8',
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(registeredPaths(root), [first, second].sort());
+  assert.equal(readFileSync(calls, 'utf8'), '\n', 'node ran more than once');
+});
+
+test('session-start prints the same JSON and exits 0 when the registry cannot be written', (t) => {
+  const root = scratch(t);
+  const main = repository(root, 'main');
+  const sibling = worktree(root, main, path.join(root, 'sibling'));
+  const ledger = ledgerIn(sibling);
+  const expected = ledgerList(root, sibling, 'session-start');
+  rmSync(path.join(root, '.claude'), { recursive: true, force: true });
+  writeFileSync(path.join(root, '.claude'), 'a file, so ~/.claude/ledgers.json cannot exist');
+
+  assert.equal(ledgerList(root, sibling, 'session-start'), expected);
+  assert.equal(sessionStart(root, sibling).additionalContext, fullLedgerText(ledger));
+});
+
+test('paths and pre-compact leave the registry alone', (t) => {
+  const root = scratch(t);
+  const main = repository(root, 'main');
+  ledgerIn(worktree(root, main, path.join(root, 'sibling')));
+
+  ledgerList(root, main, 'paths');
+  ledgerList(root, main, 'pre-compact');
+
+  assert.equal(existsSync(path.join(root, '.claude/ledgers.json')), false);
 });
 
 type PromptSubmitInput = { prompt: string; cwd?: string; session_title?: string };

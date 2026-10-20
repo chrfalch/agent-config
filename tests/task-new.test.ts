@@ -46,6 +46,21 @@ function branches(home: string, main: string): string {
   return git(home, main, 'for-each-ref', '--format=%(refname)', 'refs/heads');
 }
 
+const backlogFile = (home: string, slug: string, repo = 'main') => path.join(home, '.claude/ledger-backlog', repo, `${slug}.md`);
+const registryFile = (home: string) => path.join(home, '.claude/ledgers.json');
+const registryText = (home: string) => (existsSync(registryFile(home)) ? readFileSync(registryFile(home), 'utf8') : null);
+const registry = (home: string) => JSON.parse(readFileSync(registryFile(home), 'utf8')) as Record<string, string>[];
+
+function backlogged(home: string, cwd: string, slug: string, ...args: string[]) {
+  const result = taskNew(home, cwd, slug, ...args);
+  assert.equal(result.status, 0, result.stderr);
+  return backlogFile(home, slug);
+}
+
+function expectedBacklog(slug: string, goal: string | null, main: string, branch = '<name>', base = '<branch/commit>'): string {
+  return expectedLedger(slug, goal, '<path>', branch, base).replace('## Location\n', `## Location\n- main: ${main}\n`);
+}
+
 function expectedLedger(slug: string, goal: string | null, worktree: string, branch: string, base: string): string {
   const lines = TEMPLATE.split('\n').map((line) => {
     if (line === '# Task ledger — <slug>') return `# Task ledger — ${slug}`;
@@ -60,7 +75,7 @@ function expectedLedger(slug: string, goal: string | null, worktree: string, bra
 
 test('creates a worktree, branch and filled ledger from the main checkout', (t) => {
   const { home, main, second } = checkout(t);
-  const result = taskNew(home, main, 'fix-login', '--goal', 'Users can log in again.');
+  const result = taskNew(home, main, 'fix-login', '--stack', '--goal', 'Users can log in again.');
   assert.equal(result.status, 0, result.stderr);
 
   const worktree = path.join(main, '.claude/worktrees/fix-login');
@@ -87,7 +102,7 @@ test('creates a worktree, branch and filled ledger from the main checkout', (t) 
 
 test('registers the new ledger as active in ~/.claude/ledgers.json', (t) => {
   const { home, main } = checkout(t);
-  const result = taskNew(home, main, 'fix-login', '--branch', 'me/fix-login');
+  const result = taskNew(home, main, 'fix-login', '--stack', '--branch', 'me/fix-login');
   assert.equal(result.status, 0, result.stderr);
 
   const entries = JSON.parse(readFileSync(path.join(home, '.claude/ledgers.json'), 'utf8')) as Record<string, string>[];
@@ -110,7 +125,7 @@ test('creates the task even when the registry cannot be written', (t) => {
   rmSync(path.join(home, '.claude'), { recursive: true });
   writeFileSync(path.join(home, '.claude'), 'a file, so ~/.claude/ledgers.json cannot exist');
 
-  const result = taskNew(home, main, 'fix-login');
+  const result = taskNew(home, main, 'fix-login', '--stack');
 
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stderr, /warning: registry not updated/);
@@ -119,7 +134,7 @@ test('creates the task even when the registry cannot be written', (t) => {
 
 test('keeps the goal placeholder when no goal is given', (t) => {
   const { home, main } = checkout(t);
-  const result = taskNew(home, main, 'fix-login');
+  const result = taskNew(home, main, 'fix-login', '--stack');
   assert.equal(result.status, 0, result.stderr);
   const ledger = readFileSync(path.join(main, '.claude/worktrees/fix-login/.claude/ledger.md'), 'utf8');
   assert.ok(ledger.includes(`## Goal\n${GOAL_PLACEHOLDER}\n`), ledger);
@@ -129,7 +144,7 @@ test('keeps the goal placeholder when no goal is given', (t) => {
 test('writes a goal with sed and shell metacharacters verbatim', (t) => {
   const { home, main } = checkout(t);
   const goal = `Fix a/b & c|d \\1 \\n "double" 'single' $HOME \`date\` <one> %s`;
-  const result = taskNew(home, main, 'odd-goal', '--goal', goal);
+  const result = taskNew(home, main, 'odd-goal', '--stack', '--goal', goal);
   assert.equal(result.status, 0, result.stderr);
   const ledger = readFileSync(path.join(main, '.claude/worktrees/odd-goal/.claude/ledger.md'), 'utf8');
   assert.ok(ledger.includes(`## Goal\n${goal}\n\n## Location\n`), ledger);
@@ -145,7 +160,7 @@ test('runs through a relative symlink called from another folder', (t) => {
   const cwd = path.join(main, 'a/b/c');
   mkdirSync(cwd, { recursive: true });
 
-  const result = taskNewVia(home, cwd, link, 'fix-login');
+  const result = taskNewVia(home, cwd, link, 'fix-login', '--stack');
   assert.equal(result.status, 0, result.stderr);
   assert.ok(existsSync(path.join(main, '.claude/worktrees/fix-login/.claude/ledger.md')));
 });
@@ -159,7 +174,7 @@ test('runs through a chain of two symlinks', (t) => {
   symlinkSync(TASK_NEW, first);
   symlinkSync(first, second);
 
-  const result = taskNewVia(home, main, second, 'fix-login');
+  const result = taskNewVia(home, main, second, 'fix-login', '--stack');
   assert.equal(result.status, 0, result.stderr);
   assert.ok(existsSync(path.join(main, '.claude/worktrees/fix-login/.claude/ledger.md')));
 });
@@ -172,16 +187,20 @@ test('removes the new worktree and branch when a step after creating them fails'
   git(home, main, 'add', '.claude');
   git(home, main, 'commit', '--quiet', '-m', 'track a .claude file');
   git(home, main, 'checkout', '--quiet', 'main');
+  const backlog = backlogged(home, main, 'fix-login', '--base', 'blocked');
+  const backlogBefore = readFileSync(backlog, 'utf8');
+  const registryBefore = registryText(home);
   const branchesBefore = branches(home, main);
   const worktreesBefore = git(home, main, 'worktree', 'list', '--porcelain');
 
-  const result = taskNew(home, main, 'fix-login', '--base', 'blocked');
+  const result = taskNew(home, main, '--promote', 'fix-login');
   assert.equal(result.status, 1, result.stderr);
   assert.equal(result.stdout, '');
   assert.equal(branches(home, main), branchesBefore);
   assert.equal(git(home, main, 'worktree', 'list', '--porcelain'), worktreesBefore);
   assert.equal(existsSync(path.join(main, '.claude/worktrees/fix-login')), false);
-  assert.equal(existsSync(path.join(home, '.claude/ledgers.json')), false);
+  assert.equal(readFileSync(backlog, 'utf8'), backlogBefore);
+  assert.equal(registryText(home), registryBefore);
 });
 
 test('from a linked worktree, lands under the main checkout and leaves the caller ledger alone', (t) => {
@@ -192,7 +211,9 @@ test('from a linked worktree, lands under the main checkout and leaves the calle
   writeFileSync(callerLedger, '# Task ledger — other-task\n\nmine, do not touch\n');
   const before = readFileSync(callerLedger);
 
-  const result = taskNew(home, caller, 'fix-login', '--goal', 'Users can log in again.');
+  const backlog = backlogged(home, caller, 'fix-login', '--goal', 'Users can log in again.');
+  assert.ok(readFileSync(backlog, 'utf8').includes(`## Location\n- main: ${main}\n`));
+  const result = taskNew(home, caller, '--promote', 'fix-login');
   assert.equal(result.status, 0, result.stderr);
 
   const worktree = path.join(main, '.claude/worktrees/fix-login');
@@ -207,7 +228,8 @@ test('defaults to the commit origin/HEAD points at', (t) => {
   git(home, main, 'update-ref', 'refs/remotes/origin/main', first);
   git(home, main, 'symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main');
 
-  const result = taskNew(home, main, 'fix-login');
+  backlogged(home, main, 'fix-login');
+  const result = taskNew(home, main, '--promote', 'fix-login');
   assert.equal(result.status, 0, result.stderr);
   const worktree = path.join(main, '.claude/worktrees/fix-login');
   const short = git(home, main, 'rev-parse', '--short', first);
@@ -230,20 +252,25 @@ test('--stack starts at the calling worktree branch', (t) => {
   assert.ok(readFileSync(path.join(worktree, '.claude/ledger.md'), 'utf8').includes(`- base: feature @ ${short}\n`));
 });
 
-test('--base starts the branch at that ref', (t) => {
+test('--base starts the branch at that ref when the task is promoted', (t) => {
   const { home, main, first } = checkout(t);
   git(home, main, 'tag', 'v1', first);
 
-  const result = taskNew(home, main, 'fix-login', '--base', 'v1');
+  const backlog = backlogged(home, main, 'fix-login', '--base', 'v1');
+  assert.ok(readFileSync(backlog, 'utf8').includes('- base: v1\n'));
+  const result = taskNew(home, main, '--promote', 'fix-login');
   assert.equal(result.status, 0, result.stderr);
   const worktree = path.join(main, '.claude/worktrees/fix-login');
   assert.equal(git(home, worktree, 'rev-parse', 'HEAD'), first);
   assert.ok(result.stdout.includes(`base     v1 @ ${git(home, main, 'rev-parse', '--short', first)}\n`), result.stdout);
 });
 
-test('--branch names the branch and keeps the folder named after the slug', (t) => {
+test('--branch names the branch made at promotion and keeps the folder named after the slug', (t) => {
   const { home, main } = checkout(t);
-  const result = taskNew(home, main, 'fix-login', '--branch', 'chrfalch/fix-login');
+  const backlog = backlogged(home, main, 'fix-login', '--branch', 'chrfalch/fix-login');
+  assert.ok(readFileSync(backlog, 'utf8').includes('- branch: chrfalch/fix-login\n'));
+  assert.equal(branches(home, main), 'refs/heads/main');
+  const result = taskNew(home, main, '--promote', 'fix-login');
   assert.equal(result.status, 0, result.stderr);
   const worktree = path.join(main, '.claude/worktrees/fix-login');
   assert.equal(git(home, worktree, 'branch', '--show-current'), 'chrfalch/fix-login');
@@ -255,7 +282,7 @@ test('--branch names the branch and keeps the folder named after the slug', (t) 
 
 test('ledger-list.sh in the main checkout lists the new ledger', (t) => {
   const { home, main } = checkout(t);
-  assert.equal(taskNew(home, main, 'fix-login').status, 0);
+  assert.equal(taskNew(home, main, 'fix-login', '--stack').status, 0);
   const result = run(home, ['bash', '-c', 'cd "$1" && bash "$2" paths', '_'], main, path.join(REPO, 'hooks/ledger-list.sh'));
   assert.equal(result.status, 0, result.stderr);
   assert.ok(
@@ -443,5 +470,283 @@ for (const { name, args, inMain, arrange } of hereFailures) {
     assert.equal(existsSync(ledger) ? readFileSync(ledger, 'utf8') : null, ledgerBefore);
     assert.equal(branches(home, main), branchesBefore);
     assert.equal(git(home, main, 'worktree', 'list', '--porcelain'), worktreesBefore);
+  });
+}
+
+test('a new task is a backlog ledger only: no worktree and no branch', (t) => {
+  const { home, main } = checkout(t);
+  const branchesBefore = branches(home, main);
+  const worktreesBefore = git(home, main, 'worktree', 'list', '--porcelain');
+
+  const result = taskNew(home, main, 'fix-login', '--goal', 'Users can log in again.');
+  assert.equal(result.status, 0, result.stderr);
+
+  const backlog = backlogFile(home, 'fix-login');
+  assert.equal(readFileSync(backlog, 'utf8'), expectedBacklog('fix-login', 'Users can log in again.', main));
+  assert.equal(result.stdout, [`ledger:  ${backlog}`, 'status:  backlog', 'start:   /ledger:go fix-login', ''].join('\n'));
+  assert.equal(existsSync(path.join(main, '.claude/worktrees/fix-login')), false);
+  assert.equal(branches(home, main), branchesBefore);
+  assert.equal(git(home, main, 'worktree', 'list', '--porcelain'), worktreesBefore);
+});
+
+test('registers the backlog ledger with its main checkout', (t) => {
+  const { home, main } = checkout(t);
+  const backlog = backlogged(home, main, 'fix-login');
+  const [entry, ...rest] = registry(home);
+  assert.deepEqual(rest, []);
+  assert.ok(entry);
+  assert.deepEqual(
+    { repo: entry.repo, slug: entry.slug, path: entry.path, branch: entry.branch, status: entry.status, main: entry.main },
+    { repo: 'main', slug: 'fix-login', path: backlog, branch: '', status: 'backlog', main },
+  );
+});
+
+test('a backlog ledger keeps --branch and --base for promotion and registers the branch', (t) => {
+  const { home, main } = checkout(t);
+  const backlog = backlogged(home, main, 'fix-login', '--branch', 'me/fix-login', '--base', 'main');
+  assert.equal(readFileSync(backlog, 'utf8'), expectedBacklog('fix-login', null, main, 'me/fix-login', 'main'));
+  assert.equal(registry(home)[0]?.branch, 'me/fix-login');
+  assert.equal(branches(home, main), 'refs/heads/main');
+});
+
+const backlogRefusals: { name: string; args: string[]; arrange: (home: string, main: string) => void }[] = [
+  {
+    name: 'a backlog ledger that already exists',
+    args: ['fix-login'],
+    arrange: (home) => {
+      mkdirSync(path.dirname(backlogFile(home, 'fix-login')), { recursive: true });
+      writeFileSync(backlogFile(home, 'fix-login'), 'mine, do not touch\n');
+    },
+  },
+  {
+    name: 'an existing worktree folder',
+    args: ['fix-login'],
+    arrange: (_home, main) => void mkdirSync(path.join(main, '.claude/worktrees/fix-login'), { recursive: true }),
+  },
+  { name: 'an existing branch named after the slug', args: ['fix-login'], arrange: (home, main) => void git(home, main, 'branch', 'fix-login') },
+  {
+    name: 'an existing --branch',
+    args: ['fix-login', '--branch', 'me/fix-login'],
+    arrange: (home, main) => void git(home, main, 'branch', 'me/fix-login'),
+  },
+];
+
+for (const { name, args, arrange } of backlogRefusals) {
+  test(`a backlog task is refused with one line and nothing written on ${name}`, (t) => {
+    const { home, main } = checkout(t);
+    arrange(home, main);
+    const backlog = backlogFile(home, 'fix-login');
+    const backlogBefore = existsSync(backlog) ? readFileSync(backlog, 'utf8') : null;
+    const branchesBefore = branches(home, main);
+    const worktreesBefore = git(home, main, 'worktree', 'list', '--porcelain');
+
+    const result = taskNew(home, main, ...args);
+    assert.equal(result.status, 1, result.stderr);
+    assert.equal(result.stdout, '');
+    assert.equal(result.stderr.trim().split('\n').length, 1, result.stderr);
+    assert.equal(existsSync(backlog) ? readFileSync(backlog, 'utf8') : null, backlogBefore);
+    assert.equal(registryText(home), null);
+    assert.equal(branches(home, main), branchesBefore);
+    assert.equal(git(home, main, 'worktree', 'list', '--porcelain'), worktreesBefore);
+  });
+}
+
+test('--promote moves the backlog ledger into a new worktree and keeps its other sections', (t) => {
+  const { home, main, second } = checkout(t);
+  const goal = 'Users can log in again.';
+  const backlog = backlogged(home, main, 'fix-login', '--goal', goal);
+  const decision = '- Keep the session cookie — because a/b & c \\1 $HOME';
+  writeFileSync(backlog, readFileSync(backlog, 'utf8').replace('- <decision> — because <reason>', decision));
+
+  const result = taskNew(home, main, '--promote', 'fix-login');
+  assert.equal(result.status, 0, result.stderr);
+
+  const worktree = path.join(main, '.claude/worktrees/fix-login');
+  const ledger = path.join(worktree, '.claude/ledger.md');
+  const short = git(home, main, 'rev-parse', '--short', second);
+  assert.equal(git(home, worktree, 'branch', '--show-current'), 'fix-login');
+  assert.equal(git(home, worktree, 'rev-parse', 'HEAD'), second);
+  assert.equal(
+    readFileSync(ledger, 'utf8'),
+    expectedLedger('fix-login', goal, worktree, 'fix-login', `main @ ${short}`).replace('- <decision> — because <reason>', decision),
+  );
+  assert.equal(
+    result.stdout,
+    [`worktree ${worktree}`, 'branch   fix-login', `base     main @ ${short}`, `ledger   ${ledger}`, ''].join('\n'),
+  );
+  assert.equal(existsSync(backlog), false);
+  assert.deepEqual(
+    registry(home).map(({ repo, slug, path, branch, status }) => ({ repo, slug, path, branch, status })),
+    [{ repo: 'main', slug: 'fix-login', path: ledger, branch: 'fix-login', status: 'active' }],
+  );
+});
+
+test('--promote of a slug with no backlog ledger exits 2 and makes nothing', (t) => {
+  const { home, main } = checkout(t);
+  const result = taskNew(home, main, '--promote', 'fix-login');
+  assert.equal(result.status, 2, result.stderr);
+  assert.match(result.stderr, /no backlog task fix-login/);
+  assert.equal(result.stdout, '');
+  assert.equal(branches(home, main), 'refs/heads/main');
+  assert.equal(existsSync(path.join(main, '.claude/worktrees/fix-login')), false);
+});
+
+test('--promote from another repository with the same folder name exits 3 and changes nothing', (t) => {
+  const { home, main } = checkout(t);
+  const backlog = backlogged(home, main, 'fix-login');
+  const other = path.join(home, 'elsewhere/main');
+  mkdirSync(other, { recursive: true });
+  git(home, other, 'init', '--quiet', '-b', 'main');
+  git(home, other, 'commit', '--quiet', '--allow-empty', '-m', 'first');
+  const backlogBefore = readFileSync(backlog, 'utf8');
+  const registryBefore = registryText(home);
+
+  const result = taskNew(home, other, '--promote', 'fix-login');
+  assert.equal(result.status, 3, result.stderr);
+  assert.ok(result.stderr.includes(main), result.stderr);
+  assert.ok(result.stderr.includes('/ledger:go fix-login'), result.stderr);
+  assert.equal(result.stdout, '');
+  assert.equal(readFileSync(backlog, 'utf8'), backlogBefore);
+  assert.equal(registryText(home), registryBefore);
+  assert.equal(branches(home, other), 'refs/heads/main');
+  assert.equal(existsSync(path.join(other, '.claude/worktrees')), false);
+});
+
+test('--promote of a backlog ledger with no main line exits 4 and changes nothing', (t) => {
+  const { home, main } = checkout(t);
+  const backlog = backlogged(home, main, 'fix-login');
+  writeFileSync(backlog, readFileSync(backlog, 'utf8').replace(`- main: ${main}\n`, ''));
+  const backlogBefore = readFileSync(backlog, 'utf8');
+  const registryBefore = registryText(home);
+
+  const result = taskNew(home, main, '--promote', 'fix-login');
+  assert.equal(result.status, 4, result.stderr);
+  assert.equal(result.stderr, `backlog ledger ${backlog} has no main line\n`);
+  assert.equal(result.stdout, '');
+  assert.equal(readFileSync(backlog, 'utf8'), backlogBefore);
+  assert.equal(registryText(home), registryBefore);
+  assert.equal(branches(home, main), 'refs/heads/main');
+  assert.equal(existsSync(path.join(main, '.claude/worktrees/fix-login')), false);
+});
+
+test('--promote keeps a missing final newline missing', (t) => {
+  const { home, main, second } = checkout(t);
+  const backlog = backlogged(home, main, 'fix-login');
+  writeFileSync(backlog, readFileSync(backlog, 'utf8').replace(/\n$/, ''));
+
+  const result = taskNew(home, main, '--promote', 'fix-login');
+  assert.equal(result.status, 0, result.stderr);
+  const worktree = path.join(main, '.claude/worktrees/fix-login');
+  const short = git(home, main, 'rev-parse', '--short', second);
+  assert.equal(
+    readFileSync(path.join(worktree, '.claude/ledger.md'), 'utf8'),
+    expectedLedger('fix-login', null, worktree, 'fix-login', `main @ ${short}`).replace(/\n$/, ''),
+  );
+});
+
+const promoteRefusals: { name: string; arrange: (home: string, main: string, backlog: string) => void }[] = [
+  { name: 'a branch made after the backlog task', arrange: (home, main) => void git(home, main, 'branch', 'fix-login') },
+  {
+    name: 'a worktree folder made after the backlog task',
+    arrange: (_home, main) => void mkdirSync(path.join(main, '.claude/worktrees/fix-login'), { recursive: true }),
+  },
+  {
+    name: 'a hand-edited invalid branch',
+    arrange: (_home, _main, backlog) => writeFileSync(backlog, readFileSync(backlog, 'utf8').replace('- branch: <name>', '- branch: bad..name')),
+  },
+];
+
+for (const { name, arrange } of promoteRefusals) {
+  test(`--promote refuses and changes nothing on ${name}`, (t) => {
+    const { home, main } = checkout(t);
+    const backlog = backlogged(home, main, 'fix-login');
+    arrange(home, main, backlog);
+    const backlogBefore = readFileSync(backlog, 'utf8');
+    const registryBefore = registryText(home);
+    const branchesBefore = branches(home, main);
+    const worktreesBefore = git(home, main, 'worktree', 'list', '--porcelain');
+
+    const result = taskNew(home, main, '--promote', 'fix-login');
+    assert.equal(result.status, 1, result.stderr);
+    assert.notEqual(result.stderr.trim(), '');
+    assert.equal(result.stdout, '');
+    assert.equal(readFileSync(backlog, 'utf8'), backlogBefore);
+    assert.equal(registryText(home), registryBefore);
+    assert.equal(branches(home, main), branchesBefore);
+    assert.equal(git(home, main, 'worktree', 'list', '--porcelain'), worktreesBefore);
+    assert.equal(existsSync(path.join(main, '.claude/worktrees/fix-login/.claude/ledger.md')), false);
+  });
+}
+
+test('--promote keeps the created time of the backlog entry', (t) => {
+  const { home, main } = checkout(t);
+  backlogged(home, main, 'fix-login');
+  const created = '2020-01-01T00:00:00.000Z';
+  writeFileSync(registryFile(home), JSON.stringify(registry(home).map((entry) => ({ ...entry, created }))));
+
+  const result = taskNew(home, main, '--promote', 'fix-login');
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(
+    registry(home).map(({ status, created }) => ({ status, created })),
+    [{ status: 'active', created }],
+  );
+});
+
+test('--promote from a linked worktree resolves the stored base in the main checkout', (t) => {
+  const { home, main, second } = checkout(t);
+  backlogged(home, main, 'fix-login', '--base', 'HEAD');
+  const caller = linkedWorktree(home, main, 'other-task');
+  assert.notEqual(git(home, caller, 'rev-parse', 'HEAD'), second);
+
+  const result = taskNew(home, caller, '--promote', 'fix-login');
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(git(home, path.join(main, '.claude/worktrees/fix-login'), 'rev-parse', 'HEAD'), second);
+});
+
+test('a backlog write, then --promote, both from a linked worktree with no ledger, leave one active task under the main checkout', (t) => {
+  const { home, main, first } = checkout(t);
+  git(home, main, 'update-ref', 'refs/remotes/origin/main', first);
+  git(home, main, 'symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main');
+  const caller = linkedWorktree(home, main, 'other-task');
+
+  assert.equal(taskNew(home, caller, 'fix-login', '--goal', 'Users can log in again.').status, 0);
+  const result = taskNew(home, caller, '--promote', 'fix-login');
+  assert.equal(result.status, 0, result.stderr);
+
+  const worktree = path.join(main, '.claude/worktrees/fix-login');
+  const ledger = path.join(worktree, '.claude/ledger.md');
+  assert.match(result.stdout, new RegExp(`^worktree ${worktree}$`, 'm'));
+  assert.doesNotMatch(result.stdout, /start:/);
+  assert.equal(git(home, worktree, 'rev-parse', 'HEAD'), first);
+  assert.equal(existsSync(path.join(caller, '.claude/ledger.md')), false);
+  assert.equal(existsSync(backlogFile(home, 'fix-login')), false);
+  assert.deepEqual(
+    registry(home).map(({ slug, path, status }) => ({ slug, path, status })),
+    [{ slug: 'fix-login', path: ledger, status: 'active' }],
+  );
+});
+
+const promoteFailures: { name: string; args: string[] }[] = [
+  { name: '--promote without a slug', args: ['--promote'] },
+  { name: '--promote with --goal', args: ['--promote', 'fix-login', '--goal', 'x'] },
+  { name: '--promote with --branch', args: ['--promote', 'fix-login', '--branch', 'x'] },
+  { name: '--promote with --base', args: ['--promote', 'fix-login', '--base', 'main'] },
+  { name: '--promote with --stack', args: ['--promote', 'fix-login', '--stack'] },
+  { name: '--promote with --here', args: ['--promote', 'fix-login', '--here'] },
+];
+
+for (const { name, args } of promoteFailures) {
+  test(`fails and changes nothing on ${name}`, (t) => {
+    const { home, main } = checkout(t);
+    const backlog = backlogged(home, main, 'fix-login');
+    const backlogBefore = readFileSync(backlog, 'utf8');
+
+    const result = taskNew(home, main, ...args);
+    assert.equal(result.status, 1, result.stderr);
+    assert.notEqual(result.stderr.trim(), '');
+    assert.equal(result.stdout, '');
+    assert.equal(readFileSync(backlog, 'utf8'), backlogBefore);
+    assert.equal(branches(home, main), 'refs/heads/main');
+    assert.equal(existsSync(path.join(main, '.claude/worktrees/fix-login')), false);
   });
 }

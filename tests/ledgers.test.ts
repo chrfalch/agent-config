@@ -11,11 +11,12 @@ type Entry = {
   slug: string;
   path: string;
   branch: string;
-  status: 'active' | 'archived';
+  status: 'active' | 'archived' | 'backlog';
   created: string;
   updated: string;
   archivePath?: string;
   parent?: string;
+  main?: string;
 };
 
 const ISO = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/;
@@ -53,6 +54,13 @@ function archiveCopy(home: string, repo: string, name: string, text: string): st
   const file = path.join(home, '.claude/ledger-archive', repo, name);
   mkdirSync(path.dirname(file), { recursive: true });
   writeFileSync(file, text);
+  return file;
+}
+
+function backlogLedger(home: string, repo: string, slug: string, main: string): string {
+  const file = path.join(home, '.claude/ledger-backlog', repo, `${slug}.md`);
+  mkdirSync(path.dirname(file), { recursive: true });
+  writeFileSync(file, `# Task ledger — some-title\n\n## Location\n- main: ${main}\n- worktree: <path>\n- branch: me/${slug}\n- base: <branch/commit>\n`);
   return file;
 }
 
@@ -402,6 +410,112 @@ test('archive with a missing archive copy fails and writes nothing', (t) => {
   assert.equal(result.status, 1);
   assert.ok(result.stderr.includes(missing), result.stderr);
   assert.equal(existsSync(registryFile(h)), false);
+});
+
+test('upsert of a ledger in ~/.claude/ledger-backlog registers it as backlog with its main checkout', (t) => {
+  const h = home(t);
+  const backlog = backlogLedger(h, 'app', 'fix-login', '/work/app');
+
+  ledgers(h, 'upsert', backlog);
+
+  const [entry, ...rest] = registry(h);
+  assert.deepEqual(rest, []);
+  assert.ok(entry);
+  assert.match(entry.created, ISO);
+  assert.deepEqual(entry, {
+    repo: 'app',
+    slug: 'fix-login',
+    path: backlog,
+    branch: 'me/fix-login',
+    status: 'backlog',
+    main: '/work/app',
+    created: entry.created,
+    updated: mtimeIso(backlog),
+  });
+  assert.deepEqual(JSON.parse(ledgers(h, 'list', '--json').stdout), [entry]);
+  assert.equal(ledgers(h, 'list').stdout, `${line(entry, backlog)}\n`);
+});
+
+test('upsert of a backlog ledger takes repo, slug and branch from flags', (t) => {
+  const h = home(t);
+  const backlog = backlogLedger(h, 'app', 'fix-login', '/work/app');
+
+  ledgers(h, 'upsert', backlog, '--repo', 'R', '--slug', 'S', '--branch', 'B');
+
+  assert.deepEqual(
+    registry(h).map(({ repo, slug, branch, status, main }) => ({ repo, slug, branch, status, main })),
+    [{ repo: 'R', slug: 'S', branch: 'B', status: 'backlog', main: '/work/app' }],
+  );
+});
+
+test('upsert --replaces swaps a promoted backlog entry for the active one and keeps its created time', (t) => {
+  const h = home(t);
+  const main = checkout(h, path.join(h, 'repos/app'));
+  const backlog = backlogLedger(h, 'app', 'fix-login', main);
+  ledgers(h, 'upsert', backlog);
+  const created = '2020-01-01T00:00:00.000Z';
+  writeFileSync(registryFile(h), JSON.stringify(registry(h).map((entry) => ({ ...entry, created }))));
+  const active = ledgerIn(worktree(h, main, 'fix-login', 'fix-login'), 'fix-login');
+  rmSync(backlog);
+
+  ledgers(h, 'upsert', active, '--replaces', backlog);
+
+  assert.deepEqual(
+    registry(h).map(({ path, status, created }) => ({ path, status, created })),
+    [{ path: active, status: 'active', created }],
+  );
+});
+
+test('upsert --replaces ignores a backlog entry of another main checkout', (t) => {
+  const h = home(t);
+  const mainA = checkout(h, path.join(h, 'repos/a/app'));
+  const mainB = checkout(h, path.join(h, 'repos/b/app'));
+  const backlog = backlogLedger(h, 'app', 'fix-login', mainA);
+  ledgers(h, 'upsert', backlog);
+  const created = '2020-01-01T00:00:00.000Z';
+  writeFileSync(registryFile(h), JSON.stringify(registry(h).map((entry) => ({ ...entry, created }))));
+  const [before] = registry(h);
+  const active = ledgerIn(worktree(h, mainB, 'fix-login', 'fix-login'), 'fix-login');
+
+  ledgers(h, 'upsert', active, '--replaces', backlog);
+
+  const entries = registry(h);
+  assert.deepEqual(entries.find((e) => e.status === 'backlog'), before);
+  const fresh = entries.find((e) => e.status === 'active');
+  assert.equal(fresh?.path, active);
+  assert.notEqual(fresh?.created, created);
+  assert.equal(entries.length, 2);
+});
+
+test('scan reads ~/.claude/ledger-backlog as backlog entries', (t) => {
+  const h = home(t);
+  const backlog = backlogLedger(h, 'app', 'fix-login', '/work/app');
+  setMtime(backlog, '2026-10-04T00:00:00.000Z');
+
+  const result = ledgers(h, 'scan', path.join(h, 'nothing-here'));
+
+  assert.equal(result.stderr, `rebuilt ${registryFile(h)}: 0 active, 0 archived, 1 backlog\n`);
+  assert.deepEqual(
+    registry(h).map(({ created, ...rest }) => rest),
+    [{ repo: 'app', slug: 'fix-login', path: backlog, branch: 'me/fix-login', status: 'backlog', main: '/work/app', updated: '2026-10-04T00:00:00.000Z' }],
+  );
+});
+
+test("SessionStart's upsert leaves backlog entries as they are", (t) => {
+  const h = home(t);
+  const main = checkout(h, path.join(h, 'repos/app'));
+  const active = ledgerIn(worktree(h, main, 'feature', 'feature'), 'feature');
+  const backlog = backlogLedger(h, 'app', 'fix-login', main);
+  ledgers(h, 'upsert', backlog);
+  const [before] = registry(h);
+  setMtime(backlog, '2099-01-02T03:04:05.000Z');
+
+  const result = run(h, ['bash', '-c', 'cd "$1" && bash "$2" session-start', '_'], main, path.join(REPO, 'hooks/ledger-list.sh'));
+  assert.equal(result.status, 0, result.stderr);
+
+  const entries = registry(h);
+  assert.deepEqual(entries.find((e) => e.status === 'backlog'), before);
+  assert.deepEqual(entries.filter((e) => e.status === 'active').map(({ path }) => path), [active]);
 });
 
 test('scan takes the slug of an untitled archive copy from its file name without the date', (t) => {

@@ -1,5 +1,5 @@
 ---
-description: Start a separate task with its own git worktree, branch and ledger. `--here [<slug>]` adds a ledger to the current linked worktree instead.
+description: Write a backlog ledger for a separate task, with no worktree or branch yet; `/ledger:go <slug>` starts it. With no current ledger, it starts the task at once and continues in this session. `--stack` makes its worktree and branch at once, on top of the current branch. `--here [<slug>]` adds a ledger to the current linked worktree instead.
 argument-hint: "<what the task is> | --here [<slug>]"
 ---
 
@@ -25,7 +25,10 @@ Otherwise, if that request is empty, ask what the task is and stop.
 1. Pick a short kebab-case slug for the task, such as `fix-login`.
 2. Write a one-paragraph goal. State the problem first, then what done looks
    like.
-3. Add `--stack` only if the work builds on the current branch.
+3. Add `--stack` only if the work builds on the current branch. Without it,
+   the script writes only a backlog ledger, with no worktree or branch;
+   step 7 or `/ledger:go <slug>` makes them later. With it, the script makes the
+   worktree and branch at once.
 4. Run the script from the agent-config repo. The repo is two directories
    above the real path of `~/.claude/rules/10-operating-model.md`. Put the goal
    in single quotes, and write each `'` inside it as `'\''`:
@@ -44,9 +47,13 @@ Otherwise, if that request is empty, ask what the task is and stop.
    the new task. Reply with the `start:` line the script printed, and nothing
    else of substance. Do not plan the task and do not start it in this
    session.
-7. If there is no current ledger, there is no old task to clear. Move this
-   session into the new worktree with the EnterWorktree tool. Set `path` to the
-   path on the `worktree` line the script printed. Read `.claude/ledger.md` in
+7. If there is no current ledger, there is no old task to clear. Without
+   `--stack`, start the task now: run the script as in step 4 with
+   `--promote <slug>` and nothing else. It makes the worktree and branch, and
+   moves the ledger into the worktree. If it fails, reply with its error and
+   stop. Then move this session into the new worktree with the EnterWorktree
+   tool. Set `path` to the path on the `worktree` line that `--promote`
+   printed, or that the script printed for `--stack`. Read `.claude/ledger.md` in
    the new worktree: the SessionStart hook does not put it in context in this
    case. Then continue with the operator's request in this session, through
    the normal pipeline: get the plan approved, then write the approved plan

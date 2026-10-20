@@ -345,6 +345,23 @@ test('session-start prints nothing when there is no ledger', (t) => {
   assert.equal(ledgerList(root, main, 'session-start'), '');
 });
 
+test('session-start leaves out backlog tasks, both their ledger files and their registry entries', (t) => {
+  const root = scratch(t);
+  const main = repository(root, 'main');
+  const backlog = path.join(root, '.claude/ledger-backlog/main/idea.md');
+  mkdirSync(path.dirname(backlog), { recursive: true });
+  writeFileSync(backlog, `# Task ledger — idea\n\n## Goal\nA backlog goal.\n\n## Location\n- main: ${main}\n`);
+  const entry = { repo: 'main', slug: 'idea', path: backlog, branch: '', status: 'backlog', main, created: '2026-10-01T00:00:00.000Z', updated: '2026-10-01T00:00:00.000Z' };
+  writeFileSync(path.join(root, '.claude/ledgers.json'), JSON.stringify([entry]));
+
+  assert.equal(ledgerList(root, main, 'session-start'), '');
+
+  const sibling = ledgerIn(worktree(root, main, path.join(root, 'sibling')));
+  const output = ledgerList(root, main, 'session-start');
+  assert.ok(output.includes(sibling), `worktree ledger missing:\n${output}`);
+  assert.ok(!output.includes(backlog) && !output.includes('A backlog goal.'), `backlog task shown:\n${output}`);
+});
+
 test('session-start keeps quotes, backslashes and non-ASCII text intact', (t) => {
   const root = scratch(t);
   const main = repository(root, 'main');

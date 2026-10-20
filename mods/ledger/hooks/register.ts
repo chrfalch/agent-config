@@ -3,6 +3,7 @@ import type { EngineInterface, Register } from 'claude-code'
 import { allCommand } from './all-command'
 import {
   activeLedger,
+  backlogUncheckedMessage,
   folderSlug,
   formatAll,
   GO_USAGE,
@@ -10,11 +11,14 @@ import {
   HELP,
   lookupFailedMessage,
   noLedgerMessage,
+  otherRepositoryMessage,
   otherTaskMessage,
   PARK_USAGE,
   park,
   parkArgs,
   parkMarker,
+  promotedThenFailedMessage,
+  promoteFailedMessage,
   retireHint,
   severalLedgersMessage,
   sharedSlugMessage,
@@ -26,6 +30,7 @@ import {
 import { archiveCommand } from './archive-command'
 import { findLedgers, lookUpBranch, message, namesOtherWorktree, titleSlug } from './lookup'
 import { familyOf, parentCommand } from './parent-command'
+import { mainCheckout, otherRepositoryTask, promoteBacklogTask, registeredTasks } from './registry'
 import { worktreeOf } from './retire'
 import { retireCommand } from './retire-command'
 import { worktreesCommand } from './worktrees-command'
@@ -81,7 +86,10 @@ export const register: Register = on => {
 
   // A command.run hook cannot clear the session, and an answer of { text } ends no turn, so go.md runs a
   // model turn even when there is no ledger to write: its turn.complete is what clears.
+  // Set once this run's promotion succeeds, so the .catch below does not say that nothing was written.
+  let promotedByGo: string | undefined
   on('command.run', { command: 'ledger:go' }, async ($, e, next) => {
+    promotedByGo = undefined
     const target = (e.args ?? '').trim()
     if (target === '') return { text: GO_USAGE }
     const found = await findLedgers($)
@@ -89,27 +97,50 @@ export const register: Register = on => {
     const tasks = await Promise.all(found.map(async ledger => summarize(await $.fs.read(ledger.path), folderSlug(ledger.path), 0)))
     const matches = found.filter((_, index) => tasks[index]?.slug === target)
     const [match] = matches
-    const task = tasks.find(({ slug }) => slug === target)
-    if (match === undefined || task === undefined) return { text: unknownTaskMessage(target, tasks) }
+    const registered = match === undefined ? await registeredTasks($, target) : []
+    if ('error' in registered) return { text: backlogUncheckedMessage(target, tasks, registered.error) }
+    const backlog = registered.filter(entry => entry.status === 'backlog')
+    // The registry write at backlog time is best effort, so an unregistered slug may still have a backlog ledger.
+    const isUnregistered = match === undefined && registered.length === 0
+    if (match === undefined && backlog.length === 0 && !isUnregistered) return { text: unknownTaskMessage(target, tasks) }
     if (matches.length > 1) return { text: sharedSlugMessage(target, matches.map(ledger => ledger.path)) }
     const cwd = await $.session.cwd()
     const active = activeLedger(found.map(ledger => ledger.path), cwd)
     if (active.kind === 'several') return { text: severalLedgersMessage(cwd, active.paths.map(folderSlug)) }
-    const { text: unparked, parked } = unpark(await $.fs.read(match.path))
+    let ledger = match?.path
+    let promotedWorktree: string | undefined
+    if (ledger === undefined) {
+      const elsewhere = otherRepositoryTask(backlog, await mainCheckout($, cwd))
+      if (elsewhere) return { text: otherRepositoryMessage(target, elsewhere.repo, elsewhere.main) }
+      const promoted = await promoteBacklogTask($, target, cwd)
+      if ('error' in promoted) {
+        return { text: isUnregistered && promoted.isMissing ? unknownTaskMessage(target, tasks) : promoteFailedMessage(target, promoted.error) }
+      }
+      ledger = promoted.ledger
+      promotedWorktree = worktreeOf(ledger)
+      promotedByGo = promotedWorktree
+    }
+    const text = await $.fs.read(ledger)
+    const { text: unparked, parked } = unpark(text)
     if (parked) {
       try {
-        await $.fs.write(match.path, unparked)
+        await $.fs.write(ledger, unparked)
       } catch (error) {
-        return { text: unparkFailedMessage(target, message(error)) }
+        const reason = `Could not remove the parked marker. ${message(error)}`
+        return { text: promotedWorktree === undefined ? unparkFailedMessage(target, message(error)) : promotedThenFailedMessage(target, promotedWorktree, reason) }
       }
     }
     const current = active.kind === 'one' ? active.path : undefined
+    const task = tasks.find(({ slug }) => slug === target) ?? summarize(text, target, 0)
     const family = await familyOf($, task, cwd)
-    await $.state.set(armed, { mode: 'go', slug: target, ...(current && current !== match.path && { ledger: current }) })
-    return next({ ...e, args: goArgs(target, current, parked, family) })
+    await $.state.set(armed, { mode: 'go', slug: target, ...(current && current !== ledger && { ledger: current }) })
+    return next({ ...e, args: goArgs(target, current, parked, family, promotedWorktree) })
   }).catch(async ($, e, next) => {
     await $.state.set(armed, null)
-    return next.called ? next(e) : { text: lookupFailedMessage(next.error.message ?? next.error.kind) }
+    if (next.called) return next(e)
+    const error = next.error.message ?? next.error.kind
+    if (promotedByGo === undefined) return { text: lookupFailedMessage(error) }
+    return { text: promotedThenFailedMessage((e.args ?? '').trim(), promotedByGo, error) }
   })
 
   // The first word names a task only when a ledger has that slug; otherwise it is part of the reason.

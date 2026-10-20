@@ -38,20 +38,31 @@ during a sync. Repo is ~/repos/acme/mobile.
 ```
 
 This is a new task, so the orchestrator invokes
-`/ledger:task` before it plans anything. The command creates a worktree and a
-ledger from `~/.claude/ledger.template.md`, with the goal filled in. No task
-is open, so the session has nothing to clear. The command moves the session
-into the new worktree with the EnterWorktree tool. The orchestrator continues
-there without `/ledger:go`.
+`/ledger:task` before it plans anything. The command writes a ledger from
+`~/.claude/ledger.template.md`, with the goal filled in. The ledger goes to the
+backlog, `~/.claude/ledger-backlog/mobile/offline-queue-loss.md`. There is no
+branch or worktree yet.
+
+No task is open, so the session has nothing to clear. The command starts the
+task at once. It makes a branch and a worktree, and moves the ledger into the
+worktree. The branch starts at the `--base` ref given when the task was
+written. Without one, it starts at the commit that `origin/HEAD` points to.
+Nothing fetches first, so that commit is from your last `git fetch`. Without
+`origin/HEAD`, the branch starts at the branch that the main checkout is on.
+The command then moves the session into the new worktree with the
+EnterWorktree tool. The orchestrator continues there without `/ledger:go`.
 
 When another task is open, the command does not start the new task in this
-session. It replies with one line:
+session. The ledger stays in the backlog, and the command replies with one
+line:
 
 ```
 start:   /ledger:go offline-queue-loss
 ```
 
-You type that line. The session clears and continues in the task's worktree.
+You type that line. `/ledger:go` makes the branch and the worktree the same
+way, and moves the ledger into the worktree. The session then clears and
+continues in the task's worktree.
 
 ### 2. The orchestrator investigates
 
@@ -159,7 +170,15 @@ origin, or when a PR from it was merged. This is the rule `/ledger:retire` uses.
 
 A session sees only the ledgers of its own repo. `/ledger:all` lists every task
 ledger on the machine, from every repo, with its next step. `/ledger:all --scan`
-rebuilds that list from the ledgers on disk.
+rebuilds that list from the ledgers on disk. Backlog tasks have their own
+section, and the title line counts the tasks, the active ones and the backlog
+ones.
+
+A backlog task is one that `/ledger:task` wrote and that has no worktree yet.
+The SessionStart hook does not show backlog tasks. `/ledger:go <name>` starts
+one only from a session in its own repo. From another repo, it names that repo
+and changes nothing. `/ledger:task --stack` and `/ledger:task --here` skip the
+backlog: the task has its worktree at once.
 
 The SessionStart hook reads the ledger into the fresh session. The session knows
 the goal, the worktree, what is done, and the next step. It continues with step

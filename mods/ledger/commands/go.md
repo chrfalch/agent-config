@@ -1,9 +1,9 @@
 ---
-description: Write the latest results to this task's ledger, clear the session, and continue in the task named <slug>
+description: Write the latest results to this task's ledger, clear the session, and continue in the task named <slug>. A backlog task of this repository first gets its own git worktree and branch.
 argument-hint: <slug>
 ---
 
-The ledger hook replaces the operator's argument with two to four lines:
+The ledger hook replaces the operator's argument with two to six lines:
 
 ```
 $ARGUMENTS
@@ -17,6 +17,8 @@ $ARGUMENTS
 - `parent:`, when present, is the slug of that task's parent task.
 - `children:`, when present, lists that task's child tasks, each with its
   status.
+- `promoted:`, when present, is the absolute path of the worktree the hook
+  just made for a backlog task. That task's ledger is already in it.
 
 If `ledger:` is `none`, this session has no task ledger. Write nothing, do not
 create one, and only do step 4. Otherwise, update the file at that exact path,
@@ -38,4 +40,6 @@ even when it is not in the current working directory:
    before it: the task was parked on that date, the reason, and that it is no
    longer parked. If there is a `parent:` line, add one line before it that
    names the parent task. If there is a `children:` line, add one line before
-   it that lists the child tasks with their status, as given.
+   it that lists the child tasks with their status, as given. If there is a
+   `promoted:` line, add one line before the final line: the backlog task was
+   promoted, and its worktree is at that path.

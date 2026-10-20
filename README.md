@@ -142,10 +142,11 @@ would change.
 ## Using it
 
 Open Claude Code in your repo and describe the task. The orchestrator starts
-the task with `/ledger:task`, which creates a worktree and a ledger before any
-plan. When no task is open, the session moves into the new worktree and
-continues there. When another task is open, the reply ends with a `start:`
-line, `/ledger:go <name>`, and you type it. The orchestrator then explores,
+the task with `/ledger:task`, which writes a ledger before any plan. When no
+task is open, the task gets a worktree at once, and the session moves into it
+and continues there. When another task is open, the ledger waits in a backlog,
+with no worktree yet. The reply ends with a `start:` line, `/ledger:go <name>`,
+and you type it. The orchestrator then explores,
 writes a plan, and asks you to approve it. On approval it writes the plan into
 the ledger, then runs the pipeline:
 
@@ -227,12 +228,12 @@ to write a ledger, start a task, or switch to one.
 | `/ledger` | Prints each task ledger's goal, current step and next step. |
 | `/ledger <name>` | Prints each ledger whose name contains `<name>`, in any case. More than one ledger can match. |
 | `/ledger:help` | Prints one line for each `/ledger` command. |
-| `/ledger:task <description>` | Starts a separate task. The agent picks a short name, writes the goal, and runs `bin/cc-task-new`. The script creates a branch, a worktree and a ledger with the goal filled in. When no task is open, the session moves into the new worktree and continues there. When another task is open, the reply ends with a `start:` line, `/ledger:go <name>`. Type it to clear the session and continue in the new task. Either way, you do not open a new terminal. |
+| `/ledger:task <description>` | Starts a separate task. The agent picks a short name, writes the goal, and runs `bin/cc-task-new`. The script writes a ledger with the goal filled in to the backlog, `~/.claude/ledger-backlog/<repo>/<name>.md`, with no branch or worktree yet. When no task is open, the session moves into the new worktree and continues there. The agent makes that branch and worktree at once, the same way `/ledger:go` does. When another task is open, the ledger stays in the backlog, and the reply ends with a `start:` line, `/ledger:go <name>`. Type it to clear the session and continue in the new task. Either way, you do not open a new terminal. `--stack` makes the branch and worktree at once, on top of the current branch. |
 | `/ledger:task --here [<slug>]` | Gives the linked worktree this session is in a ledger, instead of a new worktree. Without a slug, the task takes the branch name without its owner prefix. It refuses the main checkout and a worktree that already has a ledger. The reply is the path of the new ledger. |
-| `/ledger:update` | Writes the step status, the subagent reports, the decisions and the next step to the task's ledger. After an implement-and-review cycle with work left, the reply is the clear point line. Otherwise it says only that the ledger is updated. With no ledger in the working directory, it creates nothing and tells you to use `/ledger:task`. |
+| `/ledger:update` | Writes the step status, the subagent reports, the decisions and the next step to the task's ledger. After an implement-and-review cycle with work left, the reply is the clear point line. Otherwise it says only that the ledger is updated. With no ledger in the working directory, the agent creates nothing and tells you to use `/ledger:task`. |
 | `/ledger:close` | Writes the ledger the same way, then clears the session. Type `go` later to continue. It never starts a task: with no ledger in the worktree, it prints why and does nothing. |
 | `/ledger:next` | Writes the ledger the same way, clears the session, then sends `go <name>`, so the fresh session continues from the next step. When every step is done, it first says how to retire the task. Like `/ledger:close`, it never starts a task. |
-| `/ledger:go <slug>` | Switches to the task named `<slug>`; `/ledger` shows each name. If the session has a task ledger, the agent writes it first. The session then clears and `go <slug>` is sent, so the fresh session moves into that task's worktree. If that task was parked, the mark is removed. When you leave a task whose steps are all done, it first says how to retire it. |
+| `/ledger:go <slug>` | Switches to the task named `<slug>`; `/ledger` shows each name. If the session has a task ledger, the agent writes it first. The session then clears and `go <slug>` is sent, so the fresh session moves into that task's worktree. If that task was parked, the mark is removed. A backlog task first gets its branch and worktree. The branch starts at the `--base` ref given when the task was written. Without one, it starts at the commit that `origin/HEAD` points to. Nothing fetches first, so that commit is from your last `git fetch`. Without `origin/HEAD`, the branch starts at the branch that the main checkout is on. A backlog task starts only from a session in its repo. From another repo, `/ledger:go` names the repo and changes nothing. When you leave a task whose steps are all done, it first says how to retire it. |
 | `/ledger:park [<slug>] <reason>` | Marks a task parked, with the date and the reason. With the slug of another task, it only marks that task. Without a slug, it writes this task's ledger, parks it, then clears the session. |
 | `/ledger:archive [<term>] [--all]` | Lists this repo's archived ledgers in `~/.claude/ledger-archive/`, newest first, one line each. A term keeps the ledgers that contain it, in any case, and shows the first matching line. `--all` lists every repo. |
 | `/ledger:worktrees` | Prints a table of the repo's linked git worktrees, largest first, with size, last commit, changed files, ledger and PR. |
@@ -246,7 +247,7 @@ to write a ledger, start a task, or switch to one.
 | `/ledger:parent [<name>]` | Prints a parent task and, for each child task, its status and next step. Without a name it shows the task this session is in when it has child tasks, or else that task's parent task. |
 | `/ledger:parent <name> add <child>` | Makes `<child>` a child task of `<name>`. It writes both ledgers. A parent task ties together tasks that ship separately, such as stacked PRs. See [Parent tasks](docs/usage.md#parent-tasks). |
 | `/ledger:parent <name> remove <child>` | Removes that relation from both ledgers. |
-| `/ledger:all` | Prints a table of every task ledger on the machine, from every repo, active and archived, with its next step. A parked task shows as `parked`. The list lives in `~/.claude/ledgers.json`. A new task, a retire and each session start add to it. |
+| `/ledger:all` | Prints a table of every task ledger on the machine, from every repo, active and archived, with its next step. Backlog tasks follow in their own section, **Backlog**. A parked task shows as `parked`. The list lives in `~/.claude/ledgers.json`. A new task, a retire and each session start add to it. |
 | `/ledger:all --scan` | Rebuilds `~/.claude/ledgers.json` from the ledgers under `~/repos` and `~/issues` and the archive in `~/.claude/ledger-archive/`, then prints the table. |
 
 A build folder whose project is on a disk that is not connected goes in its own group, **Disk not connected**, and is never deleted.
@@ -285,7 +286,7 @@ tools/                    the deploy code, its wizard and CLI, the settings merg
 tests/                    the tests for tools/, bin/ and hooks/
 bin/deploy                installs everything above
 bin/cc-dd-path            prints the shared Xcode build folder for a worktree
-bin/cc-task-new           starts a task: a new branch, its worktree and its ledger
+bin/cc-task-new           writes a backlog ledger, or makes a task's branch and worktree
 bin/cc-worktree-retire    archives a worktree's ledger, then removes the worktree
 bin/cc-ledgers            keeps ~/.claude/ledgers.json, the list of every task ledger
 CONTRIBUTING.md           forking, what to send back, what must never be committed

@@ -67,9 +67,11 @@ reason=$(printf '%s\n' \
   "This would write a task ledger in a repo's main checkout:$denied" \
   "" \
   "A ledger belongs in the task's worktree, never in the main checkout." \
-  "Start the task first. It creates a branch, a worktree and its ledger:" \
+  "Start the task first. This writes its ledger to the backlog, with no branch or worktree yet:" \
   "  $repo/bin/cc-task-new <slug> --goal '<one paragraph>'" \
-  "Then work in the worktree it prints." \
+  "Then give it a branch and a worktree, and move its ledger in:" \
+  "  $repo/bin/cc-task-new --promote <slug>" \
+  "Then work in the worktree that cc-task-new --promote prints." \
   "This check does not follow cd: from the main checkout, use the absolute path to the worktree's .claude/ledger.md.")
 
 printf '%s' "$reason" | jq -Rs '{

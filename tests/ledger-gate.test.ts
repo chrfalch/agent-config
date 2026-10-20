@@ -97,6 +97,13 @@ test('the deny reason points at cc-task-new and the worktree it prints', (t) => 
   assert.ok(reason.includes(path.join(main, '.claude/ledger.md')), reason);
 });
 
+test('the deny reason says the new task starts in the backlog and how to promote it to a worktree', (t) => {
+  const { root, main } = checkouts(t);
+  const reason = assertDenied(gate(root, main, 'Write', { file_path: path.join(main, '.claude/ledger.md') }));
+  assert.match(reason, /backlog/);
+  assert.ok(reason.includes(`${path.join(REPO, 'bin/cc-task-new')} --promote <slug>`), reason);
+});
+
 test('other files in a main checkout are allowed', (t) => {
   const { root, main } = checkouts(t);
   for (const file of ['.claude/settings.json', 'docs/ledger.md', '.claude/ledger.md.bak', 'ledger.md']) {

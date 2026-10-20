@@ -1,5 +1,5 @@
 ---
-description: Show every task ledger on this machine, from every repository, active and archived, with its next step. `--scan` rebuilds the list in ~/.claude/ledgers.json from the ledgers on disk.
+description: Show every task ledger on this machine, from every repository, active, backlog and archived, with its next step. Backlog tasks have their own section. `--scan` rebuilds the list in ~/.claude/ledgers.json from the ledgers on disk.
 argument-hint: "[--scan]"
 ---
 

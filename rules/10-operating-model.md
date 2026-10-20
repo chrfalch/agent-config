@@ -71,28 +71,35 @@ That context is `runner`.
 Your session transcript is not the record of the task. The **task ledger** is. The
 transcript is re-billed on every turn; the ledger is read once per fresh session.
 
-- Every non-trivial task has a ledger at `.claude/ledger.md` inside its worktree.
-  `/ledger:task` creates the worktree and the ledger when the task starts,
-  before any plan, from `~/.claude/ledger.template.md`. When the plan is
-  approved, write it into the ledger. The ledger holds:
+- Every non-trivial task has a ledger. `/ledger:task` writes the ledger when
+  the task is first named, before any plan, from
+  `~/.claude/ledger.template.md`. It goes to the backlog,
+  `~/.claude/ledger-backlog/<repo>/<slug>.md`, with no worktree or branch yet.
+  `/ledger:go <slug>` makes the worktree and branch, and moves the ledger to
+  `.claude/ledger.md` in the worktree. When the plan is approved, write it
+  into the ledger. The ledger holds:
   goal, approved plan with per-step status, decisions and the reason for each,
   constraints discovered, worktree path and branch, subagent reports (the
   structured report, not the transcript), open questions, and the exact next step.
-  The ledger always lives at `.claude/ledger.md` in the task's worktree. It never lives in the main checkout. A PreToolUse hook denies a
+  Once the task has a worktree, the ledger lives at `.claude/ledger.md` in it. It never lives in the main checkout. A PreToolUse hook denies a
   ledger write in the main checkout.
 - **New work, new task.** When the operator asks for work outside the current
   ledger's goal, it is a separate task by default. Start it with
   `/ledger:task <what the task is>`. You invoke it yourself through the Skill
-  tool; the operator can also type it. It runs `bin/cc-task-new`. With a
-  current ledger, it adds one line under that ledger's Decisions that names
-  the new task, and gives the operator the `start:` line the script printed.
+  tool; the operator can also type it. It runs `bin/cc-task-new`, which writes
+  a backlog ledger. With a current ledger, it adds one line under that
+  ledger's Decisions that names the new task, and gives the operator the
+  `start:` line the script printed. The work starts with `/ledger:go <slug>`.
   Do not add the work to the current ledger, and do not start it in this
-  session. Without a current ledger, it moves the session into the new
-  worktree with `EnterWorktree` and continues the work in this session. If
-  you cannot tell whether the work is separate, ask in one line. Without the
-  ledger mod, run `bin/cc-task-new <slug> --goal '<one paragraph>'` from the
-  agent-config repo; write each `'` inside the goal as `'\''`. Add `--stack`
-  only when the new work builds on the current branch.
+  session. Without a current ledger, it promotes the task with
+  `bin/cc-task-new --promote <slug>`, which makes the worktree. Then it moves
+  the session into the new worktree with `EnterWorktree` and continues the
+  work in this session. If you cannot tell whether the work is separate, ask
+  in one line. Without the ledger mod, run
+  `bin/cc-task-new <slug> --goal '<one paragraph>'` from the agent-config
+  repo; write each `'` inside the goal as `'\''`. Then
+  `bin/cc-task-new --promote <slug>` creates the worktree and branch. Add
+  `--stack` only when the new work builds on the current branch.
 - **Update the ledger at every pipeline boundary**: after plan approval, after red
   tests, after each implementer report, after each review verdict. Use
   `/ledger:update`; you invoke it yourself through the Skill tool.

@@ -259,7 +259,10 @@ tasks is a child task. Do not make a parent task for a single PR, or for a task
 that only has many steps.
 
 A parent task is a normal task. Start it with `/ledger:task`, and start each
-child task with its own `/ledger:task`. Then attach each child task:
+child task with its own `/ledger:task`. A task in the backlog has no worktree
+yet, and only a task with a worktree can be attached. So start each backlog
+task first, with `/ledger:go <slug>` or `bin/cc-task-new --promote <slug>`.
+Then attach each child task:
 
 ```
 /ledger:parent <parent> add <child>

@@ -1,10 +1,56 @@
 # agent-config
 
+## The problem
+
+Claude Code re-reads the whole conversation on every turn. So a long session
+costs more with each turn. You can clear the session to stop that cost, but
+then the agent forgets the task: the goal, the plan, and what is done.
+
+## The idea
+
+1. The task state lives in a ledger file, not in the conversation. A fresh
+   session reads the file and continues.
+2. Each task gets its own git worktree. Two tasks never share a checkout.
+3. Subagents do different types of work when needed and return short reports.
+   Build logs and wide code searches stay out of the main session.
+
+## What it looks like
+
+**You:** Start a new task: items in the offline queue disappear if the app is
+killed during a sync.
+
+**Agent:** (creates a worktree and a ledger, and moves the session into the worktree)
+
+**Agent:** Plan: 1. Write a test that kills the app during a sync and fails.
+2. Save each queue item to disk before the sync sends it. 3. Delete the saved
+item only after the server confirms it. Do you approve?
+
+**You:** yes
+
+**Agent:** (writes failing tests, makes the fix, gets it reviewed)
+
+**Agent:** Clear point. Ledger updated. Type `/ledger:next` to clear the session and continue, or `/ledger:close` to clear it and stop.
+
+**You:** `/ledger:next`
+
+**Agent:** (fresh session, reads the ledger, continues with step 3 in the plan)
+
+Next morning:
+
+**You:** What are we working on?
+
+**Agent:** One task is open: `offline-queue-loss`. Steps 1 and 2 are done.
+Step 3 is in review.
+
+**You:** go
+
+You do three things: you start the task, you approve the plan, and you type `/ledger:next` when the agent asks.
+
+## What it ships
+
 A Claude Code multi-agent setup. It gives the top-level session a contract: plan
 the work, delegate it to subagents, review the result, and keep the state in a
-file instead of in the conversation.
-
-It ships five things:
+file instead of in the conversation. It ships five things:
 
 - **An orchestrator contract** — rule files that load in every session and tell
   the top-level agent how to work.
@@ -19,30 +65,9 @@ It ships five things:
   read-only call. See
   [The hooks](docs/installation.md#the-hooks).
 - **A ledger mod** — a Claude Code plugin that adds `/ledger` and eleven
-  `/ledger:` commands. `/ledger:help` prints one line for each.
-  `/ledger` prints each task ledger's goal, current step and next step.
-  `/ledger:task` starts a separate task with its own worktree and ledger.
-  `/ledger:update` writes the latest results to the current task's ledger.
-  `/ledger:close` writes the ledger, then clears the session.
-  `/ledger:next` writes the ledger, clears the session, then continues the task.
-  `/ledger:go <name>` writes the ledger, clears the session, then continues
-  the task named `<name>`.
-  `/ledger:worktrees` prints a table of the repo's linked git worktrees,
-  largest first. `/ledger:worktrees prune <name>` lists that worktree's build
-  folders, and `--yes` deletes them. It keeps `node_modules` and `Pods`, so the
-  worktree still builds. `/ledger:worktrees derived-data` groups Xcode's build
-  folders by the project they were built from.
-  `/ledger:worktrees prune-orphans --yes` deletes the ones whose project no
-  longer exists.
-  `/ledger:retire [<slug>]` shows what retiring a task would archive and remove.
-  `--yes` archives the task's ledger, then removes its worktree. It also deletes
-  the local branch when every commit on it is in the default branch or in a
-  merged PR.
-  `/ledger:task --here` gives the current worktree a ledger.
-  `/ledger:park <reason>` marks a task parked; `/ledger:go` clears the mark.
-  `/ledger:archive [<term>] [--all]` searches the archived ledgers.
-  `/ledger:all` prints every task ledger on the machine, from every repo,
-  active and archived. `/ledger:all --scan` rebuilds that list from disk.
+  `/ledger:` commands. [Commands](#commands) lists each one.
+
+To set it up, see [Install](#install).
 
 ## Why it is shaped this way
 
@@ -66,9 +91,13 @@ bin/deploy --dry-run   # print every change, write nothing
 bin/deploy
 ```
 
-You need Claude Code, Node.js 20.12 or later, and `bash`. Deploy runs on Node.
-`bash` runs the git hook dispatcher that deploy installs. Python is no longer
-needed. The first run of `bin/deploy` runs `npm ci`, which installs
+You need Claude Code, Node.js 20.12 or later, `bash`, `git`, and `jq`. Deploy
+runs on Node. `bash` runs the git hook dispatcher that deploy installs. Every
+hook script and the status line use `jq`. Python is no longer needed. The
+GitHub CLI, `gh`, finds merged PRs for `/ledger:retire` and for the retire hint
+of `/ledger:next` and `/ledger:go`. `/ledger:worktrees` uses it for its PR
+column. Without `gh`, these parts do not show. The first run of `bin/deploy`
+runs `npm ci`, which installs
 dependencies into `node_modules` and writes the npm cache in `~/.npm`. Codex
 CLI, the argent MCP server, and the `gh stack` extension are optional; deploy
 has a flag to skip each one.
@@ -112,16 +141,20 @@ would change.
 
 ## Using it
 
-Open Claude Code in your repo and describe the task. The orchestrator explores,
-writes a plan, and asks you to approve it. On approval it creates a worktree and
-a ledger, then runs the pipeline:
+Open Claude Code in your repo and describe the task. The orchestrator starts
+the task with `/ledger:task`, which creates a worktree and a ledger before any
+plan. When no task is open, the session moves into the new worktree and
+continues there. When another task is open, the reply ends with a `start:`
+line, `/ledger:go <name>`, and you type it. The orchestrator then explores,
+writes a plan, and asks you to approve it. On approval it writes the plan into
+the ledger, then runs the pipeline:
 
 ```
-investigate -> plan -> ledger -> red tests -> implement -> verify -> review -> clear point -> accept
+investigate -> resolve ambiguity -> plan -> ledger -> red tests -> implement -> verify -> review -> clear point -> accept
 ```
 
-Two things you take part in: you approve the plan, and you run `/clear` when the
-orchestrator says so.
+Three things you take part in: you start the task, you approve the plan, and
+you type `/ledger:next` when the orchestrator says so.
 
 ### The ledger
 
@@ -164,11 +197,11 @@ examples.
 
 | You type | What happens |
 |---|---|
-| `Start a new task: items in the offline queue disappear if the app is killed during a sync.` | The orchestrator investigates, writes a plan, and asks you to approve it. Only a small single-file change is made without a plan. |
-| `yes` | Approves the plan. The orchestrator creates the worktree and the ledger and starts on step 1. |
+| `Start a new task: items in the offline queue disappear if the app is killed during a sync.` | The orchestrator runs `/ledger:task`. When another task is open, it replies with a `start:` line for you to type. The orchestrator then investigates, writes a plan, and asks you to approve it. Only a small single-file change is made without a plan. |
+| `yes` | Approves the plan. The orchestrator writes the plan into the task's ledger and starts on step 1. |
 | `Change step 2: keep the old API and add the new one next to it.` | The orchestrator rewrites the plan and asks again. |
 | `What are we working on?` | It answers from the ledger: the goal, what is done, and the next step. If several tasks are open, it lists each one. |
-| `go` | It continues from the next step in the ledger. Use this after `/clear`, or in a new session the next day. |
+| `go` | It continues from the next step in the ledger. Use this after `/ledger:close`, after a manual `/clear`, or in a new session the next day. |
 | `go offline-queue-loss` | The same as `go`, when several tasks are open and you want to name one. The session moves into that task's worktree first. |
 | `Why did we drop the retry counter?` | It answers from the decisions recorded in the ledger, with the reason for each. |
 | `Explain that in more detail.` | Answers start as a short summary. This asks for file paths, function names, and what was ruled out. |
@@ -179,55 +212,41 @@ each stage.
 
 ### Commands
 
-These commands print state directly, without a model turn. Use them when you
-want a quick look instead of a full answer.
+The ledger mod adds these commands. Claude Code puts the plugin name in front
+of every command that a plugin writes as a markdown file, so a plain `/task`
+does not exist.
+
+A hook answers `/ledger`, `/ledger:help`, `/ledger:worktrees`,
+`/ledger:retire`, `/ledger:archive` and `/ledger:all` directly, without a model
+turn. Most of them only print. The `--yes` forms of `/ledger:worktrees` and
+`/ledger:retire` delete files. The other commands run a model turn, for example
+to write a ledger, start a task, or switch to one.
 
 | You type | What happens |
 |---|---|
 | `/ledger` | Prints each task ledger's goal, current step and next step. |
-| `/ledger <name>` | Prints only the ledger with that name. |
+| `/ledger <name>` | Prints each ledger whose name contains `<name>`, in any case. More than one ledger can match. |
 | `/ledger:help` | Prints one line for each `/ledger` command. |
+| `/ledger:task <description>` | Starts a separate task. The agent picks a short name, writes the goal, and runs `bin/cc-task-new`. The script creates a branch, a worktree and a ledger with the goal filled in. When no task is open, the session moves into the new worktree and continues there. When another task is open, the reply ends with a `start:` line, `/ledger:go <name>`. Type it to clear the session and continue in the new task. Either way, you do not open a new terminal. |
+| `/ledger:task --here [<slug>]` | Gives the linked worktree this session is in a ledger, instead of a new worktree. Without a slug, the task takes the branch name without its owner prefix. It refuses the main checkout and a worktree that already has a ledger. The reply is the path of the new ledger. |
+| `/ledger:update` | Writes the step status, the subagent reports, the decisions and the next step to the task's ledger. After an implement-and-review cycle with work left, the reply is the clear point line. Otherwise it says only that the ledger is updated. With no ledger in the working directory, it creates nothing and tells you to use `/ledger:task`. |
+| `/ledger:close` | Writes the ledger the same way, then clears the session. Type `go` later to continue. It never starts a task: with no ledger in the worktree, it prints why and does nothing. |
+| `/ledger:next` | Writes the ledger the same way, clears the session, then sends `go <name>`, so the fresh session continues from the next step. When every step is done, it first says how to retire the task. Like `/ledger:close`, it never starts a task. |
+| `/ledger:go <slug>` | Switches to the task named `<slug>`; `/ledger` shows each name. If the session has a task ledger, the agent writes it first. The session then clears and `go <slug>` is sent, so the fresh session moves into that task's worktree. If that task was parked, the mark is removed. When you leave a task whose steps are all done, it first says how to retire it. |
+| `/ledger:park [<slug>] <reason>` | Marks a task parked, with the date and the reason. With the slug of another task, it only marks that task. Without a slug, it writes this task's ledger, parks it, then clears the session. |
+| `/ledger:archive [<term>] [--all]` | Lists this repo's archived ledgers in `~/.claude/ledger-archive/`, newest first, one line each. A term keeps the ledgers that contain it, in any case, and shows the first matching line. `--all` lists every repo. |
 | `/ledger:worktrees` | Prints a table of the repo's linked git worktrees, largest first, with size, last commit, changed files, ledger and PR. |
 | `/ledger:worktrees prune <name>` | Lists the build folders of that worktree and their sizes. It deletes nothing. |
 | `/ledger:worktrees prune <name> --yes` | Deletes those build folders. It keeps `node_modules`, `Pods`, `.claude` and the worktree itself. |
-| `/ledger:worktrees derived-data` | Lists every folder in `~/Library/Developer/Xcode/DerivedData` with its size. It groups them by where the project is: the main checkout, a linked worktree, another location, or gone. |
+| `/ledger:worktrees derived-data` | Lists every folder in `~/Library/Developer/Xcode/DerivedData` with its size. It groups them by where the project is: the main checkout, a linked worktree, another location, or gone. Folders with no source project, and shared caches, have their own groups. |
 | `/ledger:worktrees prune-orphans` | Lists the DerivedData folders whose project no longer exists. It deletes nothing. |
 | `/ledger:worktrees prune-orphans --yes` | Deletes those folders. It never deletes shared caches or folders without a recorded project. |
 | `/ledger:retire [<slug>]` | Lists what retiring the task would do: its worktree, branch, uncommitted changes and archive path. It deletes nothing. Without a slug it takes the task this session is in. |
-| `/ledger:retire [<slug>] --yes` | Copies the task's ledger to `~/.claude/ledger-archive/<repo>/`, removes its worktree and deletes the worktree's build folders. It refuses uncommitted changes or an unmerged branch unless you add `--force`. |
+| `/ledger:retire [<slug>] --yes [--force]` | Copies the task's ledger to `~/.claude/ledger-archive/<repo>/`, removes its worktree and deletes the worktree's build folders. It also deletes the local branch when every commit on it is in the default branch or in a merged PR. A branch with commits after its PR merged stays. It needs `--force` for uncommitted changes, and for a branch that has commits not in the default branch and no merged PR. |
 | `/ledger:all` | Prints a table of every task ledger on the machine, from every repo, active and archived, with its next step. A parked task shows as `parked`. The list lives in `~/.claude/ledgers.json`. A new task, a retire and each session start add to it. |
 | `/ledger:all --scan` | Rebuilds `~/.claude/ledgers.json` from the ledgers under `~/repos` and `~/issues` and the archive in `~/.claude/ledger-archive/`, then prints the table. |
 
 A build folder whose project is on a disk that is not connected goes in its own group, **Disk not connected**, and is never deleted.
-
-To start a separate task, type `/ledger:task <what the task is>`. Claude Code
-puts the plugin name in front of every command that a plugin writes as a
-markdown file, so a plain `/task` does not exist. The agent picks a
-short name and writes the goal. It then runs `bin/cc-task-new`, which creates
-a branch, a worktree and a ledger with the goal filled in. When no task is
-open, the session moves into the new worktree and continues there. When
-another task is open, the reply gives you a `start:` line to type. The fresh
-session moves into the new worktree and starts from its ledger. Either way,
-you do not open a new terminal.
-
-To save the latest results before a `/clear`, type `/ledger:update`. In a task
-worktree, the agent writes the step status, the subagent reports, the
-decisions and the next step to the ledger. The reply tells you to type
-`/clear`, then `go`. With no ledger in the working directory, the agent creates
-nothing and tells you to use `/ledger:task`.
-
-To skip the manual `/clear`, type `/ledger:close` or `/ledger:next` instead.
-Both write the ledger the same way. With no ledger in the worktree, they print
-why and do nothing. When the reply ends,
-`/ledger:close` clears the session. `/ledger:next` also clears it, then sends
-`go <name>`, so the fresh session continues the task.
-
-To switch to another task, type `/ledger:go <name>`. The name must be the name
-of a task ledger; `/ledger` shows each one. If the session has a task ledger,
-the agent writes it first, the same way `/ledger:close` does. When the reply
-ends, the session clears and `go <name>` is sent, so the fresh session moves
-into that task's worktree. Without a task ledger, the agent writes nothing,
-and the switch happens the same way.
 
 To remove a finished worktree, use `bin/cc-worktree-retire <worktree>`. It
 archives the ledger first, then removes the worktree and its Xcode build
@@ -256,11 +275,17 @@ DECISIONS.md              why the setup is shaped this way
 settings.policy.json      Claude Code keys this repo asserts
 codex/policy.toml         Codex keys this repo asserts
 mods/ledger/              the /ledger command and its /ledger: commands, /ledger:worktrees included (a Claude Code plugin)
-tools/                    the settings merge and rule filter, plus their tests
+.claude-plugin/           marketplace.json, which lists the plugins in mods/ for Claude Code
+hooks/                    the six hook scripts that deploy installs
+githooks/                 the git hook dispatcher that deploy installs
+tools/                    the deploy code, its wizard and CLI, the settings merge and the rule filter
+tests/                    the tests for tools/, bin/ and hooks/
 bin/deploy                installs everything above
 bin/cc-dd-path            prints the shared Xcode build folder for a worktree
 bin/cc-task-new           starts a task: a new branch, its worktree and its ledger
 bin/cc-worktree-retire    archives a worktree's ledger, then removes the worktree
+bin/cc-ledgers            keeps ~/.claude/ledgers.json, the list of every task ledger
+CONTRIBUTING.md           forking, what to send back, what must never be committed
 ```
 
 ## Notes

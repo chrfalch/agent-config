@@ -1,4 +1,4 @@
-import type { EngineInterface, ProcessRunResult, Register } from 'claude-code'
+import type { Register } from 'claude-code'
 
 import {
   activeLedger,
@@ -7,7 +7,6 @@ import {
   GO_USAGE,
   goArgs,
   HELP,
-  ledgerPaths,
   lookupFailedMessage,
   noLedgerMessage,
   severalLedgersMessage,
@@ -15,35 +14,11 @@ import {
   summarize,
   unknownTaskMessage,
 } from './ledger'
+import { findLedgers, message, titleSlug } from './lookup'
+import { retireCommand } from './retire-command'
 import { worktreesCommand } from './worktrees-command'
 
-type Found = { path: string; slug: string; mtimeMs: number }
-
 const armed = { plugin: 'ledger', key: 'armed' } as const
-
-const message = (error: unknown) => (error instanceof Error ? error.message : String(error))
-
-// The SessionStart hook's own lookup, so /ledger and the hook always agree on which ledgers exist.
-async function findLedgers($: EngineInterface): Promise<Found[] | { error: string }> {
-  const script = `${$.plugin.root}/../../hooks/ledger-list.sh`
-  const cwd = await $.session.cwd()
-  let result: ProcessRunResult
-  try {
-    result = await $.process.run(['bash', script, 'paths'], { cwd })
-  } catch (error) {
-    return { error: `${script} did not run: ${message(error)}` }
-  }
-  const { exitCode, stdout, stderr } = result
-  if (exitCode !== 0) return { error: `${script} failed (exit ${exitCode}): ${stderr.trim()}` }
-  const found = await Promise.all(
-    ledgerPaths(stdout).map(async path => ({ path, slug: folderSlug(path), mtimeMs: (await $.fs.stat(path)).mtimeMs })),
-  )
-  return found.sort((a, b) => b.mtimeMs - a.mtimeMs)
-}
-
-async function titleSlug($: EngineInterface, path: string): Promise<string> {
-  return summarize(await $.fs.read(path), folderSlug(path), 0).slug
-}
 
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
@@ -107,6 +82,8 @@ export const register: Register = on => {
 
   // Typed as always a string, but `claude plugin test` leaves it undefined when the caller omits it.
   on('command.run', { command: 'ledger:worktrees' }, async ($, e) => ({ text: await worktreesCommand($, e.args ?? '') }))
+
+  on('command.run', { command: 'ledger:retire' }, async ($, e) => ({ text: await retireCommand($, e.args ?? '') }))
 
   on('command.run', { command: 'ledger:help' }, async () => ({ text: HELP }))
 

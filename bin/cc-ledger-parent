@@ -216,7 +216,7 @@ const json = slugs.length < args.length;
 
 // The Children line format and cc-worktree-retire read a slug as one word of these characters.
 function supported(...given) {
-  for (const slug of given) if (!SLUG.test(slug)) fail(`unsupported slug '${slug}': a slug must match ^[A-Za-z0-9._-]+$`);
+  for (const slug of given) if (!SLUG.test(slug)) fail(`unsupported slug ${JSON.stringify(slug)}: a slug must match ^[A-Za-z0-9._-]+$`);
   return given;
 }
 

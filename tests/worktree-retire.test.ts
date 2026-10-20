@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import test, { type TestContext } from 'node:test';
 import { freshHome, REPO, run } from './helpers.js';
@@ -386,6 +386,62 @@ test('retire does not count the lines of a section that only starts with Childre
 
   assert.equal(result.status, 0, result.stderr);
   assert.equal(existsSync(old.worktree), false);
+});
+
+test('retire of a child keeps the file mode of the parent ledger', (t) => {
+  const { home, worktree, parent } = family(t, '- wt-title\n');
+  chmodSync(parent.ledger, 0o600);
+
+  const result = run(home, retire, worktree);
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(readFileSync(parent.ledger, 'utf8'), /^- wt-title \(retired \d{4}-\d\d-\d\d\)$/m);
+  assert.equal(statSync(parent.ledger).mode & 0o777, 0o600);
+});
+
+/** A PATH whose `name` always fails, ahead of the real one. */
+function failing(home: string, name: string): string {
+  const stubs = path.join(home, 'stubs');
+  mkdirSync(stubs, { recursive: true });
+  writeFileSync(path.join(stubs, name), '#!/bin/sh\necho "stub $0 failed" >&2\nexit 1\n', { mode: 0o755 });
+  return `${stubs}:${process.env.PATH ?? ''}`;
+}
+
+test('retire only warns when date fails while it marks the parent', (t) => {
+  const { home, worktree, parent } = family(t, '- wt-title\n');
+  // Archived already, so the marker is the only step that asks date for today.
+  const archive = path.join(home, '.claude/ledger-archive/main');
+  mkdirSync(archive, { recursive: true });
+  writeFileSync(path.join(archive, '2026-10-01-wt-a.md'), readFileSync(path.join(worktree, '.claude/ledger.md')));
+  const before = readFileSync(parent.ledger, 'utf8');
+
+  const result = run(home, ['env', `PATH=${failing(home, 'date')}`, ...retire], worktree);
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(existsSync(worktree), false);
+  assert.equal(readFileSync(parent.ledger, 'utf8'), before);
+  const lines = result.stderr.split('\n').filter(Boolean);
+  assert.equal(lines.length, 1, result.stderr);
+  assert.ok(lines[0]?.startsWith('warning: ') && lines[0].includes(parent.ledger) && lines[0].includes("'- wt-title'"), result.stderr);
+});
+
+test('retire only warns when rm fails to clean up after a failed parent write', (t) => {
+  const { home, worktree, parent } = family(t, '- wt-title\n');
+  const folder = path.dirname(parent.ledger);
+
+  chmodSync(folder, 0o555);
+  let result;
+  try {
+    result = run(home, ['env', `PATH=${failing(home, 'rm')}`, ...retire], worktree);
+  } finally {
+    chmodSync(folder, 0o755);
+  }
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(existsSync(worktree), false);
+  const lines = result.stderr.split('\n').filter(Boolean);
+  assert.equal(lines.length, 1, result.stderr);
+  assert.ok(lines[0]?.includes(parent.ledger), result.stderr);
 });
 
 test('retire finishes when the parent ledger cannot be written, and names the line to change by hand', (t) => {

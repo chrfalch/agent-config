@@ -1,9 +1,9 @@
 import type { EngineInterface, ProcessRunResult } from 'claude-code'
 
-import { formatTime, summarize } from './ledger'
+import { formatTime, groupByParent, summarize } from './ledger'
 import { message } from './lookup'
 
-type Entry = { repo: string; slug: string; status: string; updated: string; path: string; archivePath?: string }
+type Entry = { repo: string; slug: string; status: string; updated: string; path: string; archivePath?: string; parent?: string }
 
 const USAGE = 'Usage: /ledger:all [--scan]'
 const EMPTY = 'No ledgers registered. Run /ledger:all --scan to rebuild from disk.'
@@ -13,7 +13,8 @@ function isEntry(value: unknown): value is Entry {
   if (typeof value !== 'object' || value === null) return false
   const fields: Record<string, unknown> = { ...value }
   const strings = ['repo', 'slug', 'status', 'updated', 'path'].every(key => typeof fields[key] === 'string')
-  return strings && (fields.archivePath === undefined || typeof fields.archivePath === 'string')
+  const optional = ['archivePath', 'parent'].every(key => fields[key] === undefined || typeof fields[key] === 'string')
+  return strings && optional
 }
 
 function parseEntries(stdout: string): Entry[] | null {
@@ -38,12 +39,26 @@ async function statusAndNext($: EngineInterface, entry: Entry): Promise<[string,
   }
 }
 
+const taskKey = (repo: string, slug: string): string => `${repo}\0${slug}`
+
+function familyOrder(newestFirst: Entry[]): { entry: Entry; name: string }[] {
+  const groups = groupByParent(
+    newestFirst,
+    entry => taskKey(entry.repo, entry.slug),
+    entry => (entry.parent === undefined ? undefined : taskKey(entry.repo, entry.parent)),
+  )
+  return groups.flatMap(({ item, children }) => [
+    { entry: item, name: item.parent ? `${item.slug} (parent: ${item.parent})` : item.slug },
+    ...children.map(child => ({ entry: child, name: `↳ ${child.slug}` })),
+  ])
+}
+
 async function table($: EngineInterface, entries: Entry[]): Promise<string> {
   const newestFirst = [...entries].sort((a, b) => Date.parse(b.updated) - Date.parse(a.updated))
   const rows = await Promise.all(
-    newestFirst.map(async entry => {
+    familyOrder(newestFirst).map(async ({ entry, name }) => {
       const [status, next] = await statusAndNext($, entry)
-      return [entry.repo, entry.slug, status, formatTime(Date.parse(entry.updated)), truncate(next)].map(cell)
+      return [entry.repo, name, status, formatTime(Date.parse(entry.updated)), truncate(next)].map(cell)
     }),
   )
   const active = rows.filter(row => row[2] === 'active').length

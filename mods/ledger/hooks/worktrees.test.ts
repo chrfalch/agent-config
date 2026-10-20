@@ -6,6 +6,7 @@ import {
   dirtyCount,
   formatDerivedData,
   formatTable,
+  ledgerRole,
   ignoredBuildFolders,
   isDirectChild,
   isDiskConnected,
@@ -208,6 +209,39 @@ test('/ledger:worktrees prints one row per linked worktree that exists, with a ?
       '| small | 0.0 | ? | ? | no | none |',
     ].join('\n'),
   )
+})
+
+test('formatTable names the ledger role of a parent or a child task instead of yes', () => {
+  const rows = [
+    { ...row('epic', 2), hasLedger: true, ledgerRole: 'parent of 2' },
+    { ...row('child', 1), hasLedger: true, ledgerRole: 'child of epic' },
+  ]
+  expect(formatTable(rows).split('\n').slice(4)).toEqual([
+    '| epic | 2.0 | 10-14 | 0 | parent of 2 | none |',
+    '| child | 1.0 | 10-14 | 0 | child of epic | none |',
+  ])
+})
+
+test('/ledger:worktrees marks a parent with its number of children and a child with its parent', async ($, on) => {
+  const ledgers: Record<string, string> = {
+    [`${BIG}/.claude/ledger.md`]: '# Task ledger — epic\n\n## Location\n- worktree: big\n\n## Children\n- small\n- old (retired 2026-10-01)\n',
+    [`${SMALL}/.claude/ledger.md`]: '# Task ledger — small\n\n## Location\n- worktree: small\n- parent: epic\n',
+  }
+  on('session.cwd', async () => ({ value: REPO }))
+  on('process.run', fakeRun(repoReplies(ok(PRS))))
+  on('fs.exists', fakeExists)
+  on('fs.stat', async (_, e) => (e.path in ledgers ? { value: { kind: 'file' as const, size: 10, mtimeMs: 0 } } : { deny: `ENOENT: ${e.path}` }))
+  on('fs.read', async (_, e) => (e.path in ledgers ? { value: ledgers[e.path] ?? '' } : { deny: `ENOENT: ${e.path}` }))
+  const { text } = await $.command.run({ command: 'ledger:worktrees' })
+  expect(text.split('\n').slice(4)).toEqual(['| big | 77.3 | 10-14 | 2 | parent of 1 | OPEN #51243 |', '| small | 0.0 | ? | ? | child of epic | none |'])
+})
+
+test('ledgerRole counts only the children that are not retired', () => {
+  const summary = { slug: 'epic', editedMs: 0, goal: '', current: null, next: '' }
+  expect(ledgerRole({ ...summary, children: [{ slug: 'a' }, { slug: 'b', retired: '2026-10-01' }] })).toBe('parent of 1')
+  expect(ledgerRole({ ...summary, children: [{ slug: 'b', retired: '2026-10-01' }] })).toBe('parent of 0')
+  expect(ledgerRole({ ...summary, parent: 'epic' })).toBe('child of epic')
+  expect(ledgerRole(summary)).toBeUndefined()
 })
 
 test('/ledger:worktrees still prints the table when gh fails, with ? in that PR cell and the error below', async ($, on) => {

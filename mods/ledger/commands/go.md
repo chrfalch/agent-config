@@ -3,7 +3,7 @@ description: Write the latest results to this task's ledger, clear the session, 
 argument-hint: <slug>
 ---
 
-The ledger hook replaces the operator's argument with two or three lines:
+The ledger hook replaces the operator's argument with two to four lines:
 
 ```
 $ARGUMENTS
@@ -14,6 +14,9 @@ $ARGUMENTS
 - `ledger:` is the absolute path of this session's task ledger, or `none`.
 - `parked:`, when present, is the date and reason the task was parked. The
   hook has already removed the marker from that task's ledger.
+- `parent:`, when present, is the slug of that task's parent task.
+- `children:`, when present, lists that task's child tasks, each with its
+  status.
 
 If `ledger:` is `none`, this session has no task ledger. Write nothing, do not
 create one, and only do step 4. Otherwise, update the file at that exact path,
@@ -33,4 +36,6 @@ even when it is not in the current working directory:
    continues with `go <task>`, where <task> is the `task:` value. Do not ask
    the operator to run `/clear`. If there is a `parked:` line, add one line
    before it: the task was parked on that date, the reason, and that it is no
-   longer parked.
+   longer parked. If there is a `parent:` line, add one line before it that
+   names the parent task. If there is a `children:` line, add one line before
+   it that lists the child tasks with their status, as given.

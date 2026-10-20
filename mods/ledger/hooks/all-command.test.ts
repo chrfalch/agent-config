@@ -7,7 +7,7 @@ const exit = (exitCode: number, stdout: string, stderr = ''): Reply => ({
   value: { exitCode, stdout, stderr, isStdoutTruncated: false, isStderrTruncated: false },
 })
 
-type Entry = { repo: string; slug: string; path: string; branch: string; status: string; created: string; updated: string; archivePath?: string }
+type Entry = { repo: string; slug: string; path: string; branch: string; status: string; created: string; updated: string; archivePath?: string; parent?: string }
 
 const entry = (slug: string, updated: string, extra: Partial<Entry> = {}): Entry => ({
   repo: 'app',
@@ -160,4 +160,33 @@ test('/ledger:all says so when the script prints something other than a list of 
   const { text } = await $.command.run({ command: 'ledger:all' })
 
   expect(text).toBe('cc-ledgers printed something that is not a list of ledgers.')
+})
+
+test('/ledger:all shows a child under its parent in the same repo, and any other child with a parent note', async ($, on) => {
+  const child = entry('child', '2026-10-05T09:30:00.000Z', { parent: 'epic' })
+  const other = entry('other', '2026-10-04T09:30:00.000Z')
+  const epic = entry('epic', '2026-10-03T09:30:00.000Z')
+  const orphan = entry('orphan', '2026-10-02T09:30:00.000Z', { parent: 'gone' })
+  const elsewhere = entry('web-child', '2026-10-01T09:30:00.000Z', { repo: 'web', parent: 'epic' })
+  const all = [child, other, epic, orphan, elsewhere]
+  world(
+    on,
+    { 'bin/cc-ledgers list --json': exit(0, JSON.stringify(all)) },
+    Object.fromEntries(all.map(({ path }) => [path, ledgerText('Ship it.')])),
+  )
+
+  const { text } = await $.command.run({ command: 'ledger:all' })
+
+  expect(text).toBe(
+    [
+      '**All task ledgers** · 5 tasks, 5 active',
+      '',
+      HEADER,
+      `| app | other | active | ${local(other.updated)} | Ship it. |`,
+      `| app | epic | active | ${local(epic.updated)} | Ship it. |`,
+      `| app | ↳ child | active | ${local(child.updated)} | Ship it. |`,
+      `| app | orphan (parent: gone) | active | ${local(orphan.updated)} | Ship it. |`,
+      `| web | web-child (parent: epic) | active | ${local(elsewhere.updated)} | Ship it. |`,
+    ].join('\n'),
+  )
 })

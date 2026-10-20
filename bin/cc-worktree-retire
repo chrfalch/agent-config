@@ -137,8 +137,9 @@ echo "removed  $wt"
 # effort: the worktree is gone, so a rerun could not finish what an exit here would skip.
 marked=""
 if [ -n "$parent_ledger" ]; then
-  today=$(date +%F)
-  if { TASK_CHILD="$task" TASK_TODAY="$today" awk '
+  today=$(date +%F 2>/dev/null) || today=""
+  # The copy gives the temporary file the ledger's mode, which the redirect then keeps.
+  if [ -n "$today" ] && { cp -p "$parent_ledger" "$parent_ledger.tmp-$$" && TASK_CHILD="$task" TASK_TODAY="$today" awk '
     /^## / { title = $0; sub(/[ \t\r]+$/, "", title); inside = title == "## Children" }
     inside {
       line = $0
@@ -150,8 +151,8 @@ if [ -n "$parent_ledger" ]; then
   ' "$parent_ledger" > "$parent_ledger.tmp-$$" && mv "$parent_ledger.tmp-$$" "$parent_ledger"; } 2>/dev/null; then
     marked=1
   else
-    rm -f "$parent_ledger.tmp-$$"
-    echo "warning: could not update $parent_ledger; under ## Children, change '- $task' to '- $task (retired $today)' by hand" >&2
+    rm -f "$parent_ledger.tmp-$$" 2>/dev/null || true
+    echo "warning: could not update $parent_ledger; under ## Children, change '- $task' to '- $task (retired ${today:-YYYY-MM-DD})' by hand" >&2
   fi
 elif [ -n "$parent" ]; then
   echo "warning: no ledger for parent $parent in this repository, so its Children section is not updated" >&2

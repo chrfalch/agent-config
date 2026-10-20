@@ -314,6 +314,15 @@ test('show of an unknown slug fails with one line', (t) => {
   assert.match(result.stderr, /^[^\n]*nope[^\n]*\n$/);
 });
 
+test('a slug with a line break is refused in one line that shows it escaped', (t) => {
+  const { home, main } = repository(t, 'epic');
+
+  const result = parent(home, main, 'show', 'bad\nslug');
+
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /^[^\n]*"bad\\nslug"[^\n]*\n$/);
+});
+
 for (const args of [[], ['add', 'epic'], ['add', 'a', 'b', 'c'], ['show'], ['show', 'epic', '--yaml'], ['move', 'a', 'b']]) {
   test(`${args.join(' ') || 'no arguments'} is a usage error`, (t) => {
     const { home, main } = repository(t, 'epic');

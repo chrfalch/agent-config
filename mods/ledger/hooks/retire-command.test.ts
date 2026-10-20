@@ -28,8 +28,12 @@ const LEDGER_LIST = ['bash', 'hooks/ledger-list.sh', 'paths']
 const retireScript = (...rest: string[]): string[] => ['bash', 'bin/cc-worktree-retire', ...rest]
 
 const SCRIPT_OUTPUT = 'archived /Users/me/.claude/ledger-archive/repo/2026-10-05-fix-login.md\nremoved  /repo/.claude/worktrees/fix-login\n'
+const DELETED_OUTPUT = `${SCRIPT_OUTPUT}deleted  branch me/fix-login\n`
 
-type WorktreeReplies = { status?: Reply; branch?: Reply; originHead?: Reply; ahead?: Reply; gh?: Reply; dirs?: Reply }
+const HEAD = 'c0ffee1c0ffee1c0ffee1c0ffee1c0ffee1c0ffe'
+const mergedPr = (headRefOid: string): Reply => ok(JSON.stringify([{ number: 24, headRefOid }]))
+
+type WorktreeReplies = { status?: Reply; branch?: Reply; head?: Reply; originHead?: Reply; ahead?: Reply; gh?: Reply; dirs?: Reply; aheadOf?: string }
 
 function worktreeReplies(worktree: string, branch: string, overrides: WorktreeReplies = {}): Replies {
   const git = (...args: string[]) => ['git', '-C', worktree, ...args]
@@ -37,9 +41,10 @@ function worktreeReplies(worktree: string, branch: string, overrides: WorktreeRe
     [git('rev-parse', '--path-format=absolute', '--git-dir', '--git-common-dir'), overrides.dirs ?? ok(`/repo/.git/worktrees/${branch.split('/').at(-1)}\n/repo/.git\n`)],
     [git('status', '--porcelain'), overrides.status ?? ok('')],
     [git('branch', '--show-current'), overrides.branch ?? ok(`${branch}\n`)],
+    [git('rev-parse', '--verify', '--quiet', 'HEAD'), overrides.head ?? ok(`${HEAD}\n`)],
     [git('symbolic-ref', '--short', 'refs/remotes/origin/HEAD'), overrides.originHead ?? ok('origin/main\n')],
-    [git('rev-list', '--count', 'origin/main..HEAD'), overrides.ahead ?? ok('0\n')],
-    [['gh', 'pr', 'list', '--head', branch, '--state', 'merged', '--json', 'number'], overrides.gh ?? ok('[]')],
+    [git('rev-list', '--count', `origin/main..${overrides.aheadOf ?? HEAD}`), overrides.ahead ?? ok('0\n')],
+    [['gh', 'pr', 'list', '--head', branch, '--state', 'merged', '--json', 'number,headRefOid'], overrides.gh ?? ok('[]')],
   )
 }
 
@@ -48,7 +53,10 @@ type Setup = { cwd: string; ledgers?: string[]; titles?: Record<string, string>;
 function world(on: On, { cwd, ledgers = [ledgerOf(FIX_LOGIN), ledgerOf(NEW_API)], titles = {}, replies: extra = {} }: Setup): Call[] {
   const calls: Call[] = []
   const known: Replies = {
-    ...replies([LEDGER_LIST, ok(ledgers.join('\n'))], [retireScript(FIX_LOGIN), ok(SCRIPT_OUTPUT)], [retireScript(FIX_LOGIN, '--force'), ok(SCRIPT_OUTPUT)]),
+    ...replies([LEDGER_LIST, ok(ledgers.join('\n'))], [retireScript(FIX_LOGIN), ok(SCRIPT_OUTPUT)], [retireScript(FIX_LOGIN, '--force'), ok(SCRIPT_OUTPUT)],
+      [retireScript(FIX_LOGIN, '--delete-branch', HEAD), ok(DELETED_OUTPUT)],
+      [retireScript(FIX_LOGIN, '--delete-branch', HEAD, '--force'), ok(DELETED_OUTPUT)],
+    ),
     ...worktreeReplies(FIX_LOGIN, 'me/fix-login'),
     ...worktreeReplies(NEW_API, 'me/new-api'),
     ...extra,
@@ -173,9 +181,17 @@ test('/ledger:retire still plans when git cannot compare with origin, and counts
 
 test('/ledger:retire --yes retires when git cannot compare with origin but the PR is merged', async ($, on) => {
   const ahead = exit(128, '', "fatal: bad revision 'origin/main..HEAD'")
-  const calls = world(on, { cwd: REPO, replies: worktreeReplies(FIX_LOGIN, 'me/fix-login', { ahead, gh: ok('[{"number":24}]') }) })
+  const calls = world(on, { cwd: REPO, replies: worktreeReplies(FIX_LOGIN, 'me/fix-login', { ahead, gh: mergedPr(HEAD) }) })
   await $.command.run({ command: 'ledger:retire', args: 'fast-steps --yes' })
+  expect(ranScript(calls).map(({ argv }) => argv.slice(2))).toEqual([[FIX_LOGIN, '--delete-branch', HEAD]])
+})
+
+test('/ledger:retire --yes keeps the branch when git cannot compare with origin and the merged PR ends elsewhere', async ($, on) => {
+  const ahead = exit(128, '', "fatal: bad revision 'origin/main..HEAD'")
+  const calls = world(on, { cwd: REPO, replies: worktreeReplies(FIX_LOGIN, 'me/fix-login', { ahead, gh: mergedPr('0ld0001') }) })
+  const { text } = await $.command.run({ command: 'ledger:retire', args: 'fast-steps --yes' })
   expect(ranScript(calls).map(({ argv }) => argv.slice(2))).toEqual([[FIX_LOGIN]])
+  expect(text.split('\n').at(-1)).toBe('- kept branch me/fix-login, because it has commits that are not in its merged PR')
 })
 
 test('/ledger:retire counts unmerged work when gh cannot be asked, and shows why', async ($, on) => {
@@ -194,11 +210,12 @@ test('/ledger:retire --yes on a clean, merged worktree runs the script from the 
       '**Retired fast-steps**',
       '- archived /Users/me/.claude/ledger-archive/repo/2026-10-05-fix-login.md',
       '- removed  /repo/.claude/worktrees/fix-login',
+      '- deleted  branch me/fix-login',
     ].join('\n'),
   )
   const [script, ...more] = ranScript(calls)
   expect(more).toEqual([])
-  expect(script?.argv.slice(2)).toEqual([FIX_LOGIN])
+  expect(script?.argv.slice(2)).toEqual([FIX_LOGIN, '--delete-branch', HEAD])
   expect(script?.argv[1]?.endsWith('/../../bin/cc-worktree-retire')).toBe(true)
   expect(script?.cwd).toBe(REPO)
 })
@@ -218,21 +235,68 @@ test('/ledger:retire --yes refuses an unmerged branch without --force', async ($
 })
 
 test('/ledger:retire --yes retires commits ahead when their PR is merged', async ($, on) => {
-  const calls = world(on, { cwd: REPO, replies: worktreeReplies(FIX_LOGIN, 'me/fix-login', { ahead: ok('2\n'), gh: ok('[{"number":24}]') }) })
+  const calls = world(on, { cwd: REPO, replies: worktreeReplies(FIX_LOGIN, 'me/fix-login', { ahead: ok('2\n'), gh: mergedPr(HEAD) }) })
   await $.command.run({ command: 'ledger:retire', args: 'fast-steps --yes' })
+  expect(ranScript(calls).map(({ argv }) => argv.slice(2))).toEqual([[FIX_LOGIN, '--delete-branch', HEAD]])
+})
+
+test('/ledger:retire --yes deletes the branch when any of its merged PRs ends at HEAD', async ($, on) => {
+  const gh = ok(JSON.stringify([{ number: 31, headRefOid: '0ld0001' }, { number: 24, headRefOid: HEAD }]))
+  const calls = world(on, { cwd: REPO, replies: worktreeReplies(FIX_LOGIN, 'me/fix-login', { ahead: ok('2\n'), gh }) })
+  await $.command.run({ command: 'ledger:retire', args: 'fast-steps --yes' })
+  expect(ranScript(calls).map(({ argv }) => argv.slice(2))).toEqual([[FIX_LOGIN, '--delete-branch', HEAD]])
+})
+
+test('/ledger:retire counts commits ahead at the HEAD it read, so a commit that lands later cannot change the check', async ($, on) => {
+  const git = (...args: string[]) => ['git', '-C', FIX_LOGIN, ...args]
+  const movedSinceRead = replies([git('rev-list', '--count', 'origin/main..HEAD'), ok('3\n')])
+  const calls = world(on, { cwd: REPO, replies: { ...worktreeReplies(FIX_LOGIN, 'me/fix-login'), ...movedSinceRead } })
+  await $.command.run({ command: 'ledger:retire', args: 'fast-steps --yes' })
+  expect(ranScript(calls).map(({ argv }) => argv.slice(2))).toEqual([[FIX_LOGIN, '--delete-branch', HEAD]])
+})
+
+test('/ledger:retire --yes retires the worktree but keeps a branch with commits after its PR merged', async ($, on) => {
+  const calls = world(on, { cwd: REPO, replies: worktreeReplies(FIX_LOGIN, 'me/fix-login', { ahead: ok('3\n'), gh: mergedPr('0ld0001') }) })
+  const plan = await $.command.run({ command: 'ledger:retire', args: 'fast-steps' })
+  expect(plan.text.split('\n')).toContain('- local branch: me/fix-login is kept, because it has commits that are not in its merged PR')
+  expect(plan.text.split('\n').at(-1)).toBe('Add --yes to retire it.')
+  const { text } = await $.command.run({ command: 'ledger:retire', args: 'fast-steps --yes' })
   expect(ranScript(calls).map(({ argv }) => argv.slice(2))).toEqual([[FIX_LOGIN]])
+  expect(text.split('\n').at(-1)).toBe('- kept branch me/fix-login, because it has commits that are not in its merged PR')
+})
+
+const UNBORN: WorktreeReplies = { head: exit(1, '', ''), aheadOf: 'HEAD', ahead: exit(128, '', "fatal: ambiguous argument 'origin/main..HEAD'") }
+
+test('/ledger:retire on a branch with no commits yet needs --force and keeps the branch', async ($, on) => {
+  const calls = world(on, { cwd: REPO, replies: worktreeReplies(FIX_LOGIN, 'me/fix-login', UNBORN) })
+  const plan = await $.command.run({ command: 'ledger:retire', args: 'fast-steps' })
+  expect(plan.text.split('\n')).toContain('- local branch: me/fix-login is kept, because it has no commits yet')
+  expect(plan.text.split('\n').at(-1)).toBe('Add --yes --force to retire it: its branch is not merged')
+  const refused = await $.command.run({ command: 'ledger:retire', args: 'fast-steps --yes' })
+  expect(refused.text).toContain('Not retired: its branch is not merged.')
+  expect(ranScript(calls)).toEqual([])
+  await $.command.run({ command: 'ledger:retire', args: 'fast-steps --yes --force' })
+  expect(ranScript(calls).map(({ argv }) => argv.slice(2))).toEqual([[FIX_LOGIN, '--force']])
+})
+
+test('/ledger:retire --yes keeps a branch with no commits yet even when a merged PR reports no head', async ($, on) => {
+  const calls = world(on, { cwd: REPO, replies: worktreeReplies(FIX_LOGIN, 'me/fix-login', { ...UNBORN, gh: mergedPr('') }) })
+  const { text } = await $.command.run({ command: 'ledger:retire', args: 'fast-steps --yes' })
+  expect(ranScript(calls).map(({ argv }) => argv.slice(2))).toEqual([[FIX_LOGIN]])
+  expect(text.split('\n').at(-1)).toBe('- kept branch me/fix-login, because it has no commits yet')
 })
 
 test('/ledger:retire --yes --force passes --force to the script', async ($, on) => {
   const calls = world(on, { cwd: REPO, replies: worktreeReplies(FIX_LOGIN, 'me/fix-login', { status: ok(' M a.ts\n'), ahead: ok('2\n') }) })
   const { text } = await $.command.run({ command: 'ledger:retire', args: 'fast-steps --force --yes' })
   expect(text.split('\n')[0]).toBe('**Retired fast-steps**')
+  expect(text.split('\n').at(-1)).toBe('- kept branch me/fix-login, because it is not merged')
   expect(ranScript(calls).map(({ argv }) => argv.slice(2))).toEqual([[FIX_LOGIN, '--force']])
 })
 
 test('/ledger:retire --yes reports a script that fails, with what it printed first', async ($, on) => {
   const failed = exit(128, 'archived /a.md\n', "fatal: '/repo/.claude/worktrees/fix-login' contains modified or untracked files\n")
-  world(on, { cwd: REPO, replies: replies([retireScript(FIX_LOGIN), failed]) })
+  world(on, { cwd: REPO, replies: replies([retireScript(FIX_LOGIN, '--delete-branch', HEAD), failed]) })
   const { text } = await $.command.run({ command: 'ledger:retire', args: 'fast-steps --yes' })
   expect(text).toBe(
     ["cc-worktree-retire failed (exit 128): fatal: '/repo/.claude/worktrees/fix-login' contains modified or untracked files", '- archived /a.md'].join('\n'),
@@ -252,4 +316,23 @@ test('/ledger:retire --yes from the main checkout leaves out the working directo
   world(on, { cwd: REPO })
   const { text } = await $.command.run({ command: 'ledger:retire', args: 'fast-steps --yes' })
   expect(text).not.toContain('working directory')
+})
+
+test('/ledger:retire <slug> says the merged branch is deleted', async ($, on) => {
+  world(on, { cwd: REPO })
+  const { text } = await $.command.run({ command: 'ledger:retire', args: 'new-api' })
+  expect(text.split('\n')).toContain('- local branch: me/new-api is deleted, because it is merged')
+})
+
+test('/ledger:retire <slug> says an unmerged branch is kept', async ($, on) => {
+  world(on, { cwd: REPO, replies: worktreeReplies(FIX_LOGIN, 'me/fix-login', { ahead: ok('2\n') }) })
+  const { text } = await $.command.run({ command: 'ledger:retire', args: 'fast-steps' })
+  expect(text.split('\n')).toContain('- local branch: me/fix-login is kept, because it is not merged')
+})
+
+test('/ledger:retire --yes --force on a merged branch with uncommitted changes still deletes the branch', async ($, on) => {
+  const calls = world(on, { cwd: REPO, replies: worktreeReplies(FIX_LOGIN, 'me/fix-login', { status: ok(' M a.ts\n') }) })
+  const { text } = await $.command.run({ command: 'ledger:retire', args: 'fast-steps --yes --force' })
+  expect(ranScript(calls).map(({ argv }) => argv.slice(2))).toEqual([[FIX_LOGIN, '--delete-branch', HEAD, '--force']])
+  expect(text).not.toContain('kept branch')
 })

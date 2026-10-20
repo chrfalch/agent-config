@@ -3,7 +3,7 @@ description: Write the latest results to this task's ledger, clear the session, 
 argument-hint: <slug>
 ---
 
-The ledger hook replaces the operator's argument with two lines:
+The ledger hook replaces the operator's argument with two or three lines:
 
 ```
 $ARGUMENTS
@@ -12,6 +12,8 @@ $ARGUMENTS
 - `task:` is the slug of the task the operator switches to. Do not start that
   task in this session: the next session does.
 - `ledger:` is the absolute path of this session's task ledger, or `none`.
+- `parked:`, when present, is the date and reason the task was parked. The
+  hook has already removed the marker from that task's ledger.
 
 If `ledger:` is `none`, this session has no task ledger. Write nothing, do not
 create one, and only do step 4. Otherwise, update the file at that exact path,
@@ -29,4 +31,6 @@ even when it is not in the current working directory:
 4. End your reply with one line saying whether the ledger is updated (or that there is none), that the
    session clears automatically after this turn, and that the new session
    continues with `go <task>`, where <task> is the `task:` value. Do not ask
-   the operator to run `/clear`.
+   the operator to run `/clear`. If there is a `parked:` line, add one line
+   before it: the task was parked on that date, the reason, and that it is no
+   longer parked.

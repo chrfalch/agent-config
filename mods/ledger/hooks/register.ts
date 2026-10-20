@@ -10,12 +10,20 @@ import {
   HELP,
   lookupFailedMessage,
   noLedgerMessage,
+  otherTaskMessage,
+  PARK_USAGE,
+  park,
+  parkArgs,
+  parkMarker,
   severalLedgersMessage,
   sharedSlugMessage,
   summarize,
   unknownTaskMessage,
+  unpark,
+  unparkFailedMessage,
 } from './ledger'
-import { findLedgers, message, titleSlug } from './lookup'
+import { archiveCommand } from './archive-command'
+import { findLedgers, message, namesOtherWorktree, titleSlug } from './lookup'
 import { retireCommand } from './retire-command'
 import { worktreesCommand } from './worktrees-command'
 
@@ -69,13 +77,58 @@ export const register: Register = on => {
     if ('error' in found) return { text: lookupFailedMessage(found.error) }
     const slugs = await Promise.all(found.map(ledger => titleSlug($, ledger.path)))
     const matches = found.filter((_, index) => slugs[index] === target)
-    if (matches.length === 0) return { text: unknownTaskMessage(target, slugs) }
+    const [match] = matches
+    if (match === undefined) return { text: unknownTaskMessage(target, slugs) }
     if (matches.length > 1) return { text: sharedSlugMessage(target, matches.map(ledger => ledger.path)) }
     const cwd = await $.session.cwd()
     const active = activeLedger(found.map(ledger => ledger.path), cwd)
     if (active.kind === 'several') return { text: severalLedgersMessage(cwd, active.paths.map(folderSlug)) }
+    const { text: unparked, parked } = unpark(await $.fs.read(match.path))
+    if (parked) {
+      try {
+        await $.fs.write(match.path, unparked)
+      } catch (error) {
+        return { text: unparkFailedMessage(target, message(error)) }
+      }
+    }
     await $.state.set(armed, { mode: 'go', slug: target })
-    return next({ ...e, args: goArgs(target, active.kind === 'one' ? active.path : undefined) })
+    return next({ ...e, args: goArgs(target, active.kind === 'one' ? active.path : undefined, parked) })
+  }).catch(async ($, e, next) => {
+    await $.state.set(armed, null)
+    return next.called ? next(e) : { text: lookupFailedMessage(next.error.message ?? next.error.kind) }
+  })
+
+  // The first word names a task only when a ledger has that slug; otherwise it is part of the reason.
+  on('command.run', { command: 'ledger:park' }, async ($, e, next) => {
+    const words = (e.args ?? '').split(/\s+/).filter(word => word !== '')
+    if (words.length === 0) return { text: PARK_USAGE }
+    const found = await findLedgers($)
+    if ('error' in found) return { text: lookupFailedMessage(found.error) }
+    const slugs = await Promise.all(found.map(ledger => titleSlug($, ledger.path)))
+    const [first = '', ...rest] = words
+    const named = found.filter((_, index) => slugs[index] === first)
+    if (named.length > 1) return { text: sharedSlugMessage(first, named.map(ledger => ledger.path)) }
+    const [target] = named
+    const reason = (target ? rest : words).join(' ')
+    if (reason === '') return { text: PARK_USAGE }
+    const cwd = await $.session.cwd()
+    // From a linked worktree, discovery lists only its own ledger, so another task's name looks like part of the reason.
+    if (!target && (await namesOtherWorktree($, first, cwd))) return { text: otherTaskMessage(first) }
+    const marker = parkMarker(new Date(), reason)
+    const active = activeLedger(found.map(ledger => ledger.path), cwd)
+    if (target && !(active.kind === 'one' && active.path === target.path)) {
+      try {
+        await $.fs.write(target.path, park(await $.fs.read(target.path), marker))
+      } catch (error) {
+        return { text: `Could not park ${first}. ${message(error)}` }
+      }
+      return { text: `Parked ${first}. ${marker}` }
+    }
+    if (active.kind === 'none') return { text: noLedgerMessage(cwd) }
+    if (active.kind === 'several') return { text: severalLedgersMessage(cwd, active.paths.map(folderSlug)) }
+    const slug = await titleSlug($, active.path)
+    await $.state.set(armed, { mode: 'park', slug, ledger: active.path, marker })
+    return next({ ...e, args: parkArgs(slug, active.path, reason) })
   }).catch(async ($, e, next) => {
     await $.state.set(armed, null)
     return next.called ? next(e) : { text: lookupFailedMessage(next.error.message ?? next.error.kind) }
@@ -85,6 +138,8 @@ export const register: Register = on => {
   on('command.run', { command: 'ledger:worktrees' }, async ($, e) => ({ text: await worktreesCommand($, e.args ?? '') }))
 
   on('command.run', { command: 'ledger:retire' }, async ($, e) => ({ text: await retireCommand($, e.args ?? '') }))
+
+  on('command.run', { command: 'ledger:archive' }, async ($, e) => ({ text: await archiveCommand($, e.args ?? '') }))
 
   on('command.run', { command: 'ledger:all' }, async ($, e) => ({ text: await allCommand($, e.args ?? '') }))
 
@@ -97,15 +152,25 @@ export const register: Register = on => {
     if (!value) return next(e)
     await $.state.set(armed, null)
     if (e.reason !== 'answer') return next(e)
+    // After the model's turn, so its own edits to the ledger cannot move or drop the marker.
+    if (value.mode === 'park') {
+      try {
+        await $.fs.write(value.ledger, park(await $.fs.read(value.ledger), value.marker))
+      } catch (error) {
+        $.ui.log(`/ledger:park could not mark ${value.slug} parked: ${message(error)}. The session was not cleared.`)
+        return next(e)
+      }
+    }
     const go = `go ${value.slug}`
+    const continues = value.mode === 'next' || value.mode === 'go'
     try {
       await $.command.run({ command: 'clear' })
     } catch (error) {
-      const then = value.mode === 'close' ? '' : `, then say: ${go}`
+      const then = continues ? `, then say: ${go}` : ''
       $.ui.log(`/ledger:${value.mode} could not clear the session: ${message(error)}. Run /clear${then}.`)
       return next(e)
     }
-    if (value.mode !== 'close') {
+    if (continues) {
       try {
         await $.prompt.submit({ text: go })
       } catch (error) {

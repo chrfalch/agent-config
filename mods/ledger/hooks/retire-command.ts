@@ -8,7 +8,9 @@ import {
   formatPlan,
   formatRetired,
   formatRetireFailed,
+  isBranchMerged,
   isInside,
+  keptBranchReason,
   mainCheckoutMessage,
   noTaskMessage,
   notRetiredMessage,
@@ -66,7 +68,7 @@ async function readGit($: EngineInterface, worktree: string, args: string[]): Pr
 
 async function lookUpMergedPr($: EngineInterface, branch: string, cwd: string): Promise<MergedPr> {
   if (branch === '') return { kind: 'none' }
-  const { stdout, failure } = await run($, ['gh', 'pr', 'list', '--head', branch, '--state', 'merged', '--json', 'number'], cwd)
+  const { stdout, failure } = await run($, ['gh', 'pr', 'list', '--head', branch, '--state', 'merged', '--json', 'number,headRefOid'], cwd)
   return failure === undefined ? parseMergedPr(stdout) : { kind: 'unknown', error: `gh pr list ${failure}` }
 }
 
@@ -78,19 +80,23 @@ async function readState($: EngineInterface, path: string): Promise<WorktreeStat
   if (dirs === null) return { error: stateFailedMessage(path, `git ${dirsArgs.join(' ')}`, `printed "${dirsRead.stdout.trim()}", not two paths`) }
   if (dirs.gitDir === dirs.commonDir) return { error: mainCheckoutMessage(path) }
 
-  const [status, branch, originHead] = await Promise.all([
+  const [status, branch, head, originHead] = await Promise.all([
     readGit($, path, ['status', '--porcelain']),
     readGit($, path, ['branch', '--show-current']),
+    run($, ['git', '-C', path, 'rev-parse', '--verify', '--quiet', 'HEAD'], path),
     readGit($, path, ['symbolic-ref', '--short', 'refs/remotes/origin/HEAD']),
   ])
   if ('error' in status) return status
   if ('error' in branch) return branch
   const branchName = branch.stdout.trim()
+  // Not a stop: a branch made with `git switch --orphan` has no commit yet, and counts as unmerged.
+  const headSha = head.failure === undefined ? head.stdout.trim() : ''
   const defaultBranch = defaultBranchOf('error' in originHead ? null : originHead.stdout)
 
   // Not a stop: with no origin/<default> to compare with, the branch counts as unmerged instead.
+  // Counted at the commit read above, so the merge check and the branch delete describe the same commit.
   const [aheadRun, mergedPr] = await Promise.all([
-    run($, ['git', '-C', path, 'rev-list', '--count', `origin/${defaultBranch}..HEAD`], path),
+    run($, ['git', '-C', path, 'rev-list', '--count', `origin/${defaultBranch}..${headSha || 'HEAD'}`], path),
     lookUpMergedPr($, branchName, path),
   ])
   const ahead =
@@ -102,6 +108,7 @@ async function readState($: EngineInterface, path: string): Promise<WorktreeStat
     path,
     mainCheckout: dirname(dirs.commonDir),
     branch: branchName,
+    head: headSha,
     defaultBranch,
     ahead,
     dirty: status.stdout.split('\n').filter(line => line !== '').length,
@@ -124,7 +131,10 @@ export async function retireCommand($: EngineInterface, args: string): Promise<s
 
   // From the main checkout, because the worktree is gone once the script returns.
   const script = `${$.plugin.root}/../../bin/cc-worktree-retire`
-  const { stdout, failure } = await run($, ['bash', script, state.path, ...(command.forced ? ['--force'] : [])], state.mainCheckout)
+  const deletesBranch = isBranchMerged(state)
+  const flags = [...(deletesBranch ? ['--delete-branch', state.head] : []), ...(command.forced ? ['--force'] : [])]
+  const { stdout, failure } = await run($, ['bash', script, state.path, ...flags], state.mainCheckout)
   if (failure !== undefined) return formatRetireFailed(failure, stdout)
-  return formatRetired(target.slug, stdout, isInside(cwd, state.path))
+  const kept = deletesBranch || state.branch === '' ? undefined : { branch: state.branch, reason: keptBranchReason(state) }
+  return formatRetired(target.slug, stdout, isInside(cwd, state.path), kept)
 }

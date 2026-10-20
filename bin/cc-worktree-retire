@@ -1,13 +1,18 @@
 #!/bin/bash
 # Archives a worktree's task ledger, removes the worktree, then deletes its cc-dd-path build folders.
-# Usage: cc-worktree-retire <worktree-path> [git worktree remove flags]
+# --delete-branch <sha> then deletes the worktree's local branch, but only while it still points at
+# <sha>. The caller decides whether that commit is merged: a squash-merged branch never looks merged
+# to git. A branch that moved since is kept, and retiring still succeeds.
+# Usage: cc-worktree-retire <worktree-path> [--delete-branch <sha>] [git worktree remove flags]
 set -eu
 
-arg="${1:-}"
-if [ -z "$arg" ]; then
-  echo "usage: cc-worktree-retire <worktree-path> [--force]" >&2
+usage() {
+  echo "usage: cc-worktree-retire <worktree-path> [--delete-branch <sha>] [--force]" >&2
   exit 1
-fi
+}
+
+arg="${1:-}"
+[ -n "$arg" ] || usage
 shift
 
 self="$0"
@@ -17,6 +22,19 @@ while [ -L "$self" ]; do
     /*) self="$link" ;;
     *) self="$(dirname "$self")/$link" ;;
   esac
+done
+
+delete_sha=""
+remove_flags=()
+while [ $# -gt 0 ]; do
+  if [ "$1" = "--delete-branch" ]; then
+    delete_sha="${2:-}"
+    [[ "$delete_sha" =~ ^[0-9a-f]{40}([0-9a-f]{24})?$ ]] || usage
+    shift 2
+  else
+    remove_flags+=("$1")
+    shift
+  fi
 done
 
 wt=$(cd "$arg" 2>/dev/null; pwd)
@@ -74,7 +92,7 @@ root=$(git -C "$wt" rev-parse --show-toplevel)
 hash=$(printf '%s' "$root" | shasum | cut -c1-6)
 prefix="$HOME/Library/Developer/Xcode/DerivedData/cc-$(basename "$root")-$hash-"
 
-git -C "$main" worktree remove "$@" "$wt"
+git -C "$main" worktree remove ${remove_flags[@]+"${remove_flags[@]}"} "$wt"
 echo "removed  $wt"
 
 if [ -n "$dest" ]; then
@@ -87,3 +105,17 @@ for build in "$prefix"*; do
     echo "deleted  $build"
   fi
 done
+
+if [ -n "$delete_sha" ]; then
+  if [ -z "$branch" ]; then
+    echo "no branch to delete: HEAD was detached"
+  elif error=$(git -C "$main" update-ref -d "refs/heads/$branch" "$delete_sha" 2>&1); then
+    # update-ref leaves the branch's config section behind, which `git branch -D` would remove.
+    git -C "$main" config --remove-section "branch.$branch" 2>/dev/null || true
+    echo "deleted  branch $branch"
+  elif [ "$(git -C "$main" rev-parse --verify --quiet "refs/heads/$branch")" != "$delete_sha" ]; then
+    echo "kept     branch $branch, because it moved after retire checked it"
+  else
+    echo "kept     branch $branch, because git could not delete it: $error"
+  fi
+fi

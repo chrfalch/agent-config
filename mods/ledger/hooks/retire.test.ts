@@ -6,7 +6,9 @@ import {
   formatPlan,
   formatRetired,
   formatRetireFailed,
+  isBranchMerged,
   isInside,
+  keptBranchReason,
   notRetiredMessage,
   parseCount,
   parseGitDirs,
@@ -62,15 +64,18 @@ test('parseCount reads a whole number and nothing else', () => {
 
 test('parseMergedPr finds the first merged PR, or none, or says why it cannot tell', () => {
   expect(parseMergedPr('[]')).toEqual({ kind: 'none' })
-  expect(parseMergedPr('[{"number":51},{"number":40}]')).toEqual({ kind: 'merged', number: 51 })
+  expect(parseMergedPr('[{"number":51,"headRefOid":"c51"},{"number":40,"headRefOid":"c40"}]')).toEqual({ kind: 'merged', number: 51, heads: ['c51', 'c40'] })
   expect(parseMergedPr('Loading...')).toEqual({ kind: 'unknown', error: 'gh pr list printed something that is not a JSON list' })
   expect(parseMergedPr('{"number":5}')).toEqual({ kind: 'unknown', error: 'gh pr list printed something that is not a JSON list' })
 })
+
+const HEAD = 'c0ffee1'
 
 const CLEAN: WorktreeState = {
   path: '/repo/.claude/worktrees/fix-login',
   mainCheckout: '/repo',
   branch: 'me/fix-login',
+  head: HEAD,
   defaultBranch: 'main',
   ahead: 0,
   dirty: 0,
@@ -88,7 +93,7 @@ test('retireBlockers names uncommitted changes, counted', () => {
 
 test('a branch with commits ahead is unmerged unless a merged PR exists', () => {
   expect(retireBlockers({ ...CLEAN, ahead: 2 })).toEqual(['its branch is not merged'])
-  expect(retireBlockers({ ...CLEAN, ahead: 2, mergedPr: { kind: 'merged', number: 7 } })).toEqual([])
+  expect(retireBlockers({ ...CLEAN, ahead: 2, mergedPr: { kind: 'merged', number: 7, heads: [] } })).toEqual([])
   expect(retireBlockers({ ...CLEAN, ahead: 2, mergedPr: { kind: 'unknown', error: 'gh: auth' } })).toEqual(['its branch is not merged'])
   expect(retireBlockers({ ...CLEAN, ahead: 0, mergedPr: { kind: 'unknown', error: 'gh: auth' } })).toEqual([])
 })
@@ -102,7 +107,7 @@ test('archivePath names the archive after the main checkout and the last segment
 })
 
 test('formatPlan for a clean, merged worktree asks only for --yes', () => {
-  expect(formatPlan('fast-steps', { ...CLEAN, ahead: 1, mergedPr: { kind: 'merged', number: 24 } }, OCT_5)).toBe(
+  expect(formatPlan('fast-steps', { ...CLEAN, ahead: 1, mergedPr: { kind: 'merged', number: 24, heads: [HEAD] } }, OCT_5)).toBe(
     [
       '**Retire fast-steps** — nothing done yet',
       '- worktree: /repo/.claude/worktrees/fix-login',
@@ -110,6 +115,7 @@ test('formatPlan for a clean, merged worktree asks only for --yes', () => {
       '- uncommitted changes: none',
       '- archive: ~/.claude/ledger-archive/repo/2026-10-05-fix-login.md',
       "- then: git worktree remove, and the worktree's cc-dd-path build folders are deleted",
+      '- local branch: me/fix-login is deleted, because it is merged',
       '',
       'Add --yes to retire it.',
     ].join('\n'),
@@ -127,7 +133,7 @@ test('formatPlan for dirty, unmerged work asks for --yes --force and says why', 
 test('an ahead count git could not give counts as unmerged unless a merged PR exists, and the plan says why', () => {
   const unknown: WorktreeState = { ...CLEAN, ahead: { error: "fatal: bad revision 'origin/main..HEAD'" } }
   expect(retireBlockers(unknown)).toEqual(['its branch is not merged'])
-  expect(retireBlockers({ ...unknown, mergedPr: { kind: 'merged', number: 7 } })).toEqual([])
+  expect(retireBlockers({ ...unknown, mergedPr: { kind: 'merged', number: 7, heads: [] } })).toEqual([])
   expect(formatPlan('fast-steps', unknown, OCT_5).split('\n')[2]).toBe(
     "- branch: me/fix-login · could not compare with origin/main: fatal: bad revision 'origin/main..HEAD' · no merged PR",
   )
@@ -174,4 +180,44 @@ test('formatRetireFailed gives the failure, then what the script did before it',
     ['cc-worktree-retire failed (exit 128): fatal: contains modified files', '- archived /a.md'].join('\n'),
   )
   expect(formatRetireFailed('did not run: spawn bash ENOENT', '')).toBe('cc-worktree-retire did not run: spawn bash ENOENT')
+})
+
+test('isBranchMerged holds with no commits ahead or a merged PR that ends at HEAD, and never for a detached HEAD', () => {
+  expect(isBranchMerged(CLEAN)).toBe(true)
+  expect(isBranchMerged({ ...CLEAN, ahead: 2, mergedPr: { kind: 'merged', number: 24, heads: [HEAD] } })).toBe(true)
+  expect(isBranchMerged({ ...CLEAN, ahead: 2, mergedPr: { kind: 'merged', number: 24, heads: ['0ld0001', HEAD] } })).toBe(true)
+  expect(isBranchMerged({ ...CLEAN, ahead: 2, mergedPr: { kind: 'merged', number: 24, heads: ['0ld0001'] } })).toBe(false)
+  expect(isBranchMerged({ ...CLEAN, ahead: { error: 'bad revision' }, mergedPr: { kind: 'merged', number: 24, heads: [HEAD] } })).toBe(true)
+  expect(isBranchMerged({ ...CLEAN, ahead: { error: 'bad revision' }, mergedPr: { kind: 'merged', number: 24, heads: ['0ld0001'] } })).toBe(false)
+  expect(isBranchMerged({ ...CLEAN, ahead: 2 })).toBe(false)
+  expect(isBranchMerged({ ...CLEAN, ahead: { error: 'bad revision' } })).toBe(false)
+  expect(isBranchMerged({ ...CLEAN, ahead: 2, mergedPr: { kind: 'unknown', error: 'auth required' } })).toBe(false)
+  expect(isBranchMerged({ ...CLEAN, branch: '' })).toBe(false)
+})
+
+test('formatPlan says an unmerged branch is kept, and names no branch for a detached HEAD', () => {
+  expect(formatPlan('fast-steps', { ...CLEAN, ahead: 2 }, OCT_5).split('\n')).toContain('- local branch: me/fix-login is kept, because it is not merged')
+  expect(formatPlan('fast-steps', { ...CLEAN, branch: '' }, OCT_5)).not.toContain('local branch')
+})
+
+test('formatPlan retires a branch whose PR merged before its last commit, and keeps the branch', () => {
+  const lines = formatPlan('fast-steps', { ...CLEAN, ahead: 3, mergedPr: { kind: 'merged', number: 24, heads: ['0ld0001'] } }, OCT_5).split('\n')
+  expect(lines).toContain('- local branch: me/fix-login is kept, because it has commits that are not in its merged PR')
+  expect(lines.at(-1)).toBe('Add --yes to retire it.')
+})
+
+test('keptBranchReason says why the branch is kept', () => {
+  expect(keptBranchReason({ ...CLEAN, ahead: 2 })).toBe('it is not merged')
+  expect(keptBranchReason({ ...CLEAN, ahead: 2, mergedPr: { kind: 'merged', number: 24, heads: ['0ld0001'] } })).toBe(
+    'it has commits that are not in its merged PR',
+  )
+})
+
+test('formatRetired says which branch it kept, before the working directory note', () => {
+  const lines = formatRetired('fast-steps', SCRIPT_OUTPUT, true, { branch: 'me/fix-login', reason: 'it is not merged' }).split('\n')
+  expect(lines.slice(3)).toEqual([
+    '- kept branch me/fix-login, because it is not merged',
+    '',
+    "This session's working directory was removed with the worktree. Continue another task with /ledger:go <slug>, or run /ledger:close.",
+  ])
 })

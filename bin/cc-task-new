@@ -2,12 +2,17 @@
 # Starts a separate task: a new branch, its worktree under the main checkout's
 # .claude/worktrees/, and a task ledger filled from ledger.template.md.
 # Usage: cc-task-new <slug> [--goal <text>] [--branch <name>] [--base <ref> | --stack]
+#        cc-task-new --here [<slug>] [--goal <text>]
 # Works from the main checkout or from inside any linked worktree. Every check runs
 # before the worktree is created, and a later failure removes the worktree and
 # branch again, so a failure leaves nothing behind.
+# --here creates no branch or worktree: it adds a ledger to the linked worktree it
+# runs in. The slug defaults to the branch name without its owner prefix, the way
+# cc-worktree-retire names the archive.
 set -eu
 
-usage="usage: cc-task-new <slug> [--goal <text>] [--branch <name>] [--base <ref> | --stack]"
+usage="usage: cc-task-new <slug> [--goal <text>] [--branch <name>] [--base <ref> | --stack]
+       cc-task-new --here [<slug>] [--goal <text>]"
 
 fail() {
   echo "$1" >&2
@@ -19,7 +24,7 @@ is_slug() (
   [[ $1 =~ ^[a-z0-9][a-z0-9-]*$ ]]
 )
 
-slug="" goal="" branch="" base="" stack=""
+slug="" goal="" branch="" base="" stack="" here=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --goal|--branch|--base)
@@ -32,6 +37,7 @@ while [ $# -gt 0 ]; do
       shift 2
       ;;
     --stack) stack=1; shift ;;
+    --here) here=1; shift ;;
     -*) fail "unknown flag: $1"$'\n'"$usage" ;;
     *)
       [ -z "$slug" ] || fail "one slug only, got '$slug' and '$1'"$'\n'"$usage"
@@ -41,10 +47,10 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-[ -n "$slug" ] || fail "$usage"
-is_slug "$slug" || fail "slug must match ^[a-z0-9][a-z0-9-]*\$: $slug"
+[ -n "$slug" ] || [ -n "$here" ] || fail "$usage"
+[ -z "$slug" ] || is_slug "$slug" || fail "slug must match ^[a-z0-9][a-z0-9-]*\$: $slug"
 [ -z "$base" ] || [ -z "$stack" ] || fail "use --base or --stack, not both"
-branch="${branch:-$slug}"
+[ -z "$here" ] || [ -z "$base$stack$branch" ] || fail "--here keeps this worktree's branch and HEAD, so it takes no --base, --stack or --branch"
 
 self="$0"
 while [ -L "$self" ]; do
@@ -59,6 +65,57 @@ template="$(cd -P "$(dirname "$self")/.." && pwd)/ledger.template.md"
 
 common=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || fail "not inside a git repository: $(pwd)"
 main=$(dirname "$common")
+
+# Values travel through ENVIRON: awk -v and sed would rewrite backslashes and &.
+write_ledger() {
+  TASK_SLUG="$slug" TASK_GOAL="$goal" TASK_WORKTREE="$wt" TASK_BRANCH="$branch" TASK_BASE="$base @ $short" \
+    awk '
+      /^## / { section = $0 }
+      NR == 1 && /^# Task ledger — <slug>$/ { $0 = "# Task ledger — " ENVIRON["TASK_SLUG"] }
+      section == "## Goal" && /^<.*>$/ && ENVIRON["TASK_GOAL"] != "" { $0 = ENVIRON["TASK_GOAL"] }
+      section == "## Location" && /^- worktree: / { $0 = "- worktree: " ENVIRON["TASK_WORKTREE"] }
+      section == "## Location" && /^- branch: / { $0 = "- branch: " ENVIRON["TASK_BRANCH"] }
+      section == "## Location" && /^- base: / { $0 = "- base: " ENVIRON["TASK_BASE"] }
+      { print }
+    ' "$template" > "$ledger"
+}
+
+register_ledger() {
+  "$(dirname "$self")/cc-ledgers" upsert "$ledger" --repo "$(basename "$main")" --slug "$slug" --branch "$branch" ||
+    echo "warning: registry not updated" >&2
+}
+
+report() {
+  echo "worktree $wt"
+  echo "branch   $branch"
+  echo "base     $base @ $short"
+  echo "ledger   $ledger"
+  echo "start:   /ledger:go $slug"
+}
+
+if [ -n "$here" ]; then
+  [ "$(git rev-parse --path-format=absolute --git-dir)" != "$common" ] ||
+    fail "--here needs a linked worktree, and $(pwd) is in the main checkout: a ledger lives only in a linked worktree"
+  wt=$(git rev-parse --show-toplevel)
+  ledger="$wt/.claude/ledger.md"
+  [ ! -e "$ledger" ] || fail "this worktree already has a ledger: $ledger"
+  branch=$(git branch --show-current)
+  if [ -z "$slug" ]; then
+    slug="${branch##*/}"
+    [ -n "$slug" ] || slug=$(basename "$wt")
+    is_slug "$slug" || fail "the slug from this worktree's branch must match ^[a-z0-9][a-z0-9-]*\$: $slug; pass one: cc-task-new --here <slug>"
+  fi
+  branch="${branch:-detached HEAD}"
+  base="HEAD"
+  short=$(git rev-parse --short HEAD) || fail "this worktree has no commit yet: $wt"
+  mkdir -p "$wt/.claude"
+  write_ledger
+  register_ledger
+  report
+  exit 0
+fi
+
+branch="${branch:-$slug}"
 
 if [ -n "$stack" ]; then
   base=$(git branch --show-current)
@@ -84,23 +141,7 @@ wt=$(cd "$target" && pwd)
 ledger="$wt/.claude/ledger.md"
 mkdir -p "$wt/.claude"
 
-# Values travel through ENVIRON: awk -v and sed would rewrite backslashes and &.
-TASK_SLUG="$slug" TASK_GOAL="$goal" TASK_WORKTREE="$wt" TASK_BRANCH="$branch" TASK_BASE="$base @ $short" \
-  awk '
-    /^## / { section = $0 }
-    NR == 1 && /^# Task ledger — <slug>$/ { $0 = "# Task ledger — " ENVIRON["TASK_SLUG"] }
-    section == "## Goal" && /^<.*>$/ && ENVIRON["TASK_GOAL"] != "" { $0 = ENVIRON["TASK_GOAL"] }
-    section == "## Location" && /^- worktree: / { $0 = "- worktree: " ENVIRON["TASK_WORKTREE"] }
-    section == "## Location" && /^- branch: / { $0 = "- branch: " ENVIRON["TASK_BRANCH"] }
-    section == "## Location" && /^- base: / { $0 = "- base: " ENVIRON["TASK_BASE"] }
-    { print }
-  ' "$template" > "$ledger"
-"$(dirname "$self")/cc-ledgers" upsert "$ledger" --repo "$(basename "$main")" --slug "$slug" --branch "$branch" ||
-  echo "warning: registry not updated" >&2
+write_ledger
+register_ledger
 trap - EXIT
-
-echo "worktree $wt"
-echo "branch   $branch"
-echo "base     $base @ $short"
-echo "ledger   $ledger"
-echo "start:   /ledger:go $slug"
+report

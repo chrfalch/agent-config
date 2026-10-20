@@ -18,7 +18,7 @@ It ships five things:
   They warn when the deployed config is old, and allow a retry of a denied
   read-only call. See
   [The hooks](docs/installation.md#the-hooks).
-- **A ledger mod** — a Claude Code plugin that adds `/ledger` and nine
+- **A ledger mod** — a Claude Code plugin that adds `/ledger` and eleven
   `/ledger:` commands. `/ledger:help` prints one line for each.
   `/ledger` prints each task ledger's goal, current step and next step.
   `/ledger:task` starts a separate task with its own worktree and ledger.
@@ -35,7 +35,12 @@ It ships five things:
   `/ledger:worktrees prune-orphans --yes` deletes the ones whose project no
   longer exists.
   `/ledger:retire [<slug>]` shows what retiring a task would archive and remove.
-  `--yes` archives the task's ledger, then removes its worktree.
+  `--yes` archives the task's ledger, then removes its worktree. It also deletes
+  the local branch when every commit on it is in the default branch or in a
+  merged PR.
+  `/ledger:task --here` gives the current worktree a ledger.
+  `/ledger:park <reason>` marks a task parked; `/ledger:go` clears the mark.
+  `/ledger:archive [<term>] [--all]` searches the archived ledgers.
   `/ledger:all` prints every task ledger on the machine, from every repo,
   active and archived. `/ledger:all --scan` rebuilds that list from disk.
 
@@ -190,7 +195,7 @@ want a quick look instead of a full answer.
 | `/ledger:worktrees prune-orphans --yes` | Deletes those folders. It never deletes shared caches or folders without a recorded project. |
 | `/ledger:retire [<slug>]` | Lists what retiring the task would do: its worktree, branch, uncommitted changes and archive path. It deletes nothing. Without a slug it takes the task this session is in. |
 | `/ledger:retire [<slug>] --yes` | Copies the task's ledger to `~/.claude/ledger-archive/<repo>/`, removes its worktree and deletes the worktree's build folders. It refuses uncommitted changes or an unmerged branch unless you add `--force`. |
-| `/ledger:all` | Prints a table of every task ledger on the machine, from every repo, active and archived, with its next step. The list lives in `~/.claude/ledgers.json`. A new task, a retire and each session start add to it. |
+| `/ledger:all` | Prints a table of every task ledger on the machine, from every repo, active and archived, with its next step. A parked task shows as `parked`. The list lives in `~/.claude/ledgers.json`. A new task, a retire and each session start add to it. |
 | `/ledger:all --scan` | Rebuilds `~/.claude/ledgers.json` from the ledgers under `~/repos` and `~/issues` and the archive in `~/.claude/ledger-archive/`, then prints the table. |
 
 A build folder whose project is on a disk that is not connected goes in its own group, **Disk not connected**, and is never deleted.

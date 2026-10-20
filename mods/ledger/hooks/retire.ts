@@ -1,3 +1,4 @@
+import { isoDate } from './ledger'
 import { basename } from './worktrees'
 
 export type RetireArgs = { kind: 'retire'; slug: string | null; confirmed: boolean; forced: boolean } | { kind: 'usage' }
@@ -44,8 +45,10 @@ export function parseCount(stdout: string): number | null {
   return /^\d+$/.test(text) ? Number(text) : null
 }
 
-export type MergedPr = { kind: 'merged'; number: number } | { kind: 'none' } | { kind: 'unknown'; error: string }
+/** `heads` holds the head commit of each merged PR from a branch with this name. */
+export type MergedPr = { kind: 'merged'; number: number; heads: string[] } | { kind: 'none' } | { kind: 'unknown'; error: string }
 
+/** Reads `gh pr list --json number,headRefOid`. */
 export function parseMergedPr(stdout: string): MergedPr {
   let parsed: unknown
   try {
@@ -54,10 +57,12 @@ export function parseMergedPr(stdout: string): MergedPr {
     parsed = null
   }
   if (!Array.isArray(parsed)) return { kind: 'unknown', error: 'gh pr list printed something that is not a JSON list' }
-  const [first]: unknown[] = parsed
+  const prs = parsed.map(pr => (pr ?? {}) as Record<string, unknown>)
+  const [first] = prs
   if (first === undefined) return { kind: 'none' }
-  const { number } = (first ?? {}) as Record<string, unknown>
-  return typeof number === 'number' ? { kind: 'merged', number } : { kind: 'unknown', error: 'gh pr list printed a PR without a number' }
+  if (typeof first.number !== 'number') return { kind: 'unknown', error: 'gh pr list printed a PR without a number' }
+  const heads = prs.map(({ headRefOid }) => headRefOid).filter(head => typeof head === 'string')
+  return { kind: 'merged', number: first.number, heads }
 }
 
 export type WorktreeState = {
@@ -65,6 +70,8 @@ export type WorktreeState = {
   mainCheckout: string
   /** Empty on a detached HEAD, as `git branch --show-current` prints it. */
   branch: string
+  /** The commit HEAD points at; empty on a branch with no commits yet. */
+  head: string
   defaultBranch: string
   /** Commits ahead of origin/<defaultBranch>, or why git could not count them. */
   ahead: number | { error: string }
@@ -74,17 +81,31 @@ export type WorktreeState = {
 
 const plural = (count: number, noun: string): string => `${count} ${noun}${count === 1 ? '' : 's'}`
 
-/** Why retiring needs --force; empty when it does not. A gh failure counts as no merged PR, and an unknown ahead count as commits ahead. */
-export function retireBlockers({ dirty, ahead, mergedPr }: WorktreeState): string[] {
-  const hasCommitsAhead = typeof ahead !== 'number' || ahead > 0
-  return [
-    dirty > 0 ? `it has ${plural(dirty, 'uncommitted change')}` : '',
-    hasCommitsAhead && mergedPr.kind !== 'merged' ? 'its branch is not merged' : '',
-  ].filter(reason => reason !== '')
+/** A gh failure counts as no merged PR, and an unknown ahead count as commits ahead. */
+const isWorkMerged = ({ ahead, mergedPr }: WorktreeState): boolean => ahead === 0 || mergedPr.kind === 'merged'
+
+const isHeadMerged = ({ head, mergedPr }: WorktreeState): boolean => head !== '' && mergedPr.kind === 'merged' && mergedPr.heads.includes(head)
+
+/**
+ * Whether retiring may delete the local branch at `head`. The script deletes it without git's merge check, because a squash-merged
+ * branch is never an ancestor of main, and keeps it when it no longer points at `head`.
+ * A merged PR counts only when it ended at HEAD: the branch name may have been reused, or committed to after the merge.
+ */
+export const isBranchMerged = (state: WorktreeState): boolean => state.branch !== '' && (state.ahead === 0 || isHeadMerged(state))
+
+/** Why retiring keeps a branch that isBranchMerged does not hold for. */
+export function keptBranchReason(state: WorktreeState): string {
+  if (state.head === '') return 'it has no commits yet'
+  return isWorkMerged(state) ? 'it has commits that are not in its merged PR' : 'it is not merged'
 }
 
-const isoDate = (date: Date): string =>
-  [date.getFullYear(), date.getMonth() + 1, date.getDate()].map(part => String(part).padStart(2, '0')).join('-')
+/** Why retiring needs --force; empty when it does not. */
+export function retireBlockers(state: WorktreeState): string[] {
+  return [
+    state.dirty > 0 ? `it has ${plural(state.dirty, 'uncommitted change')}` : '',
+    isWorkMerged(state) ? '' : 'its branch is not merged',
+  ].filter(reason => reason !== '')
+}
 
 /** Where cc-worktree-retire copies the ledger, named the way the script names it. */
 export function archivePath({ path, mainCheckout, branch }: WorktreeState, today: Date): string {
@@ -117,6 +138,7 @@ export function formatPlan(slug: string, state: WorktreeState, today: Date): str
     `- uncommitted changes: ${state.dirty || 'none'}`,
     `- archive: ${archivePath(state, today)}`,
     "- then: git worktree remove, and the worktree's cc-dd-path build folders are deleted",
+    ...(state.branch ? [`- local branch: ${state.branch} is ${isBranchMerged(state) ? 'deleted, because it is merged' : `kept, because ${keptBranchReason(state)}`}`] : []),
     '',
     blockers.length === 0 ? 'Add --yes to retire it.' : `Add --yes --force to retire it: ${blockers.join(' and ')}`,
   ].join('\n')
@@ -134,8 +156,10 @@ const scriptLines = (stdout: string): string[] =>
     .filter(line => line.trim() !== '')
     .map(line => `- ${line.trimEnd()}`)
 
-export function formatRetired(slug: string, stdout: string, isCwdRemoved: boolean): string {
+/** `kept` is the branch the script was not asked to delete, and why. */
+export function formatRetired(slug: string, stdout: string, isCwdRemoved: boolean, kept?: { branch: string; reason: string }): string {
   const lines = [`**Retired ${slug}**`, ...scriptLines(stdout)]
+  if (kept) lines.push(`- kept branch ${kept.branch}, because ${kept.reason}`)
   if (isCwdRemoved) {
     lines.push('', "This session's working directory was removed with the worktree. Continue another task with /ledger:go <slug>, or run /ledger:close.")
   }

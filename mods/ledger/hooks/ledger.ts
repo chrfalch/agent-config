@@ -222,11 +222,18 @@ export type ChildStatus = { slug: string; status: string; next: string }
 export type Family = { parent?: string; children?: ChildStatus[] }
 
 // One field per line, because a slug and a path can both hold spaces. go.md reads this format.
-export function goArgs(target: string, ledgerPath: string | undefined, parked: Parked | null = null, family: Family = {}): string {
+export function goArgs(
+  target: string,
+  ledgerPath: string | undefined,
+  parked: Parked | null = null,
+  family: Family = {},
+  promotedWorktree?: string,
+): string {
   const fields = [`task: ${target}`, `ledger: ${ledgerPath ?? 'none'}`]
   if (parked) fields.push(`parked: ${parked.date} — ${parked.reason}`)
   if (family.parent) fields.push(`parent: ${family.parent}`)
   if (family.children?.length) fields.push(`children: ${family.children.map(({ slug, status }) => `${slug} (${status})`).join(', ')}`)
+  if (promotedWorktree) fields.push(`promoted: ${promotedWorktree}`)
   return fields.join('\n')
 }
 
@@ -254,6 +261,25 @@ export function unknownTaskMessage(target: string, tasks: TaskName[], outcome = 
   return `No task ledger is named "${target}". ${outcome} Task ledgers: ${taskList(tasks) || 'none'}.`
 }
 
+// Script errors have no final period.
+const sentence = (text: string): string => text.replace(/[.\s]*$/, '.')
+
+export function promoteFailedMessage(target: string, error: string): string {
+  return `Could not start backlog task ${target}. ${sentence(error)} ${UNCHANGED}`
+}
+
+export function promotedThenFailedMessage(target: string, worktree: string, error: string): string {
+  return `Promoted backlog task ${target}: its branch, worktree and ledger are at ${worktree}. Then this failed: ${sentence(error)} The session was not cleared.`
+}
+
+export function otherRepositoryMessage(target: string, repo: string, main: string): string {
+  return `Backlog task ${target} belongs to the ${repo} repository, with its main checkout at ${main}. ${UNCHANGED} Run /ledger:go ${target} from a session in that repository.`
+}
+
+export function backlogUncheckedMessage(target: string, tasks: TaskName[], error: string): string {
+  return `${unknownTaskMessage(target, tasks)} The backlog could not be checked: ${sentence(error)}`
+}
+
 export function unparkFailedMessage(target: string, error: string): string {
   return `Could not remove the parked marker from ${target}. ${error} ${UNCHANGED}`
 }
@@ -278,16 +304,16 @@ export function retireHint(slug: string, branch: BranchState | null): string {
 
 export const HELP = [
   "- `/ledger` — Show each task ledger's goal, current step and next step. `/ledger <name>` shows one.",
-  '- `/ledger:task` — Start a separate task with its own git worktree, branch and ledger. With no current ledger, it continues in this session. `--here` adds a ledger to this worktree instead.',
+  '- `/ledger:task` — Add a separate task to the backlog: a ledger only, with no branch or worktree yet. `/ledger:go <slug>` starts it. With no current ledger, it starts the task at once and continues in this session. `--here` adds a ledger to this worktree instead.',
   "- `/ledger:update` — Write the latest results to this task's ledger. Without one, it points to `/ledger:task`.",
   "- `/ledger:next` — Write this task's ledger, clear the session, and continue from the next step. When every step is done, it first says how to retire the task.",
   "- `/ledger:close` — Write this task's ledger, then clear the session.",
-  "- `/ledger:go <slug>` — Write this task's ledger, clear the session, and continue in the task named <slug>. When every step of this task is done, it first says how to retire it.",
+  "- `/ledger:go <slug>` — Write this task's ledger, clear the session, and continue in the task named <slug>. A backlog task first gets its branch and worktree, which works only from a session in its repository. When every step of this task is done, it first says how to retire it.",
   "- `/ledger:park [<slug>] <reason>` — Mark a task parked. Without a slug it writes this task's ledger, parks it, then clears the session.",
   "- `/ledger:parent [<slug>]` — Show a parent task and each child's status and next step; without a slug, this task or its parent. `<slug> add <child>` and `<slug> remove <child>` change its children.",
   "- `/ledger:worktrees` — Show each linked git worktree's size, last commit, dirty files, ledger and PR.",
   '- `/ledger:retire [<slug>]` — Show what retiring a task would archive and remove; `--yes` archives its ledger, removes its worktree, and deletes its branch when all of its commits are merged.',
   "- `/ledger:archive [<term>]` — List this repo's archived ledgers, newest first; a term keeps those that contain it, and `--all` lists every repo.",
-  '- `/ledger:all` — Show every task ledger on this machine, active and archived; `--scan` rebuilds the list from disk.',
+  '- `/ledger:all` — Show every task ledger on this machine, active, backlog and archived; `--scan` rebuilds the list from disk.',
   '- `/ledger:help` — Show this list.',
 ].join('\n')

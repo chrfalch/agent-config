@@ -100,8 +100,11 @@ The ledger mod is a Claude Code plugin in `mods/ledger`. It adds twelve
 commands:
 
 - `/ledger` prints each task ledger's goal, current step and next step.
-- `/ledger:task` starts a separate task with its own git worktree, branch and
-  ledger. `/ledger:task --here [<slug>]` adds a ledger to the linked worktree
+- `/ledger:task` writes a backlog ledger for a separate task, with no git
+  worktree or branch yet. `/ledger:go <slug>` makes them and starts the task.
+  When no task is open, `/ledger:task` makes them at once and continues in
+  the same session. `/ledger:task --stack` makes them at once, on top of the current branch.
+  `/ledger:task --here [<slug>]` adds a ledger to the linked worktree
   the session is in, without a new branch or worktree.
 - `/ledger:update` writes the latest results to the current task's ledger. When
   there is no ledger, it creates nothing and points you to `/ledger:task`.
@@ -112,7 +115,12 @@ commands:
 - `/ledger:go <name>` does the same as `/ledger:next`, but sends
   `go <name>` for the task you name. The name must be the name of a task
   ledger. Without a ledger in the session, it writes nothing and still
-  switches. When that task is parked, it removes the parked mark.
+  switches. When that task is parked, it removes the parked mark. When that
+  task is in the backlog, it first makes its branch and worktree. The branch
+  starts at the `--base` ref given when the task was written. Without one, it
+  starts at the commit that `origin/HEAD` points to, as of the last fetch.
+  Without `origin/HEAD`, it starts at the branch the main checkout is on. It
+  refuses a backlog task of another repo.
 - `/ledger:park [<slug>] <reason>` marks a task parked, with the date and the
   reason, as the first line under `## Next step`. `/ledger` then shows it as
   parked. Without a slug it does the same as `/ledger:close` for the current
@@ -130,7 +138,7 @@ commands:
   `~/.claude/ledger-archive/`, newest first. A term keeps the ledgers that
   contain it. `--all` lists the archive of every repo.
 - `/ledger:all` lists every task ledger on this machine, from every repo,
-  active, parked and archived, with its next step. `--scan` rebuilds that
+  active, parked, backlog and archived, with its next step. `--scan` rebuilds that
   list from disk.
 - `/ledger:help` prints one line for each of these commands.
 

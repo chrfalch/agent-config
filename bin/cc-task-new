@@ -1,7 +1,15 @@
 #!/bin/bash
-# Starts a separate task: a new branch, its worktree under the main checkout's
-# .claude/worktrees/, and a task ledger filled from ledger.template.md.
+# Starts a separate task. A new task is a backlog task: a ledger filled from
+# ledger.template.md at ~/.claude/ledger-backlog/<repo>/<slug>.md, with no branch or
+# worktree yet. Its Location section records the main checkout, and the --branch and
+# --base given, for the promotion.
+# --promote turns a backlog task into a worktree task: a new branch, its worktree
+# under the main checkout's .claude/worktrees/, and the ledger moved into it. It exits
+# 2 when there is no such backlog task, 3 when the task belongs to another main
+# checkout with the same folder name, and 4 when its ledger names no main checkout.
+# --stack makes the worktree task at once, on top of the current branch.
 # Usage: cc-task-new <slug> [--goal <text>] [--branch <name>] [--base <ref> | --stack]
+#        cc-task-new --promote <slug>
 #        cc-task-new --here [<slug>] [--goal <text>]
 # Works from the main checkout or from inside any linked worktree. Every check runs
 # before the worktree is created, and a later failure removes the worktree and
@@ -12,6 +20,7 @@
 set -eu
 
 usage="usage: cc-task-new <slug> [--goal <text>] [--branch <name>] [--base <ref> | --stack]
+       cc-task-new --promote <slug>
        cc-task-new --here [<slug>] [--goal <text>]"
 
 fail() {
@@ -24,7 +33,7 @@ is_slug() (
   [[ $1 =~ ^[a-z0-9][a-z0-9-]*$ ]]
 )
 
-slug="" goal="" branch="" base="" stack="" here=""
+slug="" goal="" branch="" base="" stack="" here="" promote=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --goal|--branch|--base)
@@ -38,6 +47,7 @@ while [ $# -gt 0 ]; do
       ;;
     --stack) stack=1; shift ;;
     --here) here=1; shift ;;
+    --promote) promote=1; shift ;;
     -*) fail "unknown flag: $1"$'\n'"$usage" ;;
     *)
       [ -z "$slug" ] || fail "one slug only, got '$slug' and '$1'"$'\n'"$usage"
@@ -47,6 +57,8 @@ while [ $# -gt 0 ]; do
   esac
 done
 
+[ -z "$promote" ] || [ -z "$goal$branch$base$stack$here" ] ||
+  fail "--promote takes only a slug: the backlog ledger holds the goal, branch and base"$'\n'"$usage"
 [ -n "$slug" ] || [ -n "$here" ] || fail "$usage"
 [ -z "$slug" ] || is_slug "$slug" || fail "slug must match ^[a-z0-9][a-z0-9-]*\$: $slug"
 [ -z "$base" ] || [ -z "$stack" ] || fail "use --base or --stack, not both"
@@ -65,23 +77,45 @@ template="$(cd -P "$(dirname "$self")/.." && pwd)/ledger.template.md"
 
 common=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || fail "not inside a git repository: $(pwd)"
 main=$(dirname "$common")
+backlog="$HOME/.claude/ledger-backlog/$(basename "$main")/$slug.md"
+wt="" short=""
 
 # Values travel through ENVIRON: awk -v and sed would rewrite backslashes and &.
+# An empty value keeps the line of the source as it is. The main line is dropped,
+# and written again only when $2 names the main checkout. Lines are joined by hand
+# because print would add a final newline that a hand-edited source may lack.
 write_ledger() {
-  TASK_SLUG="$slug" TASK_GOAL="$goal" TASK_WORKTREE="$wt" TASK_BRANCH="$branch" TASK_BASE="$base @ $short" \
+  TASK_FINAL_NEWLINE=$([ -n "$(tail -c 1 "$1")" ] || echo 1) \
+  TASK_SLUG="$slug" TASK_GOAL="$goal" TASK_MAIN="${2-}" TASK_WORKTREE="$wt" TASK_BRANCH="$branch" TASK_BASE="$base${short:+ @ $short}" \
     awk '
+      function emit(line) { printf "%s%s", separator, line; separator = "\n" }
       /^## / { section = $0 }
       NR == 1 && /^# Task ledger — <slug>$/ { $0 = "# Task ledger — " ENVIRON["TASK_SLUG"] }
       section == "## Goal" && /^<.*>$/ && ENVIRON["TASK_GOAL"] != "" { $0 = ENVIRON["TASK_GOAL"] }
-      section == "## Location" && /^- worktree: / { $0 = "- worktree: " ENVIRON["TASK_WORKTREE"] }
-      section == "## Location" && /^- branch: / { $0 = "- branch: " ENVIRON["TASK_BRANCH"] }
-      section == "## Location" && /^- base: / { $0 = "- base: " ENVIRON["TASK_BASE"] }
-      { print }
-    ' "$template" > "$ledger"
+      section == "## Location" && /^- main: / { next }
+      section == "## Location" && /^- worktree: / && ENVIRON["TASK_WORKTREE"] != "" { $0 = "- worktree: " ENVIRON["TASK_WORKTREE"] }
+      section == "## Location" && /^- branch: / && ENVIRON["TASK_BRANCH"] != "" { $0 = "- branch: " ENVIRON["TASK_BRANCH"] }
+      section == "## Location" && /^- base: / && ENVIRON["TASK_BASE"] != "" { $0 = "- base: " ENVIRON["TASK_BASE"] }
+      { emit($0) }
+      $0 == "## Location" && ENVIRON["TASK_MAIN"] != "" { emit("- main: " ENVIRON["TASK_MAIN"]) }
+      END { if (ENVIRON["TASK_FINAL_NEWLINE"] != "") printf "\n" }
+    ' "$1" > "$ledger"
+}
+
+# Prints nothing for a missing field or a template placeholder.
+location_field() {
+  awk -v key="- $1: " '
+    /^## / { section = $0 }
+    section == "## Location" && index($0, key) == 1 {
+      value = substr($0, length(key) + 1)
+      if (value !~ /^<.*>$/) print value
+      exit
+    }
+  ' "$2"
 }
 
 register_ledger() {
-  "$(dirname "$self")/cc-ledgers" upsert "$ledger" --repo "$(basename "$main")" --slug "$slug" --branch "$branch" ||
+  "$(dirname "$self")/cc-ledgers" upsert "$ledger" --repo "$(basename "$main")" --slug "$slug" --branch "$branch" "$@" ||
     echo "warning: registry not updated" >&2
 }
 
@@ -90,7 +124,14 @@ report() {
   echo "branch   $branch"
   echo "base     $base @ $short"
   echo "ledger   $ledger"
-  echo "start:   /ledger:go $slug"
+  [ -n "$promote" ] || echo "start:   /ledger:go $slug"
+}
+
+check_target() {
+  git -C "$main" check-ref-format --branch "$1" >/dev/null 2>&1 || fail "not a valid branch name: $1"
+  if git -C "$main" show-ref --verify --quiet "refs/heads/$1"; then fail "branch already exists: $1"; fi
+  target="$main/.claude/worktrees/$slug"
+  [ ! -e "$target" ] || fail "folder already exists: $target"
 }
 
 if [ -n "$here" ]; then
@@ -109,10 +150,44 @@ if [ -n "$here" ]; then
   base="HEAD"
   short=$(git rev-parse --short HEAD) || fail "this worktree has no commit yet: $wt"
   mkdir -p "$wt/.claude"
-  write_ledger
+  write_ledger "$template"
   register_ledger
   report
   exit 0
+fi
+
+if [ -z "$stack$promote" ]; then
+  [ ! -e "$backlog" ] || fail "backlog task already exists: $backlog"
+  check_target "${branch:-$slug}"
+  [ -z "$base" ] || git -C "$main" rev-parse --quiet --verify "$base^{commit}" >/dev/null || fail "unknown --base ref: $base"
+  ledger="$backlog"
+  mkdir -p "$(dirname "$ledger")"
+  write_ledger "$template" "$main"
+  register_ledger
+  echo "ledger:  $ledger"
+  echo "status:  backlog"
+  echo "start:   /ledger:go $slug"
+  exit 0
+fi
+
+source="$template"
+if [ -n "$promote" ]; then
+  if [ ! -f "$backlog" ]; then
+    echo "no backlog task $slug" >&2
+    exit 2
+  fi
+  owner=$(location_field main "$backlog")
+  if [ -z "$owner" ]; then
+    echo "backlog ledger $backlog has no main line" >&2
+    exit 4
+  fi
+  if [ "$owner" != "$main" ]; then
+    echo "backlog task $slug belongs to $owner; run /ledger:go $slug from a session in that repository" >&2
+    exit 3
+  fi
+  branch=$(location_field branch "$backlog")
+  base=$(location_field base "$backlog")
+  source="$backlog"
 fi
 
 branch="${branch:-$slug}"
@@ -125,14 +200,10 @@ elif [ -z "$base" ]; then
     base=$(git -C "$main" branch --show-current)
   [ -n "$base" ] || fail "no origin/HEAD and $main is on a detached HEAD; pass --base <ref>"
 fi
-sha=$(git rev-parse --quiet --verify "$base^{commit}") || fail "unknown --base ref: $base"
-short=$(git rev-parse --short "$sha")
+sha=$(git -C "$main" rev-parse --quiet --verify "$base^{commit}") || fail "unknown --base ref: $base"
+short=$(git -C "$main" rev-parse --short "$sha")
 
-git check-ref-format --branch "$branch" >/dev/null 2>&1 || fail "not a valid branch name: $branch"
-if git show-ref --verify --quiet "refs/heads/$branch"; then fail "branch already exists: $branch"; fi
-
-target="$main/.claude/worktrees/$slug"
-[ ! -e "$target" ] || fail "folder already exists: $target"
+check_target "$branch"
 
 # A commit, not the ref, so a branch made from origin/main does not track it.
 git -C "$main" worktree add --quiet -b "$branch" "$target" "$sha"
@@ -141,7 +212,12 @@ wt=$(cd "$target" && pwd)
 ledger="$wt/.claude/ledger.md"
 mkdir -p "$wt/.claude"
 
-write_ledger
-register_ledger
+write_ledger "$source"
+if [ -n "$promote" ]; then
+  rm "$backlog"
+  register_ledger --replaces "$backlog"
+else
+  register_ledger
+fi
 trap - EXIT
 report

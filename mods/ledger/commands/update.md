@@ -22,5 +22,4 @@ is in a task worktree. Update that ledger:
    verdict there is no clear point: accept the work and finish.
 
 If `.claude/ledger.md` does not exist, create nothing. Tell the operator to use
-`/ledger:task <what the task is>`. A ledger lives only in a task worktree, and
-this command only saves an open task.
+`/ledger:task <what the task is>`. This command only saves an open task.

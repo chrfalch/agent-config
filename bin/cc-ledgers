@@ -1,18 +1,21 @@
 #!/usr/bin/env node
-// Keeps ~/.claude/ledgers.json: one entry for every task ledger on this machine, active or archived.
-// Usage: cc-ledgers upsert <ledger>... [--repo <name>] [--slug <slug>] [--branch <name>] [--parent <slug>]  (flags with one ledger only)
+// Keeps ~/.claude/ledgers.json: one entry for every task ledger on this machine, backlog, active or archived.
+// Usage: cc-ledgers upsert <ledger>... [--repo <name>] [--slug <slug>] [--branch <name>] [--parent <slug>] [--replaces <ledger>]  (flags with one ledger only)
 //        cc-ledgers archive <ledger> <archive-copy>
 //        cc-ledgers list [--json]
 //        cc-ledgers scan [--json] [<folder>...]
 // An active entry is known by its ledger path, an archived one by its archive path: a worktree
 // folder can be reused by a later task, and that must not overwrite the archived one.
+// A ledger at ~/.claude/ledger-backlog/<repo>/<slug>.md is a backlog task; its Location section names
+// its main checkout. Promotion deletes that file; --replaces names it, so the active entry takes over
+// the backlog entry's created time.
 'use strict';
 const { spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
 
 const usage = [
-  'usage: cc-ledgers upsert <ledger>... [--repo <name>] [--slug <slug>] [--branch <name>] [--parent <slug>]  (flags with one ledger only)',
+  'usage: cc-ledgers upsert <ledger>... [--repo <name>] [--slug <slug>] [--branch <name>] [--parent <slug>] [--replaces <ledger>]  (flags with one ledger only)',
   '       cc-ledgers archive <ledger> <archive-copy>',
   '       cc-ledgers list [--json]',
   '       cc-ledgers scan [--json] [<folder>...]',
@@ -21,6 +24,7 @@ const usage = [
 const home = process.env.HOME || fail('HOME is not set');
 const registry = path.join(home, '.claude', 'ledgers.json');
 const archiveRoot = path.join(home, '.claude', 'ledger-archive');
+const backlogRoot = path.join(home, '.claude', 'ledger-backlog');
 const SKIPPED = new Set(['node_modules', '.git', 'Pods', 'DerivedData', 'build', 'dist']);
 const MAX_DEPTH = 7;
 
@@ -84,7 +88,7 @@ function print(entries, json) {
   }
 }
 
-function entry({ repo, slug, path: ledger, branch, parent, status, created, updated, archivePath }) {
+function entry({ repo, slug, path: ledger, branch, parent, status, main, created, updated, archivePath }) {
   return {
     repo,
     slug,
@@ -92,6 +96,7 @@ function entry({ repo, slug, path: ledger, branch, parent, status, created, upda
     branch,
     ...(parent ? { parent } : {}),
     status,
+    ...(main ? { main } : {}),
     created,
     updated,
     ...(status === 'archived' ? { archivePath } : {}),
@@ -99,6 +104,13 @@ function entry({ repo, slug, path: ledger, branch, parent, status, created, upda
 }
 
 const isActive = (ledger) => (e) => e.status === 'active' && e.path === ledger;
+const isBacklog = (ledger) => (e) => e.status === 'backlog' && e.path === ledger;
+const inBacklog = (ledger) => path.dirname(path.dirname(ledger)) === backlogRoot;
+// A backlog task of another repo with the same folder name has the same backlog path.
+const promotedTo = (ledger) => (e) => {
+  const worktree = path.dirname(path.dirname(ledger));
+  return e.main !== undefined && path.join(e.main, '.claude', 'worktrees', path.basename(worktree)) === worktree;
+};
 const isArchived = (copy) => (e) => e.status === 'archived' && e.archivePath === copy;
 
 // Same match as slug() in hooks/ledger-list.sh.
@@ -112,7 +124,7 @@ function location(text) {
     const value = section?.match(new RegExp(`^- ${name}:[ \\t]*(.*)$`, 'm'))?.[1].trim() ?? '';
     return /^(<.*>)?$/.test(value) ? undefined : value;
   };
-  return { worktree: field('worktree'), branch: field('branch'), parent: field('parent') };
+  return { worktree: field('worktree'), branch: field('branch'), parent: field('parent'), main: field('main') };
 }
 
 function bornAt(stat) {
@@ -146,6 +158,21 @@ function activeEntry(ledger, given, previous) {
   });
 }
 
+function backlogEntry(ledger, given, previous) {
+  const stat = fs.statSync(ledger);
+  const { branch, main } = location(fs.readFileSync(ledger, 'utf8'));
+  return entry({
+    repo: given.repo ?? path.basename(path.dirname(ledger)),
+    slug: given.slug ?? path.basename(ledger, '.md'),
+    path: ledger,
+    branch: given.branch ?? branch ?? '',
+    status: 'backlog',
+    main,
+    created: previous?.created ?? bornAt(stat),
+    updated: stat.mtime.toISOString(),
+  });
+}
+
 function archivedEntry(copy, fallbackLedger, previous) {
   const stat = fs.statSync(copy);
   const text = fs.readFileSync(copy, 'utf8');
@@ -167,7 +194,7 @@ function upsert(args) {
   const given = {};
   const ledgers = [];
   for (let i = 0; i < args.length; i++) {
-    const flag = { '--repo': 'repo', '--slug': 'slug', '--branch': 'branch', '--parent': 'parent' }[args[i]];
+    const flag = { '--repo': 'repo', '--slug': 'slug', '--branch': 'branch', '--parent': 'parent', '--replaces': 'replaces' }[args[i]];
     if (flag && i + 1 < args.length) given[flag] = args[++i];
     else if (!flag && !args[i].startsWith('-')) ledgers.push(path.resolve(args[i]));
     else fail(usage);
@@ -178,10 +205,16 @@ function upsert(args) {
   for (const ledger of missing) console.error(`no ledger at ${ledger}`);
   const found = ledgers.filter(isFile);
   if (found.length > 0) {
-    let { entries } = readRegistry({ strict: true });
+    const replaces = given.replaces && isBacklog(path.resolve(given.replaces));
+    let { entries } = readRegistry({ strict: true, keep: replaces || undefined });
     for (const ledger of found) {
-      const previous = entries.find(isActive(ledger));
-      entries = [...entries.filter((e) => e !== previous), activeEntry(ledger, given, previous)];
+      const backlog = inBacklog(ledger);
+      const replaced = replaces && entries.find((e) => replaces(e) && promotedTo(ledger)(e));
+      const previous = entries.find((backlog ? isBacklog : isActive)(ledger)) ?? replaced;
+      entries = [
+        ...entries.filter((e) => e !== previous && e !== replaced),
+        (backlog ? backlogEntry : activeEntry)(ledger, given, previous),
+      ];
     }
     writeRegistry(entries);
   }
@@ -239,13 +272,13 @@ function listFolder(folder) {
   }
 }
 
-function archiveCopies() {
-  return listFolder(archiveRoot)
+function repoFiles(root) {
+  return listFolder(root)
     .filter((repo) => repo.isDirectory())
     .flatMap((repo) =>
-      listFolder(path.join(archiveRoot, repo.name))
+      listFolder(path.join(root, repo.name))
         .filter((file) => file.isFile() && file.name.endsWith('.md'))
-        .map((file) => path.join(archiveRoot, repo.name, file.name)),
+        .map((file) => path.join(root, repo.name, file.name)),
     );
 }
 
@@ -259,11 +292,13 @@ function scan(args) {
   const ledgers = new Set();
   for (const root of roots) findLedgers(root, 1, ledgers);
   const active = [...ledgers].map((ledger) => activeEntry(ledger, {}, previous.find(isActive(ledger))));
-  const archived = archiveCopies().map((copy) => archivedEntry(copy, '', previous.find(isArchived(copy))));
+  const archived = repoFiles(archiveRoot).map((copy) => archivedEntry(copy, '', previous.find(isArchived(copy))));
+  const backlog = repoFiles(backlogRoot).map((ledger) => backlogEntry(ledger, {}, previous.find(isBacklog(ledger))));
 
-  writeRegistry([...active, ...archived]);
-  console.error(`rebuilt ${registry}: ${active.length} active, ${archived.length} archived`);
-  print([...active, ...archived], json);
+  writeRegistry([...active, ...archived, ...backlog]);
+  const backlogCount = backlog.length > 0 ? `, ${backlog.length} backlog` : '';
+  console.error(`rebuilt ${registry}: ${active.length} active, ${archived.length} archived${backlogCount}`);
+  print([...active, ...archived, ...backlog], json);
 }
 
 const commands = { upsert, archive, list, scan };

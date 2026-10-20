@@ -190,3 +190,64 @@ test('/ledger:all shows a child under its parent in the same repo, and any other
     ].join('\n'),
   )
 })
+
+const BACKLOG_HEADER = '| repo | slug | updated | goal |\n| --- | --- | --- | --- |'
+
+const backlogEntry = (slug: string, updated: string): Entry & { main: string } => ({
+  ...entry(slug, updated, { status: 'backlog', path: `/home/.claude/ledger-backlog/app/${slug}.md`, branch: '' }),
+  main: '/repo',
+})
+
+test('/ledger:all lists backlog tasks in their own section, newest first, and counts them in the title', async ($, on) => {
+  const active = entry('newer', '2026-10-05T09:30:00.000Z')
+  const idea = backlogEntry('idea', '2026-10-04T08:00:00.000Z')
+  const lost = backlogEntry('lost-idea', '2026-09-01T00:00:00.000Z')
+  const latest = backlogEntry('latest', '2026-10-06T08:00:00.000Z')
+  world(
+    on,
+    { 'bin/cc-ledgers list --json': exit(0, JSON.stringify([idea, active, lost, latest])) },
+    {
+      [active.path]: ledgerText('Ship it.'),
+      [idea.path]: '# Task ledger — idea\n\n## Goal\nLet | users pick a theme.\n',
+      [latest.path]: `# Task ledger — latest\n\n## Goal\n${'y'.repeat(100)}\n`,
+    },
+  )
+
+  const { text } = await $.command.run({ command: 'ledger:all' })
+
+  expect(text).toBe(
+    [
+      '**All task ledgers** · 4 tasks, 1 active, 3 backlog',
+      '',
+      HEADER,
+      `| app | newer | active | ${local(active.updated)} | Ship it. |`,
+      '',
+      '**Backlog**',
+      '',
+      BACKLOG_HEADER,
+      `| app | latest | ${local(latest.updated)} | ${'y'.repeat(79)}… |`,
+      `| app | idea | ${local(idea.updated)} | Let \\| users pick a theme. |`,
+      `| app | lost-idea | ${local(lost.updated)} | (unreadable) |`,
+    ].join('\n'),
+  )
+})
+
+test('/ledger:all with only backlog tasks shows the title and the backlog section alone', async ($, on) => {
+  const idea = backlogEntry('idea', '2026-10-04T08:00:00.000Z')
+  world(on, { 'bin/cc-ledgers list --json': exit(0, JSON.stringify([idea])) }, { [idea.path]: '# Task ledger — idea\n\n## Goal\nA theme picker.\n' })
+
+  const { text } = await $.command.run({ command: 'ledger:all' })
+
+  expect(text).toBe(
+    ['**All task ledgers** · 1 task, 0 active, 1 backlog', '', '**Backlog**', '', BACKLOG_HEADER, `| app | idea | ${local(idea.updated)} | A theme picker. |`].join('\n'),
+  )
+})
+
+test('/ledger:all rejects an entry whose main checkout is not a string', async ($, on) => {
+  const broken = { ...backlogEntry('idea', '2026-10-04T08:00:00.000Z'), main: 7 }
+  world(on, { 'bin/cc-ledgers list --json': exit(0, JSON.stringify([broken])) })
+
+  const { text } = await $.command.run({ command: 'ledger:all' })
+
+  expect(text).toBe('cc-ledgers printed something that is not a list of ledgers.')
+})

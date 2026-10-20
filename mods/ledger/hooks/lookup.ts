@@ -9,12 +9,12 @@ export type Found = { path: string; slug: string; mtimeMs: number }
 
 export const message = (error: unknown) => (error instanceof Error ? error.message : String(error))
 
-export type Ran = { stdout: string; stderr: string; failure?: string }
+export type Ran = { stdout: string; stderr: string; failure?: string; exitCode?: number }
 
 export async function run($: EngineInterface, argv: string[], cwd: string): Promise<Ran> {
   try {
     const { exitCode, stdout, stderr } = await $.process.run(argv, { cwd })
-    return exitCode === 0 ? { stdout, stderr } : { stdout, stderr, failure: `failed (exit ${exitCode}): ${stderr.trim()}` }
+    return exitCode === 0 ? { stdout, stderr } : { stdout, stderr, exitCode, failure: `failed (exit ${exitCode}): ${stderr.trim()}` }
   } catch (error) {
     return { stdout: '', stderr: '', failure: `did not run: ${message(error)}` }
   }

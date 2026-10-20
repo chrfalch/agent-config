@@ -460,3 +460,42 @@ when the task starts.
 ledger, clears the session and sends `go <slug>`. `/ledger:close` updates the
 ledger and clears without continuing. `/clear`, then `go`, is the fallback
 when one of them reports that it could not clear the session.
+
+## 2026-10-20 — `/ledger:task` writes a backlog ledger; `/ledger:go` makes the worktree
+
+**This replaces one point of the entry above.** `/ledger:task` no longer
+creates the worktree and the ledger together. A task gets its worktree only
+when work on it starts.
+
+**A backlog ledger lives outside every worktree.** `/ledger:task` without a
+flag writes `~/.claude/ledger-backlog/<repo>/<slug>.md`, the same layout as
+`~/.claude/ledger-archive/`. There is no branch or worktree yet. The registry
+entry in `~/.claude/ledgers.json` has the status `backlog` and a `main` field:
+the path of the repo's main checkout. Session start does not show backlog
+tasks. `/ledger:all` lists them in their own section.
+
+**`/ledger:go <slug>` promotes a backlog task.** It runs
+`bin/cc-task-new --promote <slug>`, which makes the branch and the worktree,
+moves the ledger into the worktree and sets the status to `active`. The
+branch starts at the `--base` given when the task was written. Without one,
+it starts at the commit that `origin/HEAD` points to, or at the branch the
+main checkout is on when there is no `origin/HEAD`. Nothing fetches first.
+Then the go continues as for any task. The main checkout ban stays: the
+ledger is never in a main checkout.
+
+**A backlog task of another repo is refused.** `/ledger:go` compares the
+entry's `main` with the session's main checkout. When they differ, it names
+the repo and says to run the command from a session in that repo. The fresh
+session moves into the worktree with `EnterWorktree`, which accepts only
+worktrees of the session's own repo.
+
+**`--stack` and `--here` are unchanged.** Both still give the task a worktree
+at once. There is no `--now` flag to skip the backlog: `/ledger:go <slug>`
+right after `/ledger:task` has the same result.
+
+**With no current ledger, `/ledger:task` promotes at once.** There is no old
+task to clear, so the backlog step has no use. The command writes the backlog
+ledger, runs `bin/cc-task-new --promote <slug>`, and moves the session into
+the new worktree with `EnterWorktree`. The work still continues in the same
+session when no task is open, and the script keeps one way to make a
+worktree.

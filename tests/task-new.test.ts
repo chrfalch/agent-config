@@ -79,7 +79,7 @@ test('creates a worktree, branch and filled ledger from the main checkout', (t) 
       'branch   fix-login',
       `base     main @ ${short}`,
       `ledger   ${ledger}`,
-      'start:   /clear, then say: go fix-login',
+      'start:   /ledger:go fix-login',
       '',
     ].join('\n'),
   );

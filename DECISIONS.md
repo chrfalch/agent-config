@@ -402,3 +402,29 @@ work in the task's folder, not in the main checkout.
 `/clear`. If it goes back to the main checkout, `go <slug>` moves it again.
 Also not run by hand yet: `EnterWorktree` with `path` to an existing worktree.
 The tool description documents that parameter. The first new task checks it.
+
+## 2026-10-20 — `/worktrees` moves into the ledger mod
+
+**The problem.** The ledger commands and `/worktrees` came from two plugins.
+The operator had two names to remember, and deploy had two plugins to keep
+installed.
+
+**One plugin, one prefix.** The command is now `/ledger:worktrees`, a markdown
+command of the ledger mod. A hook answers it, so it runs no model turn. The
+same holds for the new `/ledger:help`, which prints one line per `/ledger`
+command.
+
+**No alias.** `/worktrees` is gone. An alias would keep the second name alive,
+and the second plugin with it.
+
+**Deploy uninstalls the old plugin.** When `claude plugin list` shows
+`worktrees@agent-config` at user scope, deploy runs
+`claude plugin uninstall worktrees@agent-config --scope user`, after it
+installs the ledger mod. A second run finds nothing to uninstall. An install
+at another scope is the operator's own, and deploy leaves it alone.
+
+**`/ledger:go <slug>` always runs a model turn.** A mod cannot clear the
+session from a `command.run` hook, and a command that a hook answers ends no
+turn, so `turn.complete` never fires. The command prompt therefore always runs.
+When the session has no ledger, the prompt writes nothing, and the end of its
+turn clears the session and sends `go <slug>`.

@@ -44,7 +44,7 @@ work as before and skip the wizard.
 | `--codex` | Require Codex; fail if its config is missing. |
 | `--no-argent` | Skip `ui-runner` and the UI automation rule. |
 | `--no-stacks` | Skip the stacked-PR rule. |
-| `--no-mods` | Skip the ledger and worktrees mods (`/ledger`, `/worktrees`). |
+| `--no-mods` | Skip the ledger mod (`/ledger` and its `/ledger:` commands). |
 | `--agents a,b,c` | Deploy only the agents named. |
 | `--models a,b` | Keep only these models in the routing rules. |
 | `--force` | Replace a file of your own without asking. |
@@ -96,7 +96,7 @@ before replacing it. With no terminal attached it refuses and tells you to use
 
 ### The ledger mod
 
-The ledger mod is a Claude Code plugin in `mods/ledger`. It adds five
+The ledger mod is a Claude Code plugin in `mods/ledger`. It adds eight
 commands:
 
 - `/ledger` prints each task ledger's goal, current step and next step.
@@ -108,20 +108,27 @@ commands:
   clears the session. When there is no ledger, it prints why and does nothing.
 - `/ledger:next` does the same as `/ledger:close`, then sends `go <name>`, so
   the fresh session continues the task.
+- `/ledger:go <name>` does the same as `/ledger:next`, but sends
+  `go <name>` for the task you name. The name must be the name of a task
+  ledger. Without a ledger in the session, it writes nothing and still
+  switches.
+- `/ledger:worktrees` prints each linked git worktree's size, last commit,
+  dirty files, ledger and PR.
+- `/ledger:help` prints one line for each of these commands.
 
-The worktrees mod, in `mods/worktrees`, adds the `/worktrees` command. It
-prints each linked git worktree's size, last commit, dirty files, ledger and PR.
-`/worktrees prune <name>` lists the build folders of one worktree and their
-sizes. These are ignored folders such as `build` and `.expo-prebuild`, and the
-worktree's Xcode build folders from `bin/cc-dd-path`. Empty folders are left
-out. Add `--yes` to delete them. The command never deletes the worktree itself
-or anything in `.claude`. It also keeps `node_modules` and `Pods`, so the
-worktree still builds without a new install.
+`/ledger:worktrees prune <name>` lists the build folders of one worktree and
+their sizes. These are ignored folders such as `build` and `.expo-prebuild`,
+and the worktree's Xcode build folders from `bin/cc-dd-path`. Empty folders
+are left out. Add `--yes` to delete them. The command never deletes the
+worktree itself or anything in `.claude`. It also keeps `node_modules` and
+`Pods`, so the worktree still builds without a new install.
 
-Deploy installs both through the `claude` CLI, at user scope:
+Deploy installs the mod through the `claude` CLI, at user scope:
 
 - It adds this repo as a folder marketplace named `agent-config`.
-- It installs the plugins `ledger@agent-config` and `worktrees@agent-config`.
+- It installs the plugin `ledger@agent-config`.
+- It uninstalls `worktrees@agent-config`, the plugin that held `/worktrees`
+  before that command moved into the ledger mod as `/ledger:worktrees`.
 
 Deploy skips each step that is already done. The plugin loads from this repo,
 so an edit to the repo reaches a running session after `/reload-plugins`. It
@@ -207,12 +214,11 @@ Revert removes only symlinks that point into this repo, then restores the newest
 backup directory. It restores each file as it was at that deploy, so local edits
 made since are lost. Older backups stay in `~/.claude/backups/`.
 
-Revert does not remove the ledger and worktrees mods. The mods live in Claude
-Code's own plugin state, not in a file deploy links. To remove them, run:
+Revert does not remove the ledger mod. The mod lives in Claude Code's own
+plugin state, not in a file deploy links. To remove it, run:
 
 ```sh
 claude plugin uninstall ledger
-claude plugin uninstall worktrees
 claude plugin marketplace remove agent-config
 ```
 

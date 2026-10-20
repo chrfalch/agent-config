@@ -18,20 +18,22 @@ It ships five things:
   They warn when the deployed config is old, and allow a retry of a denied
   read-only call. See
   [The hooks](docs/installation.md#the-hooks).
-- **A ledger mod** — a Claude Code plugin that adds `/ledger`, `/ledger:task`,
-  `/ledger:update`, `/ledger:close` and `/ledger:next`.
+- **A ledger mod** — a Claude Code plugin that adds `/ledger` and seven
+  `/ledger:` commands. `/ledger:help` prints one line for each.
   `/ledger` prints each task ledger's goal, current step and next step.
   `/ledger:task` starts a separate task with its own worktree and ledger.
   `/ledger:update` writes the latest results to the current task's ledger.
   `/ledger:close` writes the ledger, then clears the session.
   `/ledger:next` writes the ledger, clears the session, then continues the task.
-- **A worktrees mod** — a Claude Code plugin that adds `/worktrees`. It prints
-  a table of the repo's linked git worktrees, largest first.
-  `/worktrees prune <name>` lists that worktree's build folders, and `--yes`
-  deletes them. It keeps `node_modules` and `Pods`, so the worktree still
-  builds. `/worktrees derived-data` groups Xcode's build folders by the
-  project they were built from. `/worktrees prune-orphans --yes` deletes the
-  ones whose project no longer exists.
+  `/ledger:go <name>` writes the ledger, clears the session, then continues
+  the task named `<name>`.
+  `/ledger:worktrees` prints a table of the repo's linked git worktrees,
+  largest first. `/ledger:worktrees prune <name>` lists that worktree's build
+  folders, and `--yes` deletes them. It keeps `node_modules` and `Pods`, so the
+  worktree still builds. `/ledger:worktrees derived-data` groups Xcode's build
+  folders by the project they were built from.
+  `/ledger:worktrees prune-orphans --yes` deletes the ones whose project no
+  longer exists.
 
 ## Why it is shaped this way
 
@@ -88,8 +90,8 @@ so the shell variables load, then start Claude Code in any repo.
 1. In the terminal, run `ls ~/.claude/agents/`. The list should include
    `researcher.md`, `runner.md`, `reviewer.md`, and `opus-implementer.md`. The
    Codex and argent agents appear only if you did not skip them at deploy.
-2. In Claude Code, type `/ledger` and then `/worktrees`. Both commands should
-   run. If Claude Code does not know them, the mods did not install.
+2. In Claude Code, type `/ledger` and then `/ledger:help`. Both commands should
+   run. If Claude Code does not know them, the ledger mod did not install.
 3. Ask `What are we working on?`. It should say that no task is open, because
    this repo has no ledger yet.
 4. Pick a small real task that touches more than one file, and type
@@ -129,16 +131,18 @@ Delegate step 3 to opus-implementer at high effort: make the failing
 tests in src/sync/__tests__/queue.test.ts pass.
 ```
 
-### `/clear` and `go`
+### `/ledger:next` and `/ledger:close`
 
 When one implement-and-review cycle finishes and more work remains, the
 orchestrator stops and says:
 
-> Clear point. Ledger updated. Run `/clear`, then say: go.
+> Clear point. Ledger updated. Type `/ledger:next` to clear the session and continue, or `/ledger:close` to clear it and stop.
 
-You type `/clear`, then `go`. A hook reads the ledger into the fresh session, so
-the new session knows the goal, what is done, and what is next. It continues
-from there. You type nothing else.
+You type `/ledger:next`. It clears the session and sends `go <name>`. A hook
+reads the ledger into the fresh session, so the new session knows the goal,
+what is done, and what is next. It continues from there. You type nothing
+else. Type `/ledger:close` to stop for now, and `go` later. If either command
+cannot clear the session, it says so; then type `/clear`, then `go`.
 
 This is the core loop. A cold start from the ledger costs a few thousand tokens
 once. Carrying the finished cycle into the next one costs that on every turn for
@@ -166,19 +170,20 @@ each stage.
 
 ### Commands
 
-Two commands print state directly. Use them when you want a quick look instead
-of a full answer.
+These commands print state directly, without a model turn. Use them when you
+want a quick look instead of a full answer.
 
 | You type | What happens |
 |---|---|
 | `/ledger` | Prints each task ledger's goal, current step and next step. |
 | `/ledger <name>` | Prints only the ledger with that name. |
-| `/worktrees` | Prints a table of the repo's linked git worktrees, largest first, with size, last commit, changed files, ledger and PR. |
-| `/worktrees prune <name>` | Lists the build folders of that worktree and their sizes. It deletes nothing. |
-| `/worktrees prune <name> --yes` | Deletes those build folders. It keeps `node_modules`, `Pods`, `.claude` and the worktree itself. |
-| `/worktrees derived-data` | Lists every folder in `~/Library/Developer/Xcode/DerivedData` with its size. It groups them by where the project is: the main checkout, a linked worktree, another location, or gone. |
-| `/worktrees prune-orphans` | Lists the DerivedData folders whose project no longer exists. It deletes nothing. |
-| `/worktrees prune-orphans --yes` | Deletes those folders. It never deletes shared caches or folders without a recorded project. |
+| `/ledger:help` | Prints one line for each `/ledger` command. |
+| `/ledger:worktrees` | Prints a table of the repo's linked git worktrees, largest first, with size, last commit, changed files, ledger and PR. |
+| `/ledger:worktrees prune <name>` | Lists the build folders of that worktree and their sizes. It deletes nothing. |
+| `/ledger:worktrees prune <name> --yes` | Deletes those build folders. It keeps `node_modules`, `Pods`, `.claude` and the worktree itself. |
+| `/ledger:worktrees derived-data` | Lists every folder in `~/Library/Developer/Xcode/DerivedData` with its size. It groups them by where the project is: the main checkout, a linked worktree, another location, or gone. |
+| `/ledger:worktrees prune-orphans` | Lists the DerivedData folders whose project no longer exists. It deletes nothing. |
+| `/ledger:worktrees prune-orphans --yes` | Deletes those folders. It never deletes shared caches or folders without a recorded project. |
 
 A build folder whose project is on a disk that is not connected goes in its own group, **Disk not connected**, and is never deleted.
 
@@ -202,6 +207,13 @@ Both write the ledger the same way, but never start a task. With no ledger in
 the worktree, they print why and do nothing. When the reply ends,
 `/ledger:close` clears the session. `/ledger:next` also clears it, then sends
 `go <name>`, so the fresh session continues the task.
+
+To switch to another task, type `/ledger:go <name>`. The name must be the name
+of a task ledger; `/ledger` shows each one. If the session has a task ledger,
+the agent writes it first, the same way `/ledger:close` does. When the reply
+ends, the session clears and `go <name>` is sent, so the fresh session moves
+into that task's worktree. Without a task ledger, the agent writes nothing,
+and the switch happens the same way.
 
 To remove a finished worktree, use `bin/cc-worktree-retire <worktree>`. It
 archives the ledger first, then removes the worktree and its Xcode build
@@ -229,8 +241,7 @@ notes/                    rationale, not rules
 DECISIONS.md              why the setup is shaped this way
 settings.policy.json      Claude Code keys this repo asserts
 codex/policy.toml         Codex keys this repo asserts
-mods/ledger/              the /ledger, /ledger:task, /ledger:update, /ledger:close and /ledger:next commands (a Claude Code plugin)
-mods/worktrees/           the /worktrees command (a Claude Code plugin)
+mods/ledger/              the /ledger command and its /ledger: commands, /ledger:worktrees included (a Claude Code plugin)
 tools/                    the settings merge and rule filter, plus their tests
 bin/deploy                installs everything above
 bin/cc-dd-path            prints the shared Xcode build folder for a worktree

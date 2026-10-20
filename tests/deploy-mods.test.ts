@@ -13,19 +13,16 @@ const LIST_MARKETPLACES = 'plugin marketplace list --json';
 const LIST_PLUGINS = 'plugin list --json';
 const ADD = `plugin marketplace add ${REPO_ARGUMENT} --scope user`;
 const INSTALL_LEDGER = 'plugin install ledger@agent-config --scope user';
-const INSTALL_WORKTREES = 'plugin install worktrees@agent-config --scope user';
+const UNINSTALL_WORKTREES = 'plugin uninstall worktrees@agent-config --scope user';
 
-const changesState = (call: string): boolean => / (add|install) /.test(call);
+const changesState = (call: string): boolean => / (add|install|uninstall) /.test(call);
 
-test('the repo ships a marketplace that lists the ledger and worktrees mods', () => {
+test('the repo ships a marketplace that lists only the ledger mod', () => {
   const marketplace = JSON.parse(readFileSync(path.join(REPO, '.claude-plugin/marketplace.json'), 'utf8'));
   assert.equal(marketplace.name, 'agent-config');
   assert.deepEqual(
     marketplace.plugins.map(({ name, source }: { name: string; source: string }) => ({ name, source })),
-    [
-      { name: 'ledger', source: './mods/ledger' },
-      { name: 'worktrees', source: './mods/worktrees' },
-    ],
+    [{ name: 'ledger', source: './mods/ledger' }],
   );
 });
 
@@ -33,15 +30,15 @@ test('parseDeployArguments maps --no-mods to noMods', () => {
   assert.deepEqual(parseDeployArguments(['--no-mods']), { options: { noMods: true }, help: false });
 });
 
-test('deploy adds this repo as a marketplace, then installs the ledger and worktrees mods', (t) => {
+test('deploy adds this repo as a marketplace, then installs the ledger mod and nothing else', (t) => {
   const home = freshHome(t);
 
   const result = run(home, DEPLOY);
 
   assert.equal(result.status, 0, result.stderr);
-  assert.deepEqual(claudeCalls(home), [LIST_MARKETPLACES, ADD, LIST_PLUGINS, INSTALL_LEDGER, INSTALL_WORKTREES]);
+  assert.deepEqual(claudeCalls(home), [LIST_MARKETPLACES, ADD, LIST_PLUGINS, INSTALL_LEDGER]);
   assert.match(result.stdout, /^mods {5}installed ledger@agent-config \(\/ledger\)$/m);
-  assert.match(result.stdout, /^mods {5}installed worktrees@agent-config \(\/worktrees\)$/m);
+  assert.doesNotMatch(result.stdout, /worktrees/);
 });
 
 test('a second deploy finds the marketplace and the mod and changes neither', (t) => {
@@ -55,7 +52,7 @@ test('a second deploy finds the marketplace and the mod and changes neither', (t
   assert.deepEqual(claudeCalls(home).slice(before), [LIST_MARKETPLACES, LIST_PLUGINS]);
 });
 
-test('--dry-run names both mods and neither adds nor installs', (t) => {
+test('--dry-run names the ledger mod and neither adds nor installs', (t) => {
   const home = freshHome(t);
 
   const result = run(home, DEPLOY, '--dry-run');
@@ -63,7 +60,6 @@ test('--dry-run names both mods and neither adds nor installs', (t) => {
   assert.equal(result.status, 0, result.stderr);
   assert.deepEqual(claudeCalls(home).filter(changesState), []);
   assert.match(result.stdout, /^(would )?mods\b.*\bledger\b/m);
-  assert.match(result.stdout, /^(would )?mods\b.*\bworktrees\b/m);
 });
 
 test('--no-mods runs no claude command and says the step was skipped', (t) => {
@@ -107,23 +103,85 @@ test('--revert runs no claude command and prints how to remove the mods', (t) =>
   assert.equal(result.status, 0, result.stderr);
   assert.deepEqual(claudeCalls(home).slice(before), []);
   assert.ok(result.stdout.includes('claude plugin uninstall ledger'), result.stdout);
-  assert.ok(result.stdout.includes('claude plugin uninstall worktrees'), result.stdout);
+  assert.ok(!result.stdout.includes('worktrees'), result.stdout);
   assert.ok(result.stdout.includes('claude plugin marketplace remove agent-config'), result.stdout);
 });
 
 const registeredAt = (location: string): string =>
   JSON.stringify([{ name: 'agent-config', source: 'directory', path: location, installLocation: location }]);
 
-test('deploy installs only the mods that are missing and reports the others as already installed', (t) => {
+const installed = (...plugins: { id: string; scope: string }[]): string => JSON.stringify(plugins);
+const LEDGER_AT_USER = { id: 'ledger@agent-config', scope: 'user' };
+const WORKTREES_AT_USER = { id: 'worktrees@agent-config', scope: 'user' };
+
+test('deploy reports the ledger mod as already installed and uninstalls the old worktrees mod', (t) => {
   const home = freshHome(t);
-  claudeLists(home, { marketplaces: registeredAt(REPO_ARGUMENT), plugins: JSON.stringify([{ id: 'ledger@agent-config' }]) });
+  claudeLists(home, { marketplaces: registeredAt(REPO_ARGUMENT), plugins: installed(LEDGER_AT_USER, WORKTREES_AT_USER) });
 
   const result = run(home, DEPLOY);
 
   assert.equal(result.status, 0, result.stderr);
-  assert.deepEqual(claudeCalls(home), [LIST_MARKETPLACES, LIST_PLUGINS, INSTALL_WORKTREES]);
+  assert.deepEqual(claudeCalls(home), [LIST_MARKETPLACES, LIST_PLUGINS, UNINSTALL_WORKTREES]);
   assert.match(result.stdout, /^mods {5}ledger@agent-config already installed$/m);
-  assert.match(result.stdout, /^mods {5}installed worktrees@agent-config \(\/worktrees\)$/m);
+  assert.match(result.stdout, /^mods {5}uninstalled worktrees@agent-config \(now \/ledger:worktrees\)$/m);
+});
+
+test('deploy installs the ledger mod before it uninstalls the old worktrees mod', (t) => {
+  const home = freshHome(t);
+  claudeLists(home, { marketplaces: registeredAt(REPO_ARGUMENT), plugins: installed(WORKTREES_AT_USER) });
+
+  const result = run(home, DEPLOY);
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(claudeCalls(home), [LIST_MARKETPLACES, LIST_PLUGINS, INSTALL_LEDGER, UNINSTALL_WORKTREES]);
+});
+
+test('a second deploy finds the old worktrees mod gone and uninstalls nothing', (t) => {
+  const home = freshHome(t);
+  claudeLists(home, { marketplaces: registeredAt(REPO_ARGUMENT), plugins: installed(LEDGER_AT_USER, WORKTREES_AT_USER) });
+  run(home, DEPLOY);
+  const before = claudeCalls(home).length;
+
+  const result = run(home, DEPLOY);
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(claudeCalls(home).slice(before), [LIST_MARKETPLACES, LIST_PLUGINS]);
+  assert.doesNotMatch(result.stdout, /worktrees/);
+});
+
+test('--dry-run names the old worktrees mod it would uninstall and uninstalls nothing', (t) => {
+  const home = freshHome(t);
+  claudeLists(home, { marketplaces: registeredAt(REPO_ARGUMENT), plugins: installed(LEDGER_AT_USER, WORKTREES_AT_USER) });
+
+  const result = run(home, DEPLOY, '--dry-run');
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(claudeCalls(home).filter(changesState), []);
+  assert.match(result.stdout, /^mods {5}would uninstall worktrees@agent-config \(now \/ledger:worktrees\)$/m);
+});
+
+test('deploy leaves a worktrees mod installed at another scope alone', (t) => {
+  const home = freshHome(t);
+  claudeLists(home, {
+    marketplaces: registeredAt(REPO_ARGUMENT),
+    plugins: installed(LEDGER_AT_USER, { id: 'worktrees@agent-config', scope: 'local' }),
+  });
+
+  const result = run(home, DEPLOY);
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(claudeCalls(home), [LIST_MARKETPLACES, LIST_PLUGINS]);
+});
+
+test('a failing uninstall fails deploy with a message on stderr', (t) => {
+  const home = freshHome(t);
+  claudeLists(home, { marketplaces: registeredAt(REPO_ARGUMENT), plugins: installed(LEDGER_AT_USER, WORKTREES_AT_USER) });
+  failClaude(home, 'uninstall');
+
+  const result = run(home, DEPLOY);
+
+  assert.equal(result.status, 1, result.stdout);
+  assert.notEqual(result.stderr.trim(), '');
 });
 
 test('a marketplace already added from this repo is reported and not added again', (t) => {
@@ -147,7 +205,7 @@ test('a marketplace named agent-config at another path is reported with the fix 
   assert.ok(
     result.stdout.includes(
       'mods     marketplace agent-config points at /elsewhere/agent-config, not this repo; to fix: claude plugin marketplace remove agent-config, then run deploy again\n' +
-        'mods     skipped install of ledger@agent-config, worktrees@agent-config until the marketplace points at this repo\n',
+        'mods     skipped install of ledger@agent-config until the marketplace points at this repo\n',
     ),
     result.stdout,
   );

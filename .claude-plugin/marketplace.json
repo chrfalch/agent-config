@@ -6,12 +6,7 @@
     {
       "name": "ledger",
       "source": "./mods/ledger",
-      "description": "/ledger prints each task ledger's goal, current step and next step; /task starts a separate task with its own worktree and ledger"
-    },
-    {
-      "name": "worktrees",
-      "source": "./mods/worktrees",
-      "description": "/worktrees prints each linked git worktree's size, last commit, dirty files, ledger and PR"
+      "description": "/ledger prints each task ledger's goal, current step and next step; /ledger:task, /ledger:update, /ledger:next, /ledger:close and /ledger:go start, write and switch tasks; /ledger:worktrees prints each linked git worktree; /ledger:help lists every command"
     }
   ]
 }

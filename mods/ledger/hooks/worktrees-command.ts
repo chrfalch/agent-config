@@ -55,7 +55,7 @@ async function run($: EngineInterface, argv: string[], cwd: string): Promise<Ran
 
 const okStdout = ({ stdout, failure }: Ran): string | null => (failure === undefined ? stdout : null)
 
-async function lookUpPrs($: EngineInterface, branch: string, cwd: string): Promise<PrLookup> {
+export async function lookUpPrs($: EngineInterface, branch: string, cwd: string): Promise<PrLookup> {
   if (branch === '') return { prs: [] }
   const { stdout, failure } = await run($, ['gh', 'pr', 'list', '--head', branch, '--state', 'all', '--json', 'state,number'], cwd)
   if (failure !== undefined) return { prs: null, error: `gh pr list ${failure}` }

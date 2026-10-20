@@ -97,7 +97,9 @@ Both tests write only to a temporary directory.
 
 ## Change the ledger template
 
-`ledger.template.md` is copied to `.claude/ledger.md` at plan approval. Keep it
+`ledger.template.md` is copied to `.claude/ledger.md` when a task starts:
+`/ledger:task` runs `bin/cc-task-new`, which creates the worktree and the
+ledger before any plan. The approved plan is written into it later. Keep it
 short: the ledger has a budget of about 4k tokens, and every section you add is
 read at the start of every session for the life of the task.
 

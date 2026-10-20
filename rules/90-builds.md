@@ -20,8 +20,9 @@ and the scratchpad root held 23 GB.
   `Debug-device`.
 - Never put a build folder in the session scratchpad, in `/tmp`, or in the worktree.
 - A clean build is `xcodebuild clean` in the shared folder, not a new folder.
-- `bin/cc-worktree-retire` deletes the worktree's `cc-dd-path` build folders after
-  it removes the worktree.
+- `/ledger:retire <slug> --yes` deletes the worktree's `cc-dd-path` build folders
+  after it removes the worktree. The operator types it. It runs
+  `bin/cc-worktree-retire`, which does the same without the ledger mod.
 - Repo tooling that computes its own derived-data path is out of scope. Do not
   override it.
 

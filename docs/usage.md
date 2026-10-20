@@ -24,7 +24,7 @@ investigate -> resolve ambiguity -> plan -> ledger -> red tests -> implement
             -> verify -> review -> clear point (if more remains) -> you accept
 ```
 
-Two gates need you: plan approval, and running `/clear` at a clear point.
+Three things need you: plan approval, typing the `start:` line that a new task prints, and typing `/ledger:next` at a clear point.
 
 ## A worked example
 
@@ -36,6 +36,17 @@ The task: an offline write queue drops items when the app restarts mid-sync.
 There's a bug: items in the offline queue disappear if the app is killed
 during a sync. Repo is ~/repos/acme/mobile.
 ```
+
+This is a new task, so the orchestrator invokes
+`/ledger:task` before it plans anything. The command creates a worktree and a
+ledger from `~/.claude/ledger.template.md`, with the goal filled in. It replies
+with one line:
+
+```
+start:   /ledger:go offline-queue-loss
+```
+
+You type that line. The session clears and continues in the task's worktree.
 
 ### 2. The orchestrator investigates
 
@@ -60,10 +71,10 @@ not a file dump.
 
 You answer `yes`.
 
-### 4. It creates the worktree and the ledger
+### 4. It writes the plan into the ledger
 
-The ledger is created from `~/.claude/ledger.template.md`. After approval it
-looks like this:
+After approval the orchestrator writes the plan into the ledger from step 1.
+It looks like this:
 
 ```markdown
 # Task ledger — offline-queue-loss

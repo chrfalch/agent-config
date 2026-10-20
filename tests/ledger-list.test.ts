@@ -269,3 +269,144 @@ test('session-start keeps quotes, backslashes and non-ASCII text intact', (t) =>
   assert.equal(output.sessionTitle, '"quoted" \\ slug æøå');
   assert.equal(output.additionalContext, fullLedgerText(ledger));
 });
+
+type PromptSubmitInput = { prompt: string; cwd?: string; session_title?: string };
+
+function promptSubmitRaw(root: string, input: string) {
+  return spawnSync('bash', [LEDGER_LIST, 'prompt-submit'], {
+    cwd: root,
+    env: { ...environment(root), HOME: root },
+    input,
+    encoding: 'utf8',
+  });
+}
+
+function promptSubmit(root: string, input: PromptSubmitInput): string {
+  const result = promptSubmitRaw(root, JSON.stringify(input));
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stderr, '');
+  return result.stdout;
+}
+
+function promptSubmitTitle(root: string, input: PromptSubmitInput): string {
+  const output = JSON.parse(promptSubmit(root, input)) as {
+    hookSpecificOutput: { hookEventName: string; sessionTitle: string };
+  };
+  assert.deepEqual(Object.keys(output.hookSpecificOutput).sort(), ['hookEventName', 'sessionTitle']);
+  assert.equal(output.hookSpecificOutput.hookEventName, 'UserPromptSubmit');
+  return output.hookSpecificOutput.sessionTitle;
+}
+
+function archive(home: string, repo: string, slug: string): void {
+  const folder = path.join(home, '.claude/ledger-archive', repo);
+  mkdirSync(folder, { recursive: true });
+  writeFileSync(path.join(folder, `2026-10-01-${slug}.md`), `# Task ledger — ${slug}\n`);
+}
+
+test('prompt-submit titles an untitled session in the main checkout with the slug from go', (t) => {
+  const root = scratch(t);
+  const main = repository(root, 'main');
+  ledgerIn(worktree(root, main, path.join(root, 'alpha')));
+
+  assert.equal(promptSubmitTitle(root, { prompt: 'go alpha', cwd: main }), 'alpha');
+});
+
+test('prompt-submit replaces the title of another worktree\'s task', (t) => {
+  const root = scratch(t);
+  const main = repository(root, 'main');
+  const alpha = worktree(root, main, path.join(root, 'alpha'));
+  ledgerIn(alpha);
+  ledgerIn(worktree(root, main, path.join(main, '.claude/worktrees/beta')));
+
+  assert.equal(promptSubmitTitle(root, { prompt: '  go beta\n', cwd: alpha, session_title: 'alpha' }), 'beta');
+});
+
+test('prompt-submit replaces a title that names an archived task', (t) => {
+  const root = scratch(t);
+  const main = repository(root, 'main');
+  ledgerIn(worktree(root, main, path.join(root, 'alpha')));
+  archive(root, 'main', 'finished-task');
+
+  assert.equal(promptSubmitTitle(root, { prompt: 'go alpha', cwd: main, session_title: 'finished-task' }), 'alpha');
+});
+
+test('prompt-submit ignores the archive of another repository', (t) => {
+  const root = scratch(t);
+  const main = repository(root, 'main');
+  ledgerIn(worktree(root, main, path.join(root, 'alpha')));
+  archive(root, 'other', 'finished-task');
+
+  assert.equal(promptSubmit(root, { prompt: 'go alpha', cwd: main, session_title: 'finished-task' }), '');
+});
+
+test('prompt-submit keeps a title the operator chose', (t) => {
+  const root = scratch(t);
+  const main = repository(root, 'main');
+  ledgerIn(worktree(root, main, path.join(root, 'alpha')));
+
+  assert.equal(promptSubmit(root, { prompt: 'go alpha', cwd: main, session_title: 'my custom name' }), '');
+});
+
+test('prompt-submit prints nothing when the title already names the task', (t) => {
+  const root = scratch(t);
+  const main = repository(root, 'main');
+  const alpha = worktree(root, main, path.join(root, 'alpha'));
+  ledgerIn(alpha);
+
+  assert.equal(promptSubmit(root, { prompt: 'go alpha', cwd: alpha, session_title: 'alpha' }), '');
+});
+
+test('prompt-submit prints nothing for a slug with no active ledger', (t) => {
+  const root = scratch(t);
+  const main = repository(root, 'main');
+  ledgerIn(worktree(root, main, path.join(root, 'alpha')));
+  archive(root, 'main', 'finished-task');
+
+  assert.equal(promptSubmit(root, { prompt: 'go unknown', cwd: main }), '');
+  assert.equal(promptSubmit(root, { prompt: 'go finished-task', cwd: main }), '');
+});
+
+test('prompt-submit prints nothing unless the prompt is exactly go and one slug', (t) => {
+  const root = scratch(t);
+  const main = repository(root, 'main');
+  ledgerIn(worktree(root, main, path.join(root, 'alpha')));
+
+  for (const prompt of ['go', 'go ', 'go alpha beta', 'please go alpha', 'go alpha\nand more', 'Go alpha', 'goalpha', 'go\nalpha']) {
+    assert.equal(promptSubmit(root, { prompt, cwd: main }), '', JSON.stringify(prompt));
+  }
+});
+
+test('prompt-submit prints nothing outside a git repository', (t) => {
+  const root = scratch(t);
+  const plain = path.join(root, 'plain');
+  ledgerIn(plain, '# Task ledger — alpha\n');
+  ledgerIn(path.join(plain, '.claude/worktrees/alpha'), '# Task ledger — alpha\n');
+
+  assert.equal(promptSubmit(root, { prompt: 'go alpha', cwd: plain }), '');
+});
+
+test('prompt-submit prints nothing for input that is not JSON', (t) => {
+  const root = scratch(t);
+  const result = promptSubmitRaw(root, 'go alpha');
+
+  assert.equal(result.status, 0);
+  assert.equal(result.stdout, '');
+});
+
+test('prompt-submit emits a slug with quotes and backslashes as valid JSON', (t) => {
+  const root = scratch(t);
+  const main = repository(root, 'main');
+  const slug = 'a"b\\c';
+  ledgerIn(worktree(root, main, path.join(root, 'odd')), `# Task ledger — ${slug}\n`);
+
+  assert.equal(promptSubmitTitle(root, { prompt: `go ${slug}`, cwd: main }), slug);
+});
+
+test('prompt-submit skips a worktree whose folder is gone', (t) => {
+  const root = scratch(t);
+  const main = repository(root, 'main');
+  ledgerIn(worktree(root, main, path.join(root, 'alpha')));
+  rmSync(worktree(root, main, path.join(root, 'gone')), { recursive: true, force: true });
+
+  assert.equal(promptSubmitTitle(root, { prompt: 'go alpha', cwd: main }), 'alpha');
+});

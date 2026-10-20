@@ -67,6 +67,16 @@
           }
         ]
       }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$HOME\"/.claude/hooks/ledger-list.sh prompt-submit"
+          }
+        ]
+      }
     ]
   },
   "attribution": {

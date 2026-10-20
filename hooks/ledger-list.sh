@@ -3,6 +3,11 @@
 # Mode: session-start (default) prints them as SessionStart hook JSON, titling
 # the session with the slug when the only ledger is this folder's own; pre-compact names them;
 # paths prints only their absolute paths, one per line.
+# prompt-submit reads UserPromptSubmit hook JSON and, for a prompt of exactly
+# `go <slug>` naming an active ledger in any worktree of the repo, titles the
+# session with that slug. It replaces no title, a ledger slug, or an archived
+# slug from ~/.claude/ledger-archive/<repo>/; any other title came from /rename
+# and stays. It prints nothing else, because plain stdout reaches the model.
 #
 # Ledgers are found through git, not through a fixed directory layout:
 # - main checkout: one per linked worktree, wherever that worktree lives
@@ -13,6 +18,59 @@
 # Worktrees whose path no longer exists (prunable) are skipped.
 
 mode="${1:-session-start}"
+
+slug() {
+  sed -n -E '/^# Task ledger[[:space:]]*(—|-)[[:space:]]*/{s///;s/[[:space:]]+$//;p;q;}' "$1"
+}
+
+contains() {
+  local needle="$1" x
+  shift
+  for x in "$@"; do [ "$x" = "$needle" ] && return 0; done
+  return 1
+}
+
+prompt_submit() {
+  local input target cwd title line worktree repo="" f name
+  local active=() archived=()
+  command -v jq >/dev/null 2>&1 || return 0
+  input=$(cat)
+  target=$(printf '%s' "$input" | jq -r '.prompt | capture("\\A\\s*go[ \\t]+(?<slug>\\S+)\\s*\\z").slug' 2>/dev/null) || return 0
+  [ -n "$target" ] || return 0
+  cwd=$(printf '%s' "$input" | jq -r '.cwd // ""' 2>/dev/null) || return 0
+  title=$(printf '%s' "$input" | jq -r '.session_title // ""' 2>/dev/null) || return 0
+  if [ -n "$cwd" ]; then cd "$cwd" 2>/dev/null || return 0; fi
+
+  while IFS= read -r line; do
+    case "$line" in
+      "worktree "*)
+        worktree=${line#worktree }
+        [ -n "$repo" ] || repo=$(basename "$worktree")
+        [ -f "$worktree/.claude/ledger.md" ] && active+=("$(slug "$worktree/.claude/ledger.md")")
+        ;;
+    esac
+  done < <(git worktree list --porcelain 2>/dev/null)
+
+  contains "$target" "${active[@]}" || return 0
+  [ "$title" = "$target" ] && return 0
+  if [ -n "$title" ] && ! contains "$title" "${active[@]}"; then
+    for f in "$HOME/.claude/ledger-archive/$repo"/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]-*.md; do
+      [ -f "$f" ] || continue
+      name=${f##*/}
+      name=${name#??????????-}
+      archived+=("${name%.md}")
+    done
+    # A title that names no task came from /rename; the operator keeps it.
+    contains "$title" "${archived[@]}" || return 0
+  fi
+  jq -nc --arg title "$target" '{hookSpecificOutput: {hookEventName: "UserPromptSubmit", sessionTitle: $title}}' 2>/dev/null
+}
+
+if [ "$mode" = prompt-submit ]; then
+  prompt_submit
+  exit 0
+fi
+
 ledgers=()
 
 add() {
@@ -52,10 +110,6 @@ fi
 
 n=${#ledgers[@]}
 [ "$n" -eq 0 ] && exit 0
-
-slug() {
-  sed -n -E '/^# Task ledger[[:space:]]*(—|-)[[:space:]]*/{s///;s/[[:space:]]+$//;p;q;}' "$1"
-}
 
 session_start_text() {
   if [ "$n" -eq 1 ]; then

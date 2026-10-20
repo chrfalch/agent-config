@@ -10,6 +10,15 @@ if [ -z "$arg" ]; then
 fi
 shift
 
+self="$0"
+while [ -L "$self" ]; do
+  link=$(readlink "$self")
+  case "$link" in
+    /*) self="$link" ;;
+    *) self="$(dirname "$self")/$link" ;;
+  esac
+done
+
 wt=$(cd "$arg" 2>/dev/null; pwd)
 if [ -z "$wt" ]; then
   echo "not a directory: $arg" >&2
@@ -31,10 +40,10 @@ if [ -z "$slug" ]; then
 fi
 
 ledger="$wt/.claude/ledger.md"
+dest=""
 if [ -f "$ledger" ]; then
   archive="$HOME/.claude/ledger-archive/$repo"
   mkdir -p "$archive"
-  dest=""
   for old in "$archive"/*.md; do
     if [ -f "$old" ] && cmp -s "$ledger" "$old"; then
       dest="$old"
@@ -67,6 +76,10 @@ prefix="$HOME/Library/Developer/Xcode/DerivedData/cc-$(basename "$root")-$hash-"
 
 git -C "$main" worktree remove "$@" "$wt"
 echo "removed  $wt"
+
+if [ -n "$dest" ]; then
+  "$(dirname "$self")/cc-ledgers" archive "$ledger" "$dest" || echo "warning: registry not updated" >&2
+fi
 
 for build in "$prefix"*; do
   if [ -d "$build" ]; then

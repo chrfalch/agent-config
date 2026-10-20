@@ -1,5 +1,6 @@
 import type { Register } from 'claude-code'
 
+import { allCommand } from './all-command'
 import {
   activeLedger,
   folderSlug,
@@ -84,6 +85,8 @@ export const register: Register = on => {
   on('command.run', { command: 'ledger:worktrees' }, async ($, e) => ({ text: await worktreesCommand($, e.args ?? '') }))
 
   on('command.run', { command: 'ledger:retire' }, async ($, e) => ({ text: await retireCommand($, e.args ?? '') }))
+
+  on('command.run', { command: 'ledger:all' }, async ($, e) => ({ text: await allCommand($, e.args ?? '') }))
 
   on('command.run', { command: 'ledger:help' }, async () => ({ text: HELP }))
 

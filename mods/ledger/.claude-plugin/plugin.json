@@ -1,7 +1,7 @@
 {
   "name": "ledger",
-  "version": "0.6.0",
-  "description": "/ledger prints each task ledger's goal, current step and next step; /ledger:task starts a separate task with its own worktree and ledger; /ledger:update writes the latest results to the ledger; /ledger:close writes the ledger and clears the session; /ledger:next does the same, then continues the task in the new session; /ledger:go <slug> does the same, then continues in the task named <slug>; /ledger:worktrees prints each linked git worktree's size, last commit, dirty files, ledger and PR; /ledger:retire archives a task's ledger and removes its worktree; /ledger:help lists these commands",
+  "version": "0.7.0",
+  "description": "/ledger prints each task ledger's goal, current step and next step; /ledger:task starts a separate task with its own worktree and ledger; /ledger:update writes the latest results to the ledger; /ledger:close writes the ledger and clears the session; /ledger:next does the same, then continues the task in the new session; /ledger:go <slug> does the same, then continues in the task named <slug>; /ledger:worktrees prints each linked git worktree's size, last commit, dirty files, ledger and PR; /ledger:retire archives a task's ledger and removes its worktree; /ledger:all lists every task ledger on this machine, active and archived; /ledger:help lists these commands",
   "author": { "name": "Christian Falch" },
   "types": "./types/index.d.ts"
 }

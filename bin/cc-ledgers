@@ -1,0 +1,263 @@
+#!/usr/bin/env node
+// Keeps ~/.claude/ledgers.json: one entry for every task ledger on this machine, active or archived.
+// Usage: cc-ledgers upsert <ledger>... [--repo <name>] [--slug <slug>] [--branch <name>]  (flags with one ledger only)
+//        cc-ledgers archive <ledger> <archive-copy>
+//        cc-ledgers list [--json]
+//        cc-ledgers scan [--json] [<folder>...]
+// An active entry is known by its ledger path, an archived one by its archive path: a worktree
+// folder can be reused by a later task, and that must not overwrite the archived one.
+'use strict';
+const { spawnSync } = require('node:child_process');
+const fs = require('node:fs');
+const path = require('node:path');
+
+const usage = [
+  'usage: cc-ledgers upsert <ledger>... [--repo <name>] [--slug <slug>] [--branch <name>]  (flags with one ledger only)',
+  '       cc-ledgers archive <ledger> <archive-copy>',
+  '       cc-ledgers list [--json]',
+  '       cc-ledgers scan [--json] [<folder>...]',
+].join('\n');
+
+const home = process.env.HOME || fail('HOME is not set');
+const registry = path.join(home, '.claude', 'ledgers.json');
+const archiveRoot = path.join(home, '.claude', 'ledger-archive');
+const SKIPPED = new Set(['node_modules', '.git', 'Pods', 'DerivedData', 'build', 'dist']);
+const MAX_DEPTH = 7;
+
+function fail(message) {
+  console.error(message);
+  process.exit(1);
+}
+
+function parseRegistry() {
+  let text;
+  try {
+    text = fs.readFileSync(registry, 'utf8');
+  } catch (error) {
+    if (error.code === 'ENOENT') return [];
+    throw error;
+  }
+  try {
+    const entries = JSON.parse(text);
+    if (Array.isArray(entries)) return entries;
+  } catch {}
+  return undefined;
+}
+
+const exists = (e) => fs.existsSync(e.status === 'archived' ? e.archivePath : e.path);
+
+// upsert and archive keep every other entry, so an unparsable file must stop them: written back,
+// it would lose them all. list and scan read it as empty; scan rebuilds it from disk anyway.
+function readRegistry({ strict, keep = () => false }) {
+  const entries = parseRegistry();
+  if (entries === undefined) {
+    if (strict) fail(`${registry} is not a JSON array; left unchanged. Fix it, or rebuild it with cc-ledgers scan.`);
+    console.error(`warning: ${registry} is not a JSON array, read as empty`);
+    return { entries: [], dropped: false };
+  }
+  const kept = entries.filter((e) => exists(e) || keep(e));
+  return { entries: kept, dropped: kept.length < entries.length };
+}
+
+const newestFirst = (entries) => [...entries].sort((a, b) => (a.updated < b.updated ? 1 : a.updated > b.updated ? -1 : 0));
+
+function writeRegistry(entries) {
+  fs.mkdirSync(path.dirname(registry), { recursive: true });
+  const temporary = `${registry}.tmp-${process.pid}`;
+  fs.writeFileSync(temporary, `${JSON.stringify(newestFirst(entries), null, 2)}\n`);
+  try {
+    fs.renameSync(temporary, registry);
+  } catch (error) {
+    fs.rmSync(temporary, { force: true });
+    throw error;
+  }
+}
+
+function print(entries, json) {
+  const sorted = newestFirst(entries);
+  if (json) {
+    console.log(JSON.stringify(sorted, null, 2));
+    return;
+  }
+  for (const { repo, slug, status, updated, path: ledger, archivePath } of sorted) {
+    console.log([repo, slug, status, updated, archivePath ?? ledger].join('\t'));
+  }
+}
+
+function entry({ repo, slug, path: ledger, branch, status, created, updated, archivePath }) {
+  return { repo, slug, path: ledger, branch, status, created, updated, ...(status === 'archived' ? { archivePath } : {}) };
+}
+
+const isActive = (ledger) => (e) => e.status === 'active' && e.path === ledger;
+const isArchived = (copy) => (e) => e.status === 'archived' && e.archivePath === copy;
+
+// Same match as slug() in hooks/ledger-list.sh.
+function titleSlug(text) {
+  return text.match(/^# Task ledger[ \t]*(?:—|-)[ \t]*(.*)$/m)?.[1].trim() ?? '';
+}
+
+function location(text) {
+  const section = text.split(/^## /m).find((part) => part.startsWith('Location'));
+  const field = (name) => {
+    const value = section?.match(new RegExp(`^- ${name}:[ \\t]*(.*)$`, 'm'))?.[1].trim() ?? '';
+    return /^(<.*>)?$/.test(value) ? undefined : value;
+  };
+  return { worktree: field('worktree'), branch: field('branch') };
+}
+
+function bornAt(stat) {
+  return (stat.birthtimeMs > 0 ? stat.birthtime : stat.mtime).toISOString();
+}
+
+function gitInfo(folder) {
+  const result = spawnSync('git', ['-C', folder, 'rev-parse', '--path-format=absolute', '--git-common-dir', '--abbrev-ref', 'HEAD'], {
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'ignore'],
+  });
+  const [common, head] = result.status === 0 ? result.stdout.split('\n') : [];
+  if (!common) return { repo: path.basename(folder), branch: '' };
+  return { repo: path.basename(path.dirname(common)), branch: head === 'HEAD' ? '' : head ?? '' };
+}
+
+function activeEntry(ledger, given, previous) {
+  const stat = fs.statSync(ledger);
+  const worktree = path.dirname(path.dirname(ledger));
+  const git = given.repo !== undefined && given.branch !== undefined ? {} : gitInfo(worktree);
+  return entry({
+    repo: given.repo ?? git.repo,
+    slug: given.slug ?? (titleSlug(fs.readFileSync(ledger, 'utf8')) || path.basename(worktree)),
+    path: ledger,
+    branch: given.branch ?? git.branch,
+    status: 'active',
+    created: previous?.created ?? bornAt(stat),
+    updated: stat.mtime.toISOString(),
+  });
+}
+
+function archivedEntry(copy, fallbackLedger, previous) {
+  const stat = fs.statSync(copy);
+  const text = fs.readFileSync(copy, 'utf8');
+  const { worktree, branch } = location(text);
+  return entry({
+    repo: path.basename(path.dirname(copy)),
+    slug: titleSlug(text) || path.basename(copy, '.md').replace(/^\d{4}-\d\d-\d\d-/, ''),
+    path: worktree ? path.join(worktree, '.claude', 'ledger.md') : fallbackLedger,
+    branch: branch ?? '',
+    status: 'archived',
+    created: previous?.created ?? bornAt(stat),
+    updated: stat.mtime.toISOString(),
+    archivePath: copy,
+  });
+}
+
+function upsert(args) {
+  const given = {};
+  const ledgers = [];
+  for (let i = 0; i < args.length; i++) {
+    const flag = { '--repo': 'repo', '--slug': 'slug', '--branch': 'branch' }[args[i]];
+    if (flag && i + 1 < args.length) given[flag] = args[++i];
+    else if (!flag && !args[i].startsWith('-')) ledgers.push(path.resolve(args[i]));
+    else fail(usage);
+  }
+  if (ledgers.length === 0 || (ledgers.length > 1 && Object.keys(given).length > 0)) fail(usage);
+  const isFile = (file) => fs.statSync(file, { throwIfNoEntry: false })?.isFile() ?? false;
+  const missing = ledgers.filter((ledger) => !isFile(ledger));
+  for (const ledger of missing) console.error(`no ledger at ${ledger}`);
+  const found = ledgers.filter(isFile);
+  if (found.length > 0) {
+    let { entries } = readRegistry({ strict: true });
+    for (const ledger of found) {
+      const previous = entries.find(isActive(ledger));
+      entries = [...entries.filter((e) => e !== previous), activeEntry(ledger, given, previous)];
+    }
+    writeRegistry(entries);
+  }
+  if (missing.length > 0) process.exit(1);
+}
+
+function archive(args) {
+  if (args.length !== 2) fail(usage);
+  const [ledger, copy] = args.map((arg) => path.resolve(arg));
+  if (!fs.statSync(copy, { throwIfNoEntry: false })?.isFile()) fail(`no archive copy at ${copy}`);
+  // cc-worktree-retire archives after it removes the worktree, so the active entry's ledger is already gone.
+  const { entries } = readRegistry({ strict: true, keep: isActive(ledger) });
+  const active = entries.find(isActive(ledger));
+  const archived = entries.find(isArchived(copy));
+  const base = archived ?? active ?? archivedEntry(copy, ledger);
+  const updated = new Date().toISOString();
+  writeRegistry([
+    ...entries.filter((e) => e !== active && e !== archived),
+    entry({ ...base, status: 'archived', archivePath: copy, updated }),
+  ]);
+}
+
+function list(args) {
+  const json = args.includes('--json');
+  if (args.some((arg) => arg !== '--json')) fail(usage);
+  const { entries, dropped } = readRegistry({ strict: false });
+  if (dropped) writeRegistry(entries);
+  print(entries, json);
+}
+
+function findLedgers(folder, depth, found) {
+  let children;
+  try {
+    children = fs.readdirSync(folder, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  for (const child of children) {
+    if (!child.isDirectory() || SKIPPED.has(child.name)) continue;
+    const childPath = path.join(folder, child.name);
+    if (child.name === '.claude') {
+      const ledger = path.join(childPath, 'ledger.md');
+      if (fs.statSync(ledger, { throwIfNoEntry: false })?.isFile()) found.add(ledger);
+    }
+    if (depth < MAX_DEPTH) findLedgers(childPath, depth + 1, found);
+  }
+}
+
+function listFolder(folder) {
+  try {
+    return fs.readdirSync(folder, { withFileTypes: true });
+  } catch (error) {
+    if (error.code === 'ENOENT') return [];
+    throw error;
+  }
+}
+
+function archiveCopies() {
+  return listFolder(archiveRoot)
+    .filter((repo) => repo.isDirectory())
+    .flatMap((repo) =>
+      listFolder(path.join(archiveRoot, repo.name))
+        .filter((file) => file.isFile() && file.name.endsWith('.md'))
+        .map((file) => path.join(archiveRoot, repo.name, file.name)),
+    );
+}
+
+function scan(args) {
+  const json = args.includes('--json');
+  const given = args.filter((arg) => arg !== '--json');
+  if (given.some((arg) => arg.startsWith('-'))) fail(usage);
+  const roots = given.length > 0 ? given.map((arg) => path.resolve(arg)) : [path.join(home, 'repos'), path.join(home, 'issues')];
+  const { entries: previous } = readRegistry({ strict: false });
+
+  const ledgers = new Set();
+  for (const root of roots) findLedgers(root, 1, ledgers);
+  const active = [...ledgers].map((ledger) => activeEntry(ledger, {}, previous.find(isActive(ledger))));
+  const archived = archiveCopies().map((copy) => archivedEntry(copy, '', previous.find(isArchived(copy))));
+
+  writeRegistry([...active, ...archived]);
+  console.error(`rebuilt ${registry}: ${active.length} active, ${archived.length} archived`);
+  print([...active, ...archived], json);
+}
+
+const commands = { upsert, archive, list, scan };
+const [command, ...args] = process.argv.slice(2);
+if (!Object.hasOwn(commands, command ?? '')) fail(usage);
+try {
+  commands[command](args);
+} catch (error) {
+  fail(`cc-ledgers ${command}: ${error.message}`);
+}

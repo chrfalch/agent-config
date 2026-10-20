@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import test, { type TestContext } from 'node:test';
 import { freshHome, REPO, run } from './helpers.js';
@@ -85,6 +85,38 @@ test('creates a worktree, branch and filled ledger from the main checkout', (t) 
   );
 });
 
+test('registers the new ledger as active in ~/.claude/ledgers.json', (t) => {
+  const { home, main } = checkout(t);
+  const result = taskNew(home, main, 'fix-login', '--branch', 'me/fix-login');
+  assert.equal(result.status, 0, result.stderr);
+
+  const entries = JSON.parse(readFileSync(path.join(home, '.claude/ledgers.json'), 'utf8')) as Record<string, string>[];
+  assert.deepEqual(
+    entries.map(({ repo, slug, path, branch, status }) => ({ repo, slug, path, branch, status })),
+    [
+      {
+        repo: 'main',
+        slug: 'fix-login',
+        path: path.join(main, '.claude/worktrees/fix-login/.claude/ledger.md'),
+        branch: 'me/fix-login',
+        status: 'active',
+      },
+    ],
+  );
+});
+
+test('creates the task even when the registry cannot be written', (t) => {
+  const { home, main } = checkout(t);
+  rmSync(path.join(home, '.claude'), { recursive: true });
+  writeFileSync(path.join(home, '.claude'), 'a file, so ~/.claude/ledgers.json cannot exist');
+
+  const result = taskNew(home, main, 'fix-login');
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stderr, /warning: registry not updated/);
+  assert.ok(existsSync(path.join(main, '.claude/worktrees/fix-login/.claude/ledger.md')));
+});
+
 test('keeps the goal placeholder when no goal is given', (t) => {
   const { home, main } = checkout(t);
   const result = taskNew(home, main, 'fix-login');
@@ -149,6 +181,7 @@ test('removes the new worktree and branch when a step after creating them fails'
   assert.equal(branches(home, main), branchesBefore);
   assert.equal(git(home, main, 'worktree', 'list', '--porcelain'), worktreesBefore);
   assert.equal(existsSync(path.join(main, '.claude/worktrees/fix-login')), false);
+  assert.equal(existsSync(path.join(home, '.claude/ledgers.json')), false);
 });
 
 test('from a linked worktree, lands under the main checkout and leaves the caller ledger alone', (t) => {

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Keeps ~/.claude/ledgers.json: one entry for every task ledger on this machine, active or archived.
-// Usage: cc-ledgers upsert <ledger>... [--repo <name>] [--slug <slug>] [--branch <name>]  (flags with one ledger only)
+// Usage: cc-ledgers upsert <ledger>... [--repo <name>] [--slug <slug>] [--branch <name>] [--parent <slug>]  (flags with one ledger only)
 //        cc-ledgers archive <ledger> <archive-copy>
 //        cc-ledgers list [--json]
 //        cc-ledgers scan [--json] [<folder>...]
@@ -12,7 +12,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const usage = [
-  'usage: cc-ledgers upsert <ledger>... [--repo <name>] [--slug <slug>] [--branch <name>]  (flags with one ledger only)',
+  'usage: cc-ledgers upsert <ledger>... [--repo <name>] [--slug <slug>] [--branch <name>] [--parent <slug>]  (flags with one ledger only)',
   '       cc-ledgers archive <ledger> <archive-copy>',
   '       cc-ledgers list [--json]',
   '       cc-ledgers scan [--json] [<folder>...]',
@@ -84,8 +84,18 @@ function print(entries, json) {
   }
 }
 
-function entry({ repo, slug, path: ledger, branch, status, created, updated, archivePath }) {
-  return { repo, slug, path: ledger, branch, status, created, updated, ...(status === 'archived' ? { archivePath } : {}) };
+function entry({ repo, slug, path: ledger, branch, parent, status, created, updated, archivePath }) {
+  return {
+    repo,
+    slug,
+    path: ledger,
+    branch,
+    ...(parent ? { parent } : {}),
+    status,
+    created,
+    updated,
+    ...(status === 'archived' ? { archivePath } : {}),
+  };
 }
 
 const isActive = (ledger) => (e) => e.status === 'active' && e.path === ledger;
@@ -102,7 +112,7 @@ function location(text) {
     const value = section?.match(new RegExp(`^- ${name}:[ \\t]*(.*)$`, 'm'))?.[1].trim() ?? '';
     return /^(<.*>)?$/.test(value) ? undefined : value;
   };
-  return { worktree: field('worktree'), branch: field('branch') };
+  return { worktree: field('worktree'), branch: field('branch'), parent: field('parent') };
 }
 
 function bornAt(stat) {
@@ -123,11 +133,13 @@ function activeEntry(ledger, given, previous) {
   const stat = fs.statSync(ledger);
   const worktree = path.dirname(path.dirname(ledger));
   const git = given.repo !== undefined && given.branch !== undefined ? {} : gitInfo(worktree);
+  const text = fs.readFileSync(ledger, 'utf8');
   return entry({
     repo: given.repo ?? git.repo,
-    slug: given.slug ?? (titleSlug(fs.readFileSync(ledger, 'utf8')) || path.basename(worktree)),
+    slug: given.slug ?? (titleSlug(text) || path.basename(worktree)),
     path: ledger,
     branch: given.branch ?? git.branch,
+    parent: given.parent ?? location(text).parent,
     status: 'active',
     created: previous?.created ?? bornAt(stat),
     updated: stat.mtime.toISOString(),
@@ -137,12 +149,13 @@ function activeEntry(ledger, given, previous) {
 function archivedEntry(copy, fallbackLedger, previous) {
   const stat = fs.statSync(copy);
   const text = fs.readFileSync(copy, 'utf8');
-  const { worktree, branch } = location(text);
+  const { worktree, branch, parent } = location(text);
   return entry({
     repo: path.basename(path.dirname(copy)),
     slug: titleSlug(text) || path.basename(copy, '.md').replace(/^\d{4}-\d\d-\d\d-/, ''),
     path: worktree ? path.join(worktree, '.claude', 'ledger.md') : fallbackLedger,
     branch: branch ?? '',
+    parent,
     status: 'archived',
     created: previous?.created ?? bornAt(stat),
     updated: stat.mtime.toISOString(),
@@ -154,7 +167,7 @@ function upsert(args) {
   const given = {};
   const ledgers = [];
   for (let i = 0; i < args.length; i++) {
-    const flag = { '--repo': 'repo', '--slug': 'slug', '--branch': 'branch' }[args[i]];
+    const flag = { '--repo': 'repo', '--slug': 'slug', '--branch': 'branch', '--parent': 'parent' }[args[i]];
     if (flag && i + 1 < args.length) given[flag] = args[++i];
     else if (!flag && !args[i].startsWith('-')) ledgers.push(path.resolve(args[i]));
     else fail(usage);

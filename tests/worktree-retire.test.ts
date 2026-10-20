@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import test, { type TestContext } from 'node:test';
 import { freshHome, REPO, run } from './helpers.js';
@@ -250,4 +250,165 @@ test('retire --delete-branch <sha> marks the ledger archived and deletes the bra
     registered(home).map(({ path, status, archivePath }) => ({ path, status, archivePath })),
     [{ path: ledger, status: 'archived', archivePath: archivedPath(result.stdout) }],
   );
+});
+
+function taskIn(home: string, folder: string, slug: string, rest: string) {
+  const worktree = path.join(home, folder);
+  git(home, mainOf(home), 'worktree', 'add', '--quiet', '-b', `test/${folder}`, worktree);
+  const ledger = path.join(worktree, '.claude/ledger.md');
+  mkdirSync(path.dirname(ledger));
+  writeFileSync(ledger, `# Task ledger — ${slug}\n\n## Location\n- worktree: ${worktree}\n- branch: test/${folder}\n${rest}`);
+  return { worktree, ledger };
+}
+
+// The retiring child is wt-title in wt-a; the parent is epic in wt-epic.
+function family(t: TestContext, children: string) {
+  const { home, worktree, ledger } = worktreeWithLedger(t);
+  writeFileSync(ledger, `${readFileSync(ledger, 'utf8')}- parent: epic\n`);
+  const parent = taskIn(home, 'wt-epic', 'epic', `\n## Children\n${children}\n## Next step\nWait.\n`);
+  return { home, worktree, parent };
+}
+
+const today = () => {
+  const now = new Date();
+  return [now.getFullYear(), now.getMonth() + 1, now.getDate()].map((part) => String(part).padStart(2, '0')).join('-');
+};
+const HINT = 'Parent epic has no active children left. Retire it with /ledger:retire epic --yes.';
+
+test('retire of a child marks it retired in the parent Children section', (t) => {
+  const { home, worktree, parent } = family(t, '- wt-title\n- sibling\n');
+  const before = readFileSync(parent.ledger, 'utf8');
+
+  const result = run(home, retire, worktree);
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(readFileSync(parent.ledger, 'utf8'), before.replace('- wt-title\n', `- wt-title (retired ${today()})\n`));
+  assert.doesNotMatch(result.stdout, /^Parent /m);
+});
+
+test('retire of the last active child prints one line that names the parent to retire', (t) => {
+  const { home, worktree, parent } = family(t, '- sibling (retired 2026-10-01)\n- wt-title\n');
+
+  const result = run(home, retire, worktree);
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(readFileSync(parent.ledger, 'utf8'), new RegExp(`^- wt-title \\(retired ${today()}\\)$`, 'm'));
+  assert.deepEqual(result.stdout.split('\n').filter((line) => line.startsWith('Parent ')), [HINT]);
+});
+
+test('retire leaves the parent Children section as it is when the worktree removal fails', (t) => {
+  const { home, worktree, parent } = family(t, '- wt-title\n');
+  const before = readFileSync(parent.ledger, 'utf8');
+  writeFileSync(path.join(worktree, 'file.txt'), 'changed\n');
+
+  const result = run(home, retire, worktree);
+
+  assert.notEqual(result.status, 0);
+  assert.equal(readFileSync(parent.ledger, 'utf8'), before);
+  assert.doesNotMatch(result.stdout, /^Parent /m);
+});
+
+test('retire refuses a parent with active children, names them, and changes nothing', (t) => {
+  const { home, parent } = family(t, '- wt-title\n- sibling (retired 2026-10-01)\n- other\n');
+
+  const result = run(home, retire, parent.worktree);
+
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /^[^\n]*wt-title, other[^\n]*--force[^\n]*\n$/);
+  assert.doesNotMatch(result.stderr, /sibling/);
+  assert.equal(result.stdout, '');
+  assert.ok(existsSync(parent.worktree));
+  assert.equal(existsSync(path.join(home, '.claude/ledger-archive')), false);
+});
+
+test('retire --force retires a parent with active children', (t) => {
+  const { home, parent } = family(t, '- wt-title\n');
+
+  const result = run(home, retire, parent.worktree, '--force');
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(existsSync(parent.worktree), false);
+  assert.match(result.stdout, /^archived /m);
+});
+
+test('retire of a parent whose children are all retired needs no --force', (t) => {
+  const { home, parent } = family(t, '- wt-title (retired 2026-10-01)\n');
+
+  const result = run(home, retire, parent.worktree);
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(existsSync(parent.worktree), false);
+});
+
+test('retire -f retires a parent with active children, as --force does', (t) => {
+  const { home, parent } = family(t, '- wt-title\n');
+
+  const result = run(home, retire, parent.worktree, '-f');
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(existsSync(parent.worktree), false);
+});
+
+test('retire of a child marks it retired in a CRLF parent ledger and keeps CRLF', (t) => {
+  const { home, worktree, parent } = family(t, '- wt-title\n');
+  const childLedger = path.join(worktree, '.claude/ledger.md');
+  for (const ledger of [childLedger, parent.ledger]) writeFileSync(ledger, readFileSync(ledger, 'utf8').replace(/\n/g, '\r\n'));
+  const before = readFileSync(parent.ledger, 'utf8');
+
+  const result = run(home, retire, worktree);
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(readFileSync(parent.ledger, 'utf8'), before.replace('- wt-title\r\n', `- wt-title (retired ${today()})\r\n`));
+  assert.deepEqual(result.stdout.split('\n').filter((line) => line.startsWith('Parent ')), [HINT]);
+});
+
+test('retire reads only the section headed exactly Children', (t) => {
+  const { home, worktree, parent } = family(t, '- wt-title\n');
+  const stale = '## Children (old)\n- other\n- wt-title\n\n';
+  writeFileSync(parent.ledger, readFileSync(parent.ledger, 'utf8').replace('## Children\n', `${stale}## Children \t\n`));
+  const before = readFileSync(parent.ledger, 'utf8');
+
+  const result = run(home, retire, worktree);
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(
+    readFileSync(parent.ledger, 'utf8'),
+    before.replace('## Children \t\n- wt-title\n', `## Children \t\n- wt-title (retired ${today()})\n`),
+  );
+  assert.deepEqual(result.stdout.split('\n').filter((line) => line.startsWith('Parent ')), [HINT]);
+});
+
+test('retire does not count the lines of a section that only starts with Children', (t) => {
+  const { home } = worktreeWithLedger(t);
+  const old = taskIn(home, 'wt-old', 'old', '\n## Children (old)\n- other\n');
+
+  const result = run(home, retire, old.worktree);
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(existsSync(old.worktree), false);
+});
+
+test('retire finishes when the parent ledger cannot be written, and names the line to change by hand', (t) => {
+  const { home, worktree, parent } = family(t, '- wt-title\n');
+  const before = readFileSync(parent.ledger, 'utf8');
+  const folder = path.dirname(parent.ledger);
+
+  chmodSync(folder, 0o555);
+  let result;
+  try {
+    result = run(home, retire, worktree, '--delete-branch', headOf(home, worktree));
+  } finally {
+    chmodSync(folder, 0o755);
+  }
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(readFileSync(parent.ledger, 'utf8'), before);
+  assert.equal(existsSync(worktree), false);
+  assert.equal(hasBranch(home, mainOf(home), 'test/wt-a'), false);
+  assert.equal(registered(home)[0]?.status, 'archived');
+  const lines = result.stderr.split('\n').filter(Boolean);
+  assert.equal(lines.length, 1, result.stderr);
+  assert.ok(lines[0]?.includes(parent.ledger), result.stderr);
+  assert.ok(lines[0]?.includes(`- wt-title (retired ${today()})`), result.stderr);
+  assert.doesNotMatch(result.stdout, /^Parent /m);
 });

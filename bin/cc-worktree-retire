@@ -3,6 +3,8 @@
 # --delete-branch <sha> then deletes the worktree's local branch, but only while it still points at
 # <sha>. The caller decides whether that commit is merged: a squash-merged branch never looks merged
 # to git. A branch that moved since is kept, and retiring still succeeds.
+# A parent ledger with children not yet retired needs --force. A retired child is marked retired in
+# its parent's ## Children section (see cc-ledger-parent).
 # Usage: cc-worktree-retire <worktree-path> [--delete-branch <sha>] [git worktree remove flags]
 set -eu
 
@@ -25,6 +27,7 @@ while [ -L "$self" ]; do
 done
 
 delete_sha=""
+force=""
 remove_flags=()
 while [ $# -gt 0 ]; do
   if [ "$1" = "--delete-branch" ]; then
@@ -32,10 +35,25 @@ while [ $# -gt 0 ]; do
     [[ "$delete_sha" =~ ^[0-9a-f]{40}([0-9a-f]{24})?$ ]] || usage
     shift 2
   else
+    case "$1" in --force|-f) force=1 ;; esac
     remove_flags+=("$1")
     shift
   fi
 done
+
+# Same match as slug() in hooks/ledger-list.sh.
+title_slug() {
+  sed -n -E '/^# Task ledger[[:space:]]*(—|-)[[:space:]]*/{s///;s/[[:space:]]+$//;p;q;}' "$1"
+}
+
+section() {
+  awk -v heading="## $2" '/^## / { title = $0; sub(/[ \t\r]+$/, "", title); inside = title == heading; next } inside' "$1"
+}
+
+# The format cc-ledger-parent writes: `- <slug>`, or `- <slug> (retired YYYY-MM-DD)`.
+active_children() {
+  section "$1" Children | sed -n -E '/^- [A-Za-z0-9._-]+ \(retired [0-9]{4}-[0-9]{2}-[0-9]{2}\)[[:space:]]*$/d; s/^- ([A-Za-z0-9._-]+)[[:space:]]*$/\1/p'
+}
 
 wt=$(cd "$arg" 2>/dev/null; pwd)
 if [ -z "$wt" ]; then
@@ -58,6 +76,26 @@ if [ -z "$slug" ]; then
 fi
 
 ledger="$wt/.claude/ledger.md"
+task="" parent="" parent_ledger=""
+if [ -f "$ledger" ]; then
+  task=$(title_slug "$ledger")
+  active=$(active_children "$ledger" | paste -sd, - | sed 's/,/, /g')
+  if [ -n "$active" ] && [ -z "$force" ]; then
+    echo "${task:-$slug} has active children: $active. Retire them first, or pass --force." >&2
+    exit 1
+  fi
+  parent=$(section "$ledger" Location | sed -n -E '/^- parent:[[:space:]]*</d; s/^- parent:[[:space:]]*([^[:space:]]+)[[:space:]]*$/\1/p' | head -n 1)
+fi
+if [ -n "$parent" ]; then
+  while IFS= read -r line; do
+    candidate="${line#worktree }/.claude/ledger.md"
+    if [ "$line" != "${line#worktree }" ] && [ -f "$candidate" ] && [ "$(title_slug "$candidate")" = "$parent" ]; then
+      parent_ledger="$candidate"
+      break
+    fi
+  done < <(git -C "$main" worktree list --porcelain)
+fi
+
 dest=""
 if [ -f "$ledger" ]; then
   archive="$HOME/.claude/ledger-archive/$repo"
@@ -95,6 +133,30 @@ prefix="$HOME/Library/Developer/Xcode/DerivedData/cc-$(basename "$root")-$hash-"
 git -C "$main" worktree remove ${remove_flags[@]+"${remove_flags[@]}"} "$wt"
 echo "removed  $wt"
 
+# After the removal, so a refused removal leaves the parent's Children section as it was. Best
+# effort: the worktree is gone, so a rerun could not finish what an exit here would skip.
+marked=""
+if [ -n "$parent_ledger" ]; then
+  today=$(date +%F)
+  if { TASK_CHILD="$task" TASK_TODAY="$today" awk '
+    /^## / { title = $0; sub(/[ \t\r]+$/, "", title); inside = title == "## Children" }
+    inside {
+      line = $0
+      cr = sub(/\r$/, "", line) ? "\r" : ""
+      sub(/[ \t]+$/, "", line)
+      if (line == "- " ENVIRON["TASK_CHILD"]) $0 = line " (retired " ENVIRON["TASK_TODAY"] ")" cr
+    }
+    { print }
+  ' "$parent_ledger" > "$parent_ledger.tmp-$$" && mv "$parent_ledger.tmp-$$" "$parent_ledger"; } 2>/dev/null; then
+    marked=1
+  else
+    rm -f "$parent_ledger.tmp-$$"
+    echo "warning: could not update $parent_ledger; under ## Children, change '- $task' to '- $task (retired $today)' by hand" >&2
+  fi
+elif [ -n "$parent" ]; then
+  echo "warning: no ledger for parent $parent in this repository, so its Children section is not updated" >&2
+fi
+
 if [ -n "$dest" ]; then
   "$(dirname "$self")/cc-ledgers" archive "$ledger" "$dest" || echo "warning: registry not updated" >&2
 fi
@@ -118,4 +180,8 @@ if [ -n "$delete_sha" ]; then
   else
     echo "kept     branch $branch, because git could not delete it: $error"
   fi
+fi
+
+if [ -n "$marked" ] && [ -z "$(active_children "$parent_ledger")" ]; then
+  echo "Parent $parent has no active children left. Retire it with /ledger:retire $parent --yes."
 fi

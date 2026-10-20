@@ -186,7 +186,7 @@ repo edits need another deploy.
 
 ## The hooks
 
-Deploy asserts four hook events in `~/.claude/settings.json`. They run six
+Deploy asserts five hook events in `~/.claude/settings.json`. They run six
 scripts from `hooks/`:
 
 - **SessionStart, `ledger-list.sh`** — reads the task ledger into the new
@@ -195,6 +195,9 @@ scripts from `hooks/`:
   what makes `/clear` then `go` work.
 - **SessionStart, `deploy-drift.sh`** — warns when `~/.claude` is behind this
   repo.
+- **UserPromptSubmit, `ledger-list.sh prompt-submit`** — names the session
+  after the task when you type `go <slug>`. It replaces an empty title or the
+  name of another task. A name you gave with `/rename` stays.
 - **PreCompact, `ledger-list.sh pre-compact`** — tells the compaction pass that
   the ledger is authoritative, and that its path and Next step must survive
   verbatim.

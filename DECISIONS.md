@@ -428,3 +428,18 @@ session from a `command.run` hook, and a command that a hook answers ends no
 turn, so `turn.complete` never fires. The command prompt therefore always runs.
 When the session has no ledger, the prompt writes nothing, and the end of its
 turn clears the session and sends `go <slug>`.
+
+## 2026-10-20 — `go <slug>` names the session from a UserPromptSubmit hook
+
+**The problem.** After `/ledger:go` or `/ledger:next`, the new session kept
+the title of the previous task. `/clear` carries the old title over, and
+Claude Code ignores a SessionStart hook's `sessionTitle` when the source is
+`clear`.
+
+**UserPromptSubmit sets the title.** Claude Code applies `sessionTitle` from
+this hook. `ledger-list.sh prompt-submit` acts on a prompt that is exactly
+`go <slug>`, and only when an active ledger in the repo has that slug.
+
+**A title from `/rename` stays.** The hook replaces a title only when it is
+empty, or when it is the slug of an active or archived ledger. Any other
+title was given by the operator.

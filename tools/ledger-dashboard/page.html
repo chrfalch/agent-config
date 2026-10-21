@@ -1,0 +1,429 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Task ledgers</title>
+<link rel="icon" href="data:,">
+<style nonce="{{nonce}}">
+  :root {
+    color-scheme: light dark;
+    --bg: #ffffff; --fg: #1f2328; --muted: #656d76; --line: #d0d7de; --panel: #f6f8fa;
+    --accent: #0969da; --selected: #ddf4ff; --danger: #cf222e; --code: #eff1f3;
+    --active: #1a7f37; --parked: #9a6700; --archived: #656d76;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0d1117; --fg: #e6edf3; --muted: #9198a1; --line: #30363d; --panel: #161b22;
+      --accent: #4493f8; --selected: #1f2d3d; --danger: #f85149; --code: #262c36;
+      --active: #3fb950; --parked: #d29922; --archived: #9198a1;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; background: var(--bg); color: var(--fg); }
+  [hidden] { display: none !important; }
+  .top { display: flex; align-items: baseline; gap: 12px; padding: 16px 20px 8px; flex-wrap: wrap; }
+  .top h1 { margin: 0; font-size: 20px; }
+  .top .count { color: var(--muted); }
+  .top .spacer { flex: 1; }
+  .filters { display: flex; gap: 12px; padding: 0 20px 12px; flex-wrap: wrap; align-items: center; }
+  .filters label { color: var(--muted); display: flex; gap: 6px; align-items: center; }
+  select, input, button { font: inherit; color: inherit; }
+  select, input { background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; }
+  input[type=search] { min-width: 260px; flex: 1; max-width: 420px; }
+  button { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 5px 12px; cursor: pointer; }
+  button:hover { border-color: var(--muted); }
+  button:disabled { opacity: .6; cursor: default; }
+  button.danger { color: var(--danger); }
+  button.danger.strong { background: var(--danger); border-color: var(--danger); color: #fff; }
+  .notice { margin: 0 20px 12px; padding: 8px 12px; border-radius: 6px; background: var(--panel); border: 1px solid var(--line); }
+  .notice.error { border-color: var(--danger); color: var(--danger); }
+  .layout { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; padding: 0 20px 20px; }
+  .layout.open { grid-template-columns: minmax(0, 3fr) minmax(360px, 2fr); }
+  @media (max-width: 960px) { .layout.open { grid-template-columns: minmax(0, 1fr); } }
+  table.ledgers { width: 100%; border-collapse: collapse; }
+  table.ledgers th { text-align: left; font-weight: 600; color: var(--muted); border-bottom: 1px solid var(--line); padding: 6px 8px; position: sticky; top: 0; background: var(--bg); }
+  table.ledgers td { border-bottom: 1px solid var(--line); padding: 6px 8px; vertical-align: top; }
+  table.ledgers td.when { white-space: nowrap; color: var(--muted); font-variant-numeric: tabular-nums; }
+  table.ledgers td.slug { font-weight: 600; }
+  table.ledgers .next { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; }
+  table.ledgers tbody tr { cursor: pointer; }
+  table.ledgers tbody tr:hover { background: var(--panel); }
+  table.ledgers tbody tr[aria-selected=true] { background: var(--selected); }
+  table.ledgers tbody tr:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .status { white-space: nowrap; }
+  .status::before { content: "●"; margin-right: 6px; color: var(--muted); }
+  .status[data-status=active]::before { color: var(--active); }
+  .status[data-status=parked]::before { color: var(--parked); }
+  .status[data-status=archived]::before { color: var(--archived); }
+  .empty { color: var(--muted); padding: 24px 8px; }
+  aside { border: 1px solid var(--line); border-radius: 8px; padding: 16px; background: var(--bg); align-self: start; position: sticky; top: 12px; max-height: calc(100vh - 24px); overflow: auto; }
+  aside .head { display: flex; align-items: baseline; gap: 8px; }
+  aside h2 { margin: 0; font-size: 18px; flex: 1; overflow-wrap: anywhere; }
+  dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 2px 12px; margin: 12px 0; }
+  dt { color: var(--muted); }
+  dd { margin: 0; overflow-wrap: anywhere; }
+  .actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; align-items: center; }
+  .actions form { display: flex; gap: 6px; }
+  .actions form input { width: 220px; }
+  .box { border: 1px solid var(--line); border-radius: 6px; padding: 8px 12px; margin: 12px 0; background: var(--panel); overflow-wrap: anywhere; }
+  .box .buttons { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+  .box.error { border-color: var(--danger); }
+  .warning { color: var(--danger); }
+  .markdown { border-top: 1px solid var(--line); margin-top: 12px; padding-top: 4px; overflow-wrap: anywhere; }
+  .markdown h1 { font-size: 17px; } .markdown h2 { font-size: 15px; } .markdown h3, .markdown h4, .markdown h5, .markdown h6 { font-size: 14px; }
+  .markdown h1, .markdown h2, .markdown h3 { margin: 16px 0 6px; }
+  .markdown table { border-collapse: collapse; margin: 8px 0; display: block; overflow-x: auto; }
+  .markdown th, .markdown td { border: 1px solid var(--line); padding: 4px 8px; text-align: left; vertical-align: top; }
+  .markdown code { background: var(--code); border-radius: 4px; padding: 1px 4px; font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .markdown pre { background: var(--code); border-radius: 6px; padding: 8px 12px; overflow-x: auto; }
+  .markdown pre code { background: none; padding: 0; }
+  .markdown ul, .markdown ol { padding-left: 22px; }
+  .box p, .box ul { margin: 4px 0; }
+</style>
+</head>
+<body>
+<div class="top">
+  <h1>Task ledgers</h1>
+  <span class="count" id="count"></span>
+  <span class="spacer"></span>
+  <button id="rescan" title="Rebuild the list from the ledgers on disk, like /ledger:all --scan">Rescan disk</button>
+</div>
+<div class="filters">
+  <label>Repo <select id="repo"><option value="">All repos</option></select></label>
+  <label>Status <select id="status"><option value="">All statuses</option></select></label>
+  <input type="search" id="q" placeholder="Search the text of every ledger" aria-label="Search the text of every ledger">
+</div>
+<p class="notice" id="notice" role="status" hidden></p>
+<div class="layout" id="layout">
+  <section>
+    <table class="ledgers">
+      <thead><tr><th>Repo</th><th>Slug</th><th>Status</th><th>Updated</th><th>Next step</th></tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+    <p class="empty" id="empty" hidden>No ledger matches these filters.</p>
+  </section>
+  <aside id="detail" hidden aria-labelledby="detail-title">
+    <div class="head">
+      <h2 id="detail-title"></h2>
+      <button id="close" aria-label="Close the details">Close</button>
+    </div>
+    <dl id="meta"></dl>
+    <div class="actions" id="actions">
+      <button id="copy"></button>
+      <form id="park-form">
+        <input id="reason" placeholder="Why it waits" aria-label="Reason for parking" maxlength="300">
+        <button type="submit">Park</button>
+      </form>
+      <button id="unpark">Unpark</button>
+      <button id="retire" class="danger">Retire…</button>
+    </div>
+    <div class="box" id="retire-box" hidden>
+      <div id="plan"></div>
+      <p class="warning" id="blockers" hidden></p>
+      <div class="buttons">
+        <button id="confirm" class="danger strong">Retire</button>
+        <button id="force" class="danger strong">Retire anyway (--force)</button>
+        <button id="cancel">Cancel</button>
+      </div>
+    </div>
+    <div class="box" id="result" role="status" hidden></div>
+    <article class="markdown" id="body"></article>
+  </aside>
+</div>
+<script nonce="{{nonce}}">
+'use strict';
+// Kept for this tab, because the address loses the key below and a reload would have none.
+// Storage access throws where the browser blocks it; the key in the address still works then.
+const KEY_ITEM = 'ledger-dashboard-key';
+function readKey() {
+  const fromAddress = new URLSearchParams(location.hash.slice(1)).get('key');
+  try {
+    if (fromAddress) sessionStorage.setItem(KEY_ITEM, fromAddress);
+    return fromAddress || sessionStorage.getItem(KEY_ITEM) || '';
+  } catch {
+    return fromAddress || '';
+  }
+}
+const key = readKey();
+// Out of the address bar and the history, where the key would be seen or copied along with the address.
+history.replaceState(null, '', location.pathname + location.search);
+const $ = id => document.getElementById(id);
+// `preview` is the retire preview on screen: the task it is for and the token that retires that task.
+// `detailRequest` counts detail requests and closes, so only the reply to the latest request is shown, and a retire
+// preview only when no detail request or close came after it was asked for.
+const state = { selected: null, detail: null, preview: null, detailRequest: 0, searchTimer: 0 };
+
+class KeyError extends Error {}
+
+async function api(path, body) {
+  const init = body === undefined
+    ? { headers: { 'X-Ledger-Key': key } }
+    : { method: 'POST', headers: { 'X-Ledger-Key': key, 'Content-Type': 'application/json' }, body: JSON.stringify(body) };
+  const res = await fetch(path, init);
+  if (res.status === 401) throw new KeyError('The access key is missing or out of date. Open the address that /ledger:dashboard printed.');
+  const data = await res.json().catch(() => ({ error: `The server answered ${res.status} without JSON.` }));
+  return { ok: res.ok, data };
+}
+
+function notice(text, isError = false) {
+  const el = $('notice');
+  el.textContent = text;
+  el.classList.toggle('error', isError);
+  el.hidden = text === '';
+}
+
+const report = error => notice(error.message, true);
+
+const two = n => String(n).padStart(2, '0');
+function when(iso) {
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? iso : `${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())} ${two(d.getHours())}:${two(d.getMinutes())}`;
+}
+
+function cell(text, className) {
+  const td = document.createElement('td');
+  td.textContent = text;
+  if (className) td.className = className;
+  return td;
+}
+
+function fillSelect(select, values, everyLabel) {
+  const current = select.value;
+  select.replaceChildren(new Option(everyLabel, ''), ...values.map(value => new Option(value, value)));
+  select.value = values.includes(current) ? current : '';
+}
+
+const isSelected = id => id === state.selected;
+
+function render({ ledgers, total, repos, statuses }) {
+  fillSelect($('repo'), repos, 'All repos');
+  fillSelect($('status'), statuses, 'All statuses');
+  const active = ledgers.filter(row => row.status === 'active').length;
+  $('count').textContent = ledgers.length === total
+    ? `${total} ${total === 1 ? 'task' : 'tasks'}, ${active} active`
+    : `${ledgers.length} of ${total} tasks`;
+  $('rows').replaceChildren(...ledgers.map(row => {
+    const tr = document.createElement('tr');
+    tr.tabIndex = 0;
+    tr.dataset.id = row.id;
+    const status = cell(row.status, 'status');
+    status.dataset.status = row.status;
+    // Clamped in a div, because line-clamp does not apply to a table cell.
+    const next = document.createElement('td');
+    next.append(Object.assign(document.createElement('div'), { className: 'next', textContent: row.next }));
+    tr.append(cell(row.repo), cell(row.slug, 'slug'), status, cell(when(row.updated), 'when'), next);
+    const open = () => select(row.id);
+    tr.addEventListener('click', open);
+    tr.addEventListener('keydown', event => { if (event.key === 'Enter') open(); });
+    return tr;
+  }));
+  $('empty').hidden = ledgers.length > 0;
+  markSelected();
+}
+
+function markSelected() {
+  for (const tr of $('rows').children) {
+    tr.setAttribute('aria-selected', String(isSelected(tr.dataset.id)));
+  }
+}
+
+async function load() {
+  const query = new URLSearchParams();
+  for (const name of ['repo', 'status', 'q']) if ($(name).value.trim() !== '') query.set(name, $(name).value.trim());
+  const { ok, data } = await api(`/api/ledgers?${query}`);
+  if (!ok) throw new Error(data.error);
+  render(data);
+}
+
+function definition(term, value) {
+  const dt = document.createElement('dt');
+  dt.textContent = term;
+  const dd = document.createElement('dd');
+  dd.textContent = value;
+  return [dt, dd];
+}
+
+function prText(detail) {
+  if (detail.prs === null) return detail.prError ?? (detail.worktreeExists ? 'not looked up' : 'not looked up: the worktree is gone');
+  return detail.prs.length === 0 ? 'none' : detail.prs.map(pr => `#${pr.number} ${pr.state.toLowerCase()}`).join(', ');
+}
+
+function showDetail(detail) {
+  state.detail = detail;
+  $('detail-title').textContent = detail.slug;
+  $('meta').replaceChildren(
+    ...definition('Repo', detail.repo),
+    ...definition('Status', detail.status),
+    ...definition('Branch', detail.branch || 'none'),
+    ...definition('Worktree', detail.worktreeExists ? detail.worktree : `${detail.worktree} (removed)`),
+    ...definition('Ledger', detail.path),
+    ...definition('PRs', prText(detail)),
+  );
+  const archived = detail.go === null;
+  $('actions').hidden = archived;
+  $('copy').textContent = `Copy “${detail.go}”`;
+  $('park-form').hidden = detail.status === 'parked';
+  $('unpark').hidden = detail.status !== 'parked';
+  hidePreview();
+  $('body').innerHTML = detail.html; // Rendered on the server from HTML-escaped text.
+}
+
+function hidePreview() {
+  state.preview = null;
+  $('retire-box').hidden = true;
+}
+
+async function select(id) {
+  state.selected = id;
+  markSelected();
+  hidePreview();
+  $('result').hidden = true;
+  $('reason').value = '';
+  await openDetail().catch(report);
+}
+
+async function openDetail() {
+  const request = ++state.detailRequest;
+  const replied = api(`/api/ledger?${new URLSearchParams({ id: state.selected })}`);
+  // Settled first, so a stale request is dropped whether it failed or not.
+  await replied.catch(() => {});
+  if (request !== state.detailRequest) return;
+  const { ok, data } = await replied;
+  if (!ok) {
+    closeDetail();
+    throw new Error(data.error);
+  }
+  $('layout').classList.add('open');
+  $('detail').hidden = false;
+  showDetail(data);
+}
+
+function closeDetail() {
+  state.detailRequest++;
+  state.selected = null;
+  state.detail = null;
+  hidePreview();
+  $('detail').hidden = true;
+  $('layout').classList.remove('open');
+  markSelected();
+}
+
+function showResult(data, ok) {
+  const box = $('result');
+  if (data.html) box.innerHTML = data.html; // Rendered on the server from HTML-escaped text.
+  else box.textContent = data.text ?? data.error ?? '';
+  box.classList.toggle('error', !ok);
+  box.hidden = false;
+}
+
+async function act(path, body, button) {
+  button.disabled = true;
+  try {
+    const { ok, data } = await api(path, body);
+    showResult(data, ok);
+    await Promise.all([openDetail(), load()]);
+    return ok;
+  } catch (error) {
+    report(error);
+    return false;
+  } finally {
+    button.disabled = false;
+  }
+}
+
+const task = () => ({ id: state.detail.id });
+
+$('repo').addEventListener('change', () => load().catch(report));
+$('status').addEventListener('change', () => load().catch(report));
+$('q').addEventListener('input', () => {
+  clearTimeout(state.searchTimer);
+  state.searchTimer = setTimeout(() => load().catch(report), 250);
+});
+
+$('rescan').addEventListener('click', async event => {
+  const button = event.currentTarget;
+  button.disabled = true;
+  try {
+    const { ok, data } = await api('/api/rescan', {});
+    if (!ok) throw new Error(data.error);
+    notice(data.message || 'Rescanned.');
+    await load();
+  } catch (error) {
+    report(error);
+  } finally {
+    button.disabled = false;
+  }
+});
+
+$('close').addEventListener('click', closeDetail);
+document.addEventListener('keydown', event => { if (event.key === 'Escape' && !$('detail').hidden) closeDetail(); });
+
+$('copy').addEventListener('click', async () => {
+  const text = state.detail.go;
+  try {
+    await navigator.clipboard.writeText(text);
+    showResult({ text: `Copied “${text}”. Paste it into a fresh Claude Code session in this repo.` }, true);
+  } catch {
+    showResult({ text: `Could not copy. Type this instead: ${text}` }, false);
+  }
+});
+
+$('park-form').addEventListener('submit', event => {
+  event.preventDefault();
+  const reason = $('reason').value.trim();
+  if (reason === '') {
+    showResult({ text: 'Give a reason for parking the task.' }, false);
+    $('reason').focus();
+    return;
+  }
+  act('/api/park', { ...task(), reason }, event.submitter ?? $('park-form').querySelector('button'));
+});
+
+$('unpark').addEventListener('click', event => act('/api/unpark', task(), event.currentTarget));
+
+$('retire').addEventListener('click', async event => {
+  const button = event.currentTarget;
+  button.disabled = true;
+  $('result').hidden = true;
+  hidePreview();
+  try {
+    const { id } = task();
+    const request = state.detailRequest;
+    const { ok, data } = await api('/api/retire/preview', { id });
+    if (request !== state.detailRequest || state.detail?.id !== id) return;
+    if (!ok) {
+      showResult(data, false);
+      return;
+    }
+    state.preview = { id, token: data.token, force: data.blockers.length > 0 };
+    $('plan').innerHTML = data.html; // Rendered on the server from HTML-escaped text.
+    const blocked = data.blockers.length > 0;
+    $('blockers').hidden = !blocked;
+    $('blockers').textContent = blocked ? `Retiring needs --force: ${data.blockers.join(' and ')}. Uncommitted changes are lost with the worktree.` : '';
+    $('confirm').hidden = blocked;
+    $('force').hidden = !blocked;
+    $('retire-box').hidden = false;
+  } catch (error) {
+    report(error);
+  } finally {
+    button.disabled = false;
+  }
+});
+
+function retire(button) {
+  const { preview } = state;
+  if (preview === null) return;
+  hidePreview();
+  return act('/api/retire', preview, button);
+}
+
+$('cancel').addEventListener('click', hidePreview);
+$('confirm').addEventListener('click', event => retire(event.currentTarget));
+$('force').addEventListener('click', event => retire(event.currentTarget));
+
+if (key === '') notice('This address has no access key. Open the address that /ledger:dashboard printed.', true);
+else load().catch(report);
+</script>
+</body>
+</html>

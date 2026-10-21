@@ -318,5 +318,6 @@ export const HELP = [
   '- `/ledger:retire [<slug>]` — Show what retiring a task would archive and remove; `--yes` archives its ledger, removes its worktree, and deletes its branch when all of its commits are merged.',
   "- `/ledger:archive [<term>]` — List this repo's archived ledgers, newest first; a term keeps those that contain it, and `--all` lists every repo.",
   '- `/ledger:all` — Show every task ledger on this machine, active, backlog and archived; `--scan` rebuilds the list from disk.',
+  '- `/ledger:dashboard` — Start a web page on this machine that lists every task ledger, with search, details, park and retire. It keeps running after the session ends; `stop` stops it.',
   '- `/ledger:help` — Show this list.',
 ].join('\n')

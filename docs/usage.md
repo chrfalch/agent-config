@@ -325,6 +325,26 @@ Parent <parent> has no active children left. Retire it with /ledger:retire <pare
 It does not retire the parent task itself. To retire a parent task that still
 has active child tasks, add `--force`; without it the command refuses.
 
+### The dashboard
+
+`/ledger:dashboard` starts a web page on this machine that shows every task
+ledger, the same list as `/ledger:all`. You can filter the list by repo and by
+status, and search the text of every ledger. Click a task to read its ledger,
+its worktree, its branch and its PRs. Its buttons copy `go <name>`, park a task
+with a reason, remove the parked mark, and retire a task. Retire first shows
+what it would do and waits for a second click. When the task has uncommitted
+changes or an unmerged branch, that click is **Retire anyway (--force)**. These
+are the same rules as `/ledger:retire`.
+
+The command prints an address like `http://127.0.0.1:<port>/#key=<key>`. Open
+it in a browser. The key in the address is the password for the page: each
+start makes a new one, and the server refuses every request without it. The
+server answers only on this machine.
+
+The dashboard keeps running after the Claude Code session ends. Type
+`/ledger:dashboard` again to see its address. Type `/ledger:dashboard stop` to
+stop it. Its log is `~/.claude/ledger-dashboard.log`.
+
 ## The clear loop, in short
 
 ```

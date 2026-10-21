@@ -59,7 +59,7 @@ async function lookUpMergedPr($: EngineInterface, branch: string, cwd: string): 
   return failure === undefined ? parseMergedPr(stdout) : { kind: 'unknown', error: `gh pr list ${failure}` }
 }
 
-async function readState($: EngineInterface, path: string): Promise<WorktreeState | { error: string }> {
+export async function readState($: EngineInterface, path: string): Promise<WorktreeState | { error: string }> {
   const dirsArgs = ['rev-parse', '--path-format=absolute', '--git-dir', '--git-common-dir']
   const dirsRead = await readGit($, path, dirsArgs)
   if ('error' in dirsRead) return dirsRead

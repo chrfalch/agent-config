@@ -1,0 +1,45 @@
+#!/usr/bin/env node
+// Starts, finds or stops the local ledger dashboard. CommonJS like bin/deploy, so the version
+// check runs before Node refuses an extensionless file in a "type": "module" package.
+// Usage: cc-ledger-dashboard [start] [--port N]
+//        cc-ledger-dashboard stop
+//        cc-ledger-dashboard --foreground [--port N]
+'use strict';
+const { spawnSync } = require('node:child_process');
+const { existsSync } = require('node:fs');
+const path = require('node:path');
+const { pathToFileURL } = require('node:url');
+
+const [major, minor] = process.versions.node.split('.').map(Number);
+if (major < 20 || (major === 20 && minor < 12)) {
+  console.error('cc-ledger-dashboard: Node.js >=20.12 is required');
+  process.exit(1);
+}
+
+const repo = path.dirname(path.dirname(process.argv[1]));
+// The server outlives this process, so it must not hold a task worktree as its working directory.
+process.chdir(repo);
+
+// npm writes this file last, so its absence also catches an interrupted install.
+if (!existsSync(path.join(repo, 'node_modules/.package-lock.json'))) {
+  const npm = spawnSync('npm', ['ci', '--silent'], { stdio: ['ignore', process.stderr, 'inherit'] });
+  if (npm.error) {
+    console.error(`cc-ledger-dashboard: ${npm.error.message}`);
+    process.exit(1);
+  }
+  if (npm.status !== 0) process.exit(npm.status ?? 1);
+}
+
+import('tsx/esm/api')
+  .then(({ register }) => {
+    register();
+    return import(pathToFileURL(path.join(repo, 'tools/ledger-dashboard/cli.ts')).href);
+  })
+  .then(({ main }) => main(process.argv.slice(2), { launcher: process.argv[1], repo }))
+  .then((code) => {
+    if (typeof code === 'number') process.exitCode = code;
+  })
+  .catch((error) => {
+    console.error(`cc-ledger-dashboard: ${error.message}`);
+    process.exit(1);
+  });

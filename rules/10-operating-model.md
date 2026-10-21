@@ -118,10 +118,7 @@ transcript is re-billed on every turn; the ledger is read once per fresh session
   fixes. Never make a parent task for small work, for a single-PR task, or for
   a task that only has many steps. This is a hard rule, not a preference.
 - **Making a parent task.** Start the parent task with `/ledger:task`. Start
-  each child task with its own `/ledger:task`. A task in the backlog has no
-  worktree yet, and `bin/cc-ledger-parent` finds only tasks with a worktree.
-  So give each backlog task its worktree first: run the agent-config repo's
-  `bin/cc-task-new --promote <slug>`. Then attach each child task
+  each child task with its own `/ledger:task`. Then attach each child task
   yourself: run the agent-config repo's
   `bin/cc-ledger-parent add <parent> <child>` from a folder inside the task's
   repo. The operator can also type `/ledger:parent <parent> add <child>`.

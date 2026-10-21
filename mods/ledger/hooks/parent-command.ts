@@ -28,7 +28,7 @@ function parseShown(stdout: string): Shown | null {
 
 const oneLine = (text: string): string => text.trim().replace(/\s*\n\s*/g, ' ')
 
-/** Runs bin/cc-ledger-parent, which finds a slug in every worktree of the repository that holds `cwd`. */
+/** Runs bin/cc-ledger-parent, which finds a slug in every worktree and in the backlog of the repository that holds `cwd`. */
 async function script($: EngineInterface, args: string[], cwd: string): Promise<{ stdout: string; stderr: string; error?: string }> {
   const ran = await run($, [`${$.plugin.root}/../../bin/cc-ledger-parent`, ...args], cwd)
   if (ran.failure === undefined) return ran

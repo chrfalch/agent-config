@@ -132,9 +132,25 @@ ledger_titled() {
   return 1
 }
 
+# The main checkout as cc-task-new works it out. Another repository with the same folder name
+# shares the backlog folder; its ledgers name another main checkout.
+in_backlog() {
+  local common main candidate
+  common=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || return 1
+  main=$(dirname "$common")
+  for candidate in "$HOME/.claude/ledger-backlog/$(basename "$main")"/*.md; do
+    [ -f "$candidate" ] && [ "$(slug "$candidate")" = "$1" ] || continue
+    [ "$(section "$candidate" Location | sed -n -E 's/^- main:[[:space:]]*(.*[^[:space:]])[[:space:]]*$/\1/p' | head -n 1)" = "$main" ] && return 0
+  done
+  return 1
+}
+
 task_status() {
   local ledger
-  ledger=$(ledger_titled "$1") || { echo missing; return; }
+  if ! ledger=$(ledger_titled "$1"); then
+    if in_backlog "$1"; then echo backlog; else echo missing; fi
+    return
+  fi
   if section "$ledger" 'Next step' | grep -v -m 1 '^[[:space:]]*$' | grep -q -E '^[[:space:]]*Parked:[[:space:]]*[0-9]{4}-[0-9]{2}-[0-9]{2}[[:space:]]*(—|-)'; then
     echo parked
   else

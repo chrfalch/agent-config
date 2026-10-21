@@ -160,12 +160,13 @@ function activeEntry(ledger, given, previous) {
 
 function backlogEntry(ledger, given, previous) {
   const stat = fs.statSync(ledger);
-  const { branch, main } = location(fs.readFileSync(ledger, 'utf8'));
+  const { branch, parent, main } = location(fs.readFileSync(ledger, 'utf8'));
   return entry({
     repo: given.repo ?? path.basename(path.dirname(ledger)),
     slug: given.slug ?? path.basename(ledger, '.md'),
     path: ledger,
     branch: given.branch ?? branch ?? '',
+    parent: given.parent ?? parent,
     status: 'backlog',
     main,
     created: previous?.created ?? bornAt(stat),

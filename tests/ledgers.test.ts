@@ -565,6 +565,28 @@ test('a later upsert drops the parent once the ledger no longer names one', (t) 
   assert.equal(Object.hasOwn(registry(h)[0] ?? {}, 'parent'), false);
 });
 
+test('upsert of a backlog ledger takes the parent from its Location section, in the same place as an active entry', (t) => {
+  const h = home(t);
+  const backlog = backlogLedger(h, 'app', 'fix-login', '/work/app');
+  writeFileSync(backlog, `${readFileSync(backlog, 'utf8')}- parent: epic\n`);
+
+  ledgers(h, 'upsert', backlog);
+
+  const [entry] = registry(h);
+  assert.deepEqual(Object.keys(entry ?? {}), ['repo', 'slug', 'path', 'branch', 'parent', 'status', 'main', 'created', 'updated']);
+  assert.equal(entry?.parent, 'epic');
+});
+
+test('upsert of a backlog ledger takes the parent from --parent before its Location section', (t) => {
+  const h = home(t);
+  const backlog = backlogLedger(h, 'app', 'fix-login', '/work/app');
+  writeFileSync(backlog, `${readFileSync(backlog, 'utf8')}- parent: epic\n`);
+
+  ledgers(h, 'upsert', backlog, '--parent', 'other');
+
+  assert.deepEqual(registry(h).map(({ status, parent }) => ({ status, parent })), [{ status: 'backlog', parent: 'other' }]);
+});
+
 test('archive keeps the parent of the active entry', (t) => {
   const h = home(t);
   const ledger = ledgerIn(path.join(h, 'issues/child'), 'child', withParent('epic'));

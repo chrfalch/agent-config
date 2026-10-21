@@ -7,7 +7,7 @@ import { freshHome, REPO, run } from './helpers.js';
 const PARENT = path.join(REPO, 'bin/cc-ledger-parent');
 const LEDGERS = [path.join(REPO, 'bin/cc-ledgers')] as const;
 
-type Entry = { slug: string; path: string; parent?: string };
+type Entry = { slug: string; path: string; status: string; parent?: string };
 type Shown = { parent: string; goal: string; children: { slug: string; status: string; next: string }[] };
 
 function git(home: string, directory: string, ...args: string[]): void {
@@ -497,4 +497,97 @@ test('add reads a parent bullet with more than one word as no parent, as retire 
   ok(home, main, 'add', 'epic', 'child-a');
 
   assert.match(read(child), /^- parent: some epic\n- parent: epic$/m);
+});
+
+// A backlog task has no worktree: its ledger is in ~/.claude/ledger-backlog/<main checkout folder>/, and names its main checkout.
+function addBacklogTask(home: string, main: string, slug: string, owner = main): string {
+  const ledger = path.join(home, '.claude/ledger-backlog', path.basename(main), `${slug}.md`);
+  mkdirSync(path.dirname(ledger), { recursive: true });
+  writeFileSync(ledger, ledgerText(slug, '<path>').replace('## Location\n', `## Location\n- main: ${owner}\n`));
+  return ledger;
+}
+
+test('add attaches a backlog child to a worktree parent, and keeps the parent on its backlog registry entry', (t) => {
+  const { home, main, ledgers } = repository(t, 'epic');
+  const idea = addBacklogTask(home, main, 'idea');
+  const ideaBefore = read(idea);
+  const epicBefore = read(ledgers.epic ?? '');
+
+  ok(home, main, 'add', 'epic', 'idea');
+
+  assert.equal(read(idea), ideaBefore.replace('- base: main @ abc1234\n', '- base: main @ abc1234\n- parent: epic\n'));
+  assert.equal(
+    read(ledgers.epic ?? ''),
+    epicBefore.replace('- base: main @ abc1234\n\n', '- base: main @ abc1234\n\n## Children\n- idea\n\n'),
+  );
+  assert.deepEqual(
+    registry(home).filter((entry) => entry.slug === 'idea').map(({ path, status, parent }) => ({ path, status, parent })),
+    [{ path: idea, status: 'backlog', parent: 'epic' }],
+  );
+});
+
+test('add attaches a worktree child to a backlog parent', (t) => {
+  const { home, main, ledgers } = repository(t, 'child-a');
+  const epic = addBacklogTask(home, main, 'epic');
+  const epicBefore = read(epic);
+
+  ok(home, main, 'add', 'epic', 'child-a');
+
+  assert.match(read(ledgers['child-a'] ?? ''), /^- parent: epic$/m);
+  assert.equal(read(epic), epicBefore.replace('- base: main @ abc1234\n\n', '- base: main @ abc1234\n\n## Children\n- child-a\n\n'));
+  assert.equal(registered(home, 'child-a')?.parent, 'epic');
+});
+
+test('remove detaches a backlog child from a backlog parent', (t) => {
+  const { home, main } = repository(t);
+  const epic = addBacklogTask(home, main, 'epic');
+  const idea = addBacklogTask(home, main, 'idea');
+  const before = [read(epic), read(idea)];
+  ok(home, main, 'add', 'epic', 'idea');
+
+  ok(home, main, 'remove', 'epic', 'idea');
+
+  assert.deepEqual([read(epic), read(idea)], before);
+});
+
+test('show names a backlog child as backlog, with its next step, in text and JSON', (t) => {
+  const { home, main } = repository(t, 'epic', 'busy');
+  addBacklogTask(home, main, 'idea');
+  ok(home, main, 'add', 'epic', 'busy');
+  ok(home, main, 'add', 'epic', 'idea');
+
+  assert.equal(ok(home, main, 'show', 'epic').stdout, 'epic\tGoal of epic.\nbusy\tactive\tNext step of busy.\nidea\tbacklog\tNext step of idea.\n');
+  assert.deepEqual((JSON.parse(ok(home, main, 'show', 'epic', '--json').stdout) as Shown).children, [
+    { slug: 'busy', status: 'active', next: 'Next step of busy.' },
+    { slug: 'idea', status: 'backlog', next: 'Next step of idea.' },
+  ]);
+});
+
+test('a backlog ledger of another repository with the same folder name is neither found nor changed', (t) => {
+  const { home, main, ledgers } = repository(t, 'epic');
+  const foreign = addBacklogTask(home, main, 'idea', path.join(home, 'elsewhere/app'));
+  const before = read(foreign);
+
+  const result = parent(home, main, 'add', 'epic', 'idea');
+
+  assert.equal(result.status, 1);
+  assert.equal(result.stderr, 'no task ledger with the slug idea in this repository\n');
+  assert.equal(read(foreign), before);
+  const epic = ledgers.epic ?? '';
+  writeFileSync(epic, read(epic).replace('## Plan', '## Children\n- idea\n\n## Plan'));
+  assert.equal(ok(home, main, 'show', 'epic').stdout, 'epic\tGoal of epic.\nidea\tmissing\t\n');
+});
+
+test('add refuses a slug that a worktree ledger and a backlog ledger share, naming both', (t) => {
+  const { home, main, ledgers } = repository(t, 'epic', 'child-a');
+  const twin = addBacklogTask(home, main, 'epic');
+  const files = [ledgers.epic ?? '', twin, ledgers['child-a'] ?? ''];
+  const before = files.map(read);
+
+  const result = parent(home, main, 'add', 'epic', 'child-a');
+
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /^[^\n]+\n$/);
+  assert.ok(result.stderr.includes(ledgers.epic ?? '') && result.stderr.includes(twin), result.stderr);
+  assert.deepEqual(files.map(read), before);
 });

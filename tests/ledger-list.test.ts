@@ -328,6 +328,37 @@ test('session-start in a main checkout names the parent or children under each l
   );
 });
 
+function backlogLedger(root: string, folder: string, slug: string, owner: string, location: string[] = []): string {
+  const ledger = path.join(root, '.claude/ledger-backlog', folder, `${slug}.md`);
+  mkdirSync(path.dirname(ledger), { recursive: true });
+  writeFileSync(ledger, familyLedger(slug, [`- main: ${owner}`, '- worktree: <path>', ...location]));
+  return ledger;
+}
+
+test('session-start in a child task names a parent in this repository\'s backlog as backlog', (t) => {
+  const root = scratch(t);
+  const main = repository(root, 'main');
+  const child = worktree(root, main, path.join(root, 'child'));
+  const ledger = ledgerIn(child, familyLedger('child', ['- parent: epic']));
+  backlogLedger(root, 'main', 'epic', main);
+
+  assert.equal(sessionStart(root, child).additionalContext, relationText(ledger, 'Parent task: epic (backlog).'));
+});
+
+test('session-start in a parent task names a backlog child as backlog, but not one of another repository with the same folder name', (t) => {
+  const root = scratch(t);
+  const main = repository(root, 'main');
+  const epic = worktree(root, main, path.join(root, 'epic'));
+  const ledger = ledgerIn(epic, familyLedger('epic', [], '## Children\n- idea\n- foreign\n\n## Next step\nA step.\n'));
+  backlogLedger(root, 'main', 'idea', main, ['- parent: epic']);
+  backlogLedger(root, 'main', 'foreign', path.join(root, 'elsewhere/main'), ['- parent: epic']);
+
+  assert.equal(
+    sessionStart(root, epic).additionalContext,
+    relationText(ledger, 'Child task: idea (backlog).', 'Child task: foreign (missing).'),
+  );
+});
+
 test('session-start reads only the Location parent bullet and the section headed exactly Children', (t) => {
   const root = scratch(t);
   const main = repository(root, 'main');

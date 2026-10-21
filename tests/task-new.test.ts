@@ -692,6 +692,33 @@ test('--promote keeps the created time of the backlog entry', (t) => {
   );
 });
 
+test('--promote of a backlog child keeps its parent bullet, and registers the parent on the active entry', (t) => {
+  const { home, main } = checkout(t);
+  const backlog = backlogged(home, main, 'fix-login');
+  writeFileSync(backlog, readFileSync(backlog, 'utf8').replace('- base: <branch/commit>\n', '- base: <branch/commit>\n- parent: epic\n'));
+
+  const result = taskNew(home, main, '--promote', 'fix-login');
+  assert.equal(result.status, 0, result.stderr);
+
+  assert.match(readFileSync(path.join(main, '.claude/worktrees/fix-login/.claude/ledger.md'), 'utf8'), /^- base: main @ \w+\n- parent: epic\n/m);
+  assert.deepEqual(
+    registry(home).map(({ status, parent }) => ({ status, parent })),
+    [{ status: 'active', parent: 'epic' }],
+  );
+});
+
+test('--promote of a backlog parent keeps its Children section', (t) => {
+  const { home, main } = checkout(t);
+  const backlog = backlogged(home, main, 'epic');
+  const children = '## Children\n- fix-login\n- old (retired 2026-10-01)\n\n';
+  writeFileSync(backlog, readFileSync(backlog, 'utf8').replace('## Plan', `${children}## Plan`));
+
+  const result = taskNew(home, main, '--promote', 'epic');
+  assert.equal(result.status, 0, result.stderr);
+
+  assert.ok(readFileSync(path.join(main, '.claude/worktrees/epic/.claude/ledger.md'), 'utf8').includes(`\n\n${children}## Plan`));
+});
+
 test('--promote from a linked worktree resolves the stored base in the main checkout', (t) => {
   const { home, main, second } = checkout(t);
   backlogged(home, main, 'fix-login', '--base', 'HEAD');

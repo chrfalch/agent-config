@@ -4,12 +4,14 @@
 //        cc-ledger-parent remove <parent> <child>
 //        cc-ledger-parent show <parent> [--json]
 // A slug is a ledger's title slug, looked up in the ledgers of every worktree of the repository
-// that holds the current folder. The child's `- parent: <slug>` bullet under ## Location is the
-// source of truth. The parent's ## Children section lists its children, so that a retired child,
-// whose ledger is gone, keeps a line there: `- <slug> (retired YYYY-MM-DD)`.
+// that holds the current folder, and in the backlog ledgers that name its main checkout. The
+// child's `- parent: <slug>` bullet under ## Location is the source of truth. The parent's
+// ## Children section lists its children, so that a retired child, whose ledger is gone, keeps a
+// line there: `- <slug> (retired YYYY-MM-DD)`.
 'use strict';
 const { spawnSync } = require('node:child_process');
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 
 const usage = [
@@ -17,6 +19,9 @@ const usage = [
   '       cc-ledger-parent remove <parent> <child>',
   '       cc-ledger-parent show <parent> [--json]',
 ].join('\n');
+
+const backlogRoot = path.join(os.homedir(), '.claude', 'ledger-backlog');
+const inBacklog = (ledger) => path.dirname(path.dirname(ledger)) === backlogRoot;
 
 const SLUG = /^[A-Za-z0-9._-]+$/;
 const CHILD = /^- ([A-Za-z0-9._-]+)(?: \(retired (\d{4}-\d\d-\d\d)\))?$/;
@@ -33,14 +38,44 @@ function titleSlug(text) {
   return text.match(/^# Task ledger[ \t]*(?:—|-)[ \t]*(.*)$/m)?.[1].trim() ?? '';
 }
 
-function ledgersBySlug() {
-  const result = spawnSync('git', ['worktree', 'list', '--porcelain'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+function git(...args) {
+  const result = spawnSync('git', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
   if (result.status !== 0) fail(`not inside a git repository: ${process.cwd()}`);
+  return result.stdout;
+}
+
+// The main checkout the way cc-task-new works it out, so it matches the `- main:` line cc-task-new writes.
+function mainCheckout() {
+  return path.dirname(git('rev-parse', '--path-format=absolute', '--git-common-dir').trim());
+}
+
+// Another repository with the same folder name shares the backlog folder; its ledgers name another main checkout.
+function backlogLedgers(main) {
+  const folder = path.join(backlogRoot, path.basename(main));
+  let names;
+  try {
+    names = fs.readdirSync(folder);
+  } catch (error) {
+    if (error.code === 'ENOENT') return [];
+    throw error;
+  }
+  return names
+    .filter((name) => name.endsWith('.md'))
+    .map((name) => path.join(folder, name))
+    .filter((ledger) => {
+      const lines = fs.readFileSync(ledger, 'utf8').split('\n');
+      return body(lines, 'Location').some((line) => line.trimEnd().match(/^- main:[ \t]*(.*)$/)?.[1] === main);
+    });
+}
+
+function ledgersBySlug() {
+  const worktrees = git('worktree', 'list', '--porcelain')
+    .split('\n')
+    .filter((line) => line.startsWith('worktree '))
+    .map((line) => path.join(line.slice('worktree '.length), '.claude', 'ledger.md'))
+    .filter((ledger) => fs.statSync(ledger, { throwIfNoEntry: false })?.isFile());
   const found = new Map();
-  for (const line of result.stdout.split('\n')) {
-    if (!line.startsWith('worktree ')) continue;
-    const ledger = path.join(line.slice('worktree '.length), '.claude', 'ledger.md');
-    if (!fs.statSync(ledger, { throwIfNoEntry: false })?.isFile()) continue;
+  for (const ledger of [...worktrees, ...backlogLedgers(mainCheckout())]) {
     const slug = titleSlug(fs.readFileSync(ledger, 'utf8'));
     if (slug) found.set(slug, [...(found.get(slug) ?? []), ledger]);
   }
@@ -189,7 +224,7 @@ function childStatus(found, { slug, retired }) {
   const next = body(child.lines, 'Next step');
   return {
     slug,
-    status: PARKED.test(firstText(next)) ? 'parked' : 'active',
+    status: inBacklog(child.file) ? 'backlog' : PARKED.test(firstText(next)) ? 'parked' : 'active',
     next: firstText(next.filter((line) => !PARKED.test(line.trim()))),
   };
 }

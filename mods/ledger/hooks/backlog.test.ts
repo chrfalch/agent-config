@@ -153,6 +153,52 @@ test('/ledger:go to a backlog task from the main checkout continues with no ledg
   expect(w.calls).toEqual(['clear', 'submit: go new-idea'])
 })
 
+const familyText = (family: string): string =>
+  `# Task ledger — new-idea\n\n## Goal\nA goal.\n\n## Location\n- worktree: ${WORKTREES}/new-idea\n${family}\n## Next step\nWrite the plan.\n`
+
+test('/ledger:go to a backlog child names its parent once it is promoted', async ($, on) => {
+  const w = world(
+    on,
+    '/repo',
+    [FIX_LOGIN],
+    {
+      [REGISTRY]: registry(backlogEntry('new-idea', { parent: 'epic' })),
+      [COMMON_DIR]: exit(0, '/repo/.git\n'),
+      [PROMOTE('new-idea')]: exit(0, PROMOTE_OUTPUT),
+    },
+    { promotedLedger: familyText('- parent: epic\n') },
+  )
+
+  await $.command.run({ command: 'ledger:go', args: 'new-idea' })
+
+  expect(w.markdownArgs()).toBe(`task: new-idea\nledger: none\nparent: epic\npromoted: ${WORKTREES}/new-idea`)
+})
+
+test('/ledger:go to a backlog parent lists a child still in the backlog as backlog', async ($, on) => {
+  const SHOW = 'bin/cc-ledger-parent show new-idea --json'
+  const children = [
+    { slug: 'kid', status: 'backlog', next: 'Write the plan.' },
+    { slug: 'busy', status: 'active', next: 'Run the tests.' },
+  ]
+  const w = world(
+    on,
+    '/repo',
+    [FIX_LOGIN],
+    {
+      [REGISTRY]: registry(backlogEntry('new-idea')),
+      [COMMON_DIR]: exit(0, '/repo/.git\n'),
+      [PROMOTE('new-idea')]: exit(0, PROMOTE_OUTPUT),
+      [SHOW]: exit(0, JSON.stringify({ parent: 'new-idea', goal: 'A goal.', children })),
+    },
+    { promotedLedger: familyText('\n## Children\n- kid\n- busy\n') },
+  )
+
+  await $.command.run({ command: 'ledger:go', args: 'new-idea' })
+
+  expect(w.commands.at(-1)).toEqual({ key: SHOW, cwd: '/repo' })
+  expect(w.markdownArgs()).toBe(`task: new-idea\nledger: none\nchildren: kid (backlog), busy (active)\npromoted: ${WORKTREES}/new-idea`)
+})
+
 // The same folder name as this session's main checkout, and another one: only the full path decides.
 for (const [repo, main] of [
   ['repo', '/elsewhere/repo'],

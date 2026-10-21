@@ -237,10 +237,13 @@ moves into that task's worktree and continues from its ledger.
 To give a linked worktree that has no ledger one, type `/ledger:task --here` in
 its session. It adds the ledger without a new branch or worktree.
 
-To set a task aside, type `/ledger:park <reason>` in its session, or
-`/ledger:park <name> <reason>` in a session in the main checkout. `/ledger`
-shows a parked task with the date and the reason. `/ledger:go <name>` resumes
-it and removes the mark.
+To set a task aside, type `/ledger:park <reason>` in its session. To set
+another task aside, type `/ledger:park <name> <reason>`. `/ledger` shows a
+parked task with the date and the reason. `/ledger:go <name>` resumes it and
+removes the mark.
+
+`/ledger:go <name>` and `/ledger:park <name> <reason>` work from any worktree
+of the repository: the main checkout or a task worktree.
 
 When the task you leave with `/ledger:go <name>` has every plan step done,
 the fresh session first shows the same retire line as `/ledger:next`.

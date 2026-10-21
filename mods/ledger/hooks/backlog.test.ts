@@ -35,12 +35,20 @@ const scriptKey = (argv: readonly string[]): string => [(argv[0] ?? '').split('/
 const REGISTRY = 'bin/cc-ledgers list --json'
 const PROMOTE = (slug: string) => `bin/cc-task-new --promote ${slug}`
 const COMMON_DIR = 'git rev-parse --path-format=absolute --git-common-dir'
+const WORKTREE_LIST = 'git worktree list --porcelain -z'
+
+const worktreeBlock = (path: string, branch: string): string => `worktree ${path}\0HEAD c0ffee1\0branch refs/heads/${branch}\0\0`
 
 type Call = { key: string; cwd?: string }
 
-type Options = { promotedLedger?: string; broken?: 'read' | 'write' | 'state' }
+type Options = {
+  promotedLedger?: string
+  broken?: 'read' | 'write' | 'state'
+  /** Ledgers in other worktrees, by path, which discovery from a linked worktree does not list. */
+  elsewhere?: Record<string, string>
+}
 
-function world(on: On, cwd: string, ledgers: string[], replies: Record<string, Reply>, { promotedLedger = ledgerText('new-idea'), broken }: Options = {}) {
+function world(on: On, cwd: string, ledgers: string[], replies: Record<string, Reply>, { promotedLedger = ledgerText('new-idea'), broken, elsewhere = {} }: Options = {}) {
   const calls: string[] = []
   const commands: Call[] = []
   const armed: unknown[] = []
@@ -54,9 +62,11 @@ function world(on: On, cwd: string, ledgers: string[], replies: Record<string, R
     commands.push({ key, cwd: e.init?.cwd })
     return replies[key] ?? { deny: `unexpected command: ${JSON.stringify(e.argv)}` }
   })
-  on('fs.stat', async () => ({ value: { kind: 'file', size: 0, mtimeMs: 0, isLink: false } }))
+  on('fs.stat', async (_, e) =>
+    ledgers.includes(e.path) || e.path in elsewhere ? { value: { kind: 'file', size: 0, mtimeMs: 0, isLink: false } } : { deny: `ENOENT: ${e.path}` },
+  )
   on('fs.read', async (_, e) => {
-    if (e.path !== PROMOTED) return { value: ledgerText('fast-steps') }
+    if (e.path !== PROMOTED) return { value: elsewhere[e.path] ?? ledgerText('fast-steps') }
     return broken === 'read' ? { deny: 'EACCES: ledger unreadable' } : { value: promotedLedger }
   })
   on('fs.write', async (_, e) => {
@@ -122,6 +132,7 @@ test('/ledger:go to a backlog task promotes it in this repo, then continues ther
   await $.command.run({ command: 'ledger:go', args: ' new-idea ' })
 
   expect(w.commands).toEqual([
+    { key: WORKTREE_LIST, cwd: `${FIX_LOGIN_TREE}/src` },
     { key: REGISTRY, cwd: undefined },
     { key: COMMON_DIR, cwd: `${FIX_LOGIN_TREE}/src` },
     { key: PROMOTE('new-idea'), cwd: `${FIX_LOGIN_TREE}/src` },
@@ -143,6 +154,7 @@ test('/ledger:go to a backlog task from the main checkout continues with no ledg
   await $.command.run({ command: 'ledger:go', args: 'new-idea' })
 
   expect(w.commands).toEqual([
+    { key: WORKTREE_LIST, cwd: '/repo' },
     { key: REGISTRY, cwd: undefined },
     { key: COMMON_DIR, cwd: '/repo' },
     { key: PROMOTE('new-idea'), cwd: '/repo' },
@@ -218,7 +230,7 @@ for (const [repo, main] of [
     expect(text).toContain('/ledger:go new-idea')
     expect(text).toContain('from a session in that repository')
     expect(text).toContain(UNCHANGED)
-    expect(w.commands.map(call => call.key)).toEqual([REGISTRY, COMMON_DIR])
+    expect(w.commands.map(call => call.key)).toEqual([WORKTREE_LIST, REGISTRY, COMMON_DIR])
     await expectNothingChanged($, w)
   })
 }
@@ -261,7 +273,7 @@ test('/ledger:go when git cannot tell the main checkout runs the promotion, and 
 
   const { text } = await $.command.run({ command: 'ledger:go', args: 'new-idea' })
 
-  expect(w.commands.map(call => call.key)).toEqual([REGISTRY, COMMON_DIR, PROMOTE('new-idea')])
+  expect(w.commands.map(call => call.key)).toEqual([WORKTREE_LIST, REGISTRY, COMMON_DIR, PROMOTE('new-idea')])
   expect(text).toContain(refusal)
   expect(text).toContain(UNCHANGED)
   await expectNothingChanged($, w)
@@ -276,7 +288,7 @@ test('/ledger:go refuses with the script message when promotion fails for anothe
 
   const { text } = await $.command.run({ command: 'ledger:go', args: 'new-idea' })
 
-  expect(w.commands.map(call => call.key)).toEqual([REGISTRY, COMMON_DIR, PROMOTE('new-idea')])
+  expect(w.commands.map(call => call.key)).toEqual([WORKTREE_LIST, REGISTRY, COMMON_DIR, PROMOTE('new-idea')])
   expect(text).toContain('new-idea')
   expect(text).toContain('branch already exists: new-idea')
   expect(text).toContain(UNCHANGED)
@@ -292,7 +304,7 @@ test('/ledger:go refuses when promotion succeeds but names no ledger', async ($,
 
   const { text } = await $.command.run({ command: 'ledger:go', args: 'new-idea' })
 
-  expect(w.commands.map(call => call.key)).toEqual([REGISTRY, COMMON_DIR, PROMOTE('new-idea')])
+  expect(w.commands.map(call => call.key)).toEqual([WORKTREE_LIST, REGISTRY, COMMON_DIR, PROMOTE('new-idea')])
   expect(text).toContain('new-idea')
   expect(text).toContain('printed no ledger path')
   await expectNothingChanged($, w)
@@ -385,7 +397,7 @@ test('/ledger:go does not promote a registry entry that is not in the backlog', 
   const { text } = await $.command.run({ command: 'ledger:go', args: 'new-idea' })
 
   expect(text).toContain('No task ledger is named "new-idea"')
-  expect(w.commands.map(call => call.key)).toEqual([REGISTRY])
+  expect(w.commands.map(call => call.key)).toEqual([WORKTREE_LIST, REGISTRY])
   await expectNothingChanged($, w)
 })
 
@@ -396,7 +408,7 @@ test('/ledger:go names an unreadable registry when no worktree ledger matches', 
 
   expect(text).toContain('No task ledger is named "new-idea"')
   expect(text).toContain('cannot read /home/.claude/ledgers.json')
-  expect(w.commands.map(call => call.key)).toEqual([REGISTRY])
+  expect(w.commands.map(call => call.key)).toEqual([WORKTREE_LIST, REGISTRY])
   await expectNothingChanged($, w)
 })
 
@@ -410,7 +422,74 @@ test('/ledger:go in several nested worktrees refuses before it promotes a backlo
   const { text } = await $.command.run({ command: 'ledger:go', args: 'new-idea' })
 
   expect(text).toContain('Several task ledgers hold')
-  expect(w.commands.map(call => call.key)).toEqual([REGISTRY])
+  expect(w.commands.map(call => call.key)).toEqual([WORKTREE_LIST, REGISTRY])
+  await expectNothingChanged($, w)
+})
+
+const LINKED_WORKTREES = [
+  worktreeBlock('/repo', 'main'),
+  worktreeBlock(FIX_LOGIN_TREE, 'me/fix-login'),
+  worktreeBlock(`${WORKTREES}/busy`, 'me/busy'),
+  worktreeBlock(`${WORKTREES}/old-spike`, 'me/old-spike'),
+].join('')
+
+// The task in the busy worktree, on branch me/busy, is named rework.
+const BUSY = { [`${WORKTREES}/busy/.claude/ledger.md`]: ledgerText('rework') }
+
+test('/ledger:go to an active task in another worktree continues there without the registry', async ($, on) => {
+  const w = world(
+    on,
+    `${FIX_LOGIN_TREE}/src`,
+    [FIX_LOGIN],
+    { [WORKTREE_LIST]: exit(0, LINKED_WORKTREES), [REGISTRY]: registry(backlogEntry('rework', { status: 'active', branch: 'me/busy' })) },
+    { elsewhere: BUSY },
+  )
+
+  await $.command.run({ command: 'ledger:go', args: 'rework' })
+
+  expect(w.commands).toEqual([{ key: WORKTREE_LIST, cwd: `${FIX_LOGIN_TREE}/src` }])
+  expect(w.markdownArgs()).toBe(`task: rework\nledger: ${FIX_LOGIN}`)
+  expect(w.armed).toEqual([{ mode: 'go', slug: 'rework', ledger: FIX_LOGIN }])
+  await $.turn.complete(turnEnd)
+  expect(w.calls).toEqual(['clear', 'submit: go rework'])
+})
+
+for (const [name, word] of [
+  ['folder', 'busy'],
+  ['full branch', 'me/busy'],
+] as const) {
+  test(`/ledger:go to the ${name} of another worktree, not its task's slug, gives the unknown-task reply the main checkout gives`, async ($, on) => {
+    const w = world(
+      on,
+      `${FIX_LOGIN_TREE}/src`,
+      [FIX_LOGIN],
+      {
+        [WORKTREE_LIST]: exit(0, LINKED_WORKTREES),
+        [REGISTRY]: registry(),
+        [COMMON_DIR]: exit(0, '/repo/.git\n'),
+        [PROMOTE(word)]: exit(2, '', `no backlog task ${word}\n`),
+      },
+      { elsewhere: BUSY },
+    )
+
+    const { text } = await $.command.run({ command: 'ledger:go', args: word })
+
+    expect(text).toBe(`No task ledger is named "${word}". ${UNCHANGED} Task ledgers: fast-steps.`)
+    await expectNothingChanged($, w)
+  })
+}
+
+test('/ledger:go to another worktree that has no ledger keeps the unknown-task reply', async ($, on) => {
+  const w = world(on, `${FIX_LOGIN_TREE}/src`, [FIX_LOGIN], {
+    [WORKTREE_LIST]: exit(0, LINKED_WORKTREES),
+    [REGISTRY]: registry(),
+    [COMMON_DIR]: exit(0, '/repo/.git\n'),
+    [PROMOTE('old-spike')]: exit(2, '', 'no backlog task old-spike\n'),
+  })
+
+  const { text } = await $.command.run({ command: 'ledger:go', args: 'old-spike' })
+
+  expect(text).toBe(`No task ledger is named "old-spike". ${UNCHANGED} Task ledgers: fast-steps.`)
   await expectNothingChanged($, w)
 })
 

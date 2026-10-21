@@ -237,8 +237,11 @@ export function goArgs(
   return fields.join('\n')
 }
 
-export const otherTaskMessage = (word: string): string =>
-  `${word} is another task. Park it from the main checkout, or from that task's own session.`
+export const worktreeWithoutLedgerMessage = (word: string, worktree: string): string =>
+  `${word} names the worktree ${worktree}, which has no task ledger. ${UNCHANGED} To give it one, type /ledger:task --here in a session there.`
+
+export const worktreeTaskMessage = (word: string, worktree: string, slug: string): string =>
+  `${word} names the worktree ${worktree}, task ${slug}. ${UNCHANGED} Type /ledger:park ${slug} <reason>.`
 
 export function parkArgs(slug: string, ledgerPath: string, reason: string): string {
   return [`task: ${slug}`, `ledger: ${ledgerPath}`, `reason: ${reason}`].join('\n')

@@ -12,7 +12,6 @@ import {
   lookupFailedMessage,
   noLedgerMessage,
   otherRepositoryMessage,
-  otherTaskMessage,
   PARK_USAGE,
   park,
   parkArgs,
@@ -26,9 +25,11 @@ import {
   unknownTaskMessage,
   unpark,
   unparkFailedMessage,
+  worktreeTaskMessage,
+  worktreeWithoutLedgerMessage,
 } from './ledger'
 import { archiveCommand } from './archive-command'
-import { findLedgers, lookUpBranch, message, namesOtherWorktree, titleSlug } from './lookup'
+import { findLedgers, lookUpBranch, lookUpOtherWorktrees, message, titleSlug, type Found } from './lookup'
 import { familyOf, parentCommand } from './parent-command'
 import { mainCheckout, otherRepositoryTask, promoteBacklogTask, registeredTasks } from './registry'
 import { worktreeOf } from './retire'
@@ -36,6 +37,8 @@ import { retireCommand } from './retire-command'
 import { worktreesCommand } from './worktrees-command'
 
 const armed = { plugin: 'ledger', key: 'armed' } as const
+
+const uniqueByPath = (ledgers: Found[]): Found[] => ledgers.filter((ledger, index) => ledgers.findIndex(({ path }) => path === ledger.path) === index)
 
 // Read at the turn's end, because the model may have just finished the last step. The line is only advice, so a failure skips it.
 async function showRetireHint($: EngineInterface, ledger: string): Promise<void> {
@@ -95,7 +98,9 @@ export const register: Register = on => {
     const found = await findLedgers($)
     if ('error' in found) return { text: lookupFailedMessage(found.error) }
     const tasks = await Promise.all(found.map(async ledger => summarize(await $.fs.read(ledger.path), folderSlug(ledger.path), 0)))
-    const matches = found.filter((_, index) => tasks[index]?.slug === target)
+    const cwd = await $.session.cwd()
+    const local = found.filter((_, index) => tasks[index]?.slug === target)
+    const matches = uniqueByPath([...local, ...(await lookUpOtherWorktrees($, target, cwd)).ledgers])
     const [match] = matches
     const registered = match === undefined ? await registeredTasks($, target) : []
     if ('error' in registered) return { text: backlogUncheckedMessage(target, tasks, registered.error) }
@@ -104,7 +109,6 @@ export const register: Register = on => {
     const isUnregistered = match === undefined && registered.length === 0
     if (match === undefined && backlog.length === 0 && !isUnregistered) return { text: unknownTaskMessage(target, tasks) }
     if (matches.length > 1) return { text: sharedSlugMessage(target, matches.map(ledger => ledger.path)) }
-    const cwd = await $.session.cwd()
     const active = activeLedger(found.map(ledger => ledger.path), cwd)
     if (active.kind === 'several') return { text: severalLedgersMessage(cwd, active.paths.map(folderSlug)) }
     let ledger = match?.path
@@ -151,14 +155,18 @@ export const register: Register = on => {
     if ('error' in found) return { text: lookupFailedMessage(found.error) }
     const slugs = await Promise.all(found.map(ledger => titleSlug($, ledger.path)))
     const [first = '', ...rest] = words
-    const named = found.filter((_, index) => slugs[index] === first)
+    const cwd = await $.session.cwd()
+    const local = found.filter((_, index) => slugs[index] === first)
+    const elsewhere = await lookUpOtherWorktrees($, first, cwd)
+    const named = uniqueByPath([...local, ...elsewhere.ledgers])
     if (named.length > 1) return { text: sharedSlugMessage(first, named.map(ledger => ledger.path)) }
     const [target] = named
     const reason = (target ? rest : words).join(' ')
     if (reason === '') return { text: PARK_USAGE }
-    const cwd = await $.session.cwd()
-    // From a linked worktree, discovery lists only its own ledger, so another task's name looks like part of the reason.
-    if (!target && (await namesOtherWorktree($, first, cwd))) return { text: otherTaskMessage(first) }
+    if (!target && elsewhere.worktree) {
+      const { path, slug } = elsewhere.worktree
+      return { text: slug === undefined ? worktreeWithoutLedgerMessage(first, path) : worktreeTaskMessage(first, path, slug) }
+    }
     const marker = parkMarker(new Date(), reason)
     const active = activeLedger(found.map(ledger => ledger.path), cwd)
     if (target && !(active.kind === 'one' && active.path === target.path)) {

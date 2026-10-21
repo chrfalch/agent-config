@@ -105,7 +105,7 @@ function world(on: On, cwd: string, command: string, contents: Record<string, st
     }
     return { deny: `unexpected command: ${JSON.stringify(e.argv)}` }
   })
-  on('fs.stat', async () => ({ value: { kind: 'file', size: 0, mtimeMs: 0, isLink: false } }))
+  on('fs.stat', async (_, e) => (files.has(e.path) ? { value: { kind: 'file', size: 0, mtimeMs: 0, isLink: false } } : { deny: `ENOENT: ${e.path}` }))
   on('fs.read', async (_, e) => ({ value: files.get(e.path) ?? '' }))
   on('fs.write', async (_, e: { path: string; text: string }) => {
     calls.push(`write ${e.path}`)
@@ -210,20 +210,141 @@ const LINKED = {
   ].join(''),
 }
 
+// The task in the new-api worktree, on branch me/api-v2, is named api-rework.
+const RENAMED = LEDGER.replace('fast-steps', 'api-rework')
+
+for (const [name, contents, slug] of [
+  ['its folder', {}, 'new-api'],
+  ['a slug that is not its folder', { [NEW_API]: RENAMED }, 'api-rework'],
+] as const) {
+  test(`/ledger:park <other task, named by ${name}> <reason> from a linked worktree marks that ledger and clears nothing`, async ($, on) => {
+    const { files, calls, isMarkdownReached } = world(on, `${WORKTREES}/fix-login/src`, 'ledger:park', contents, LINKED)
+    const { text } = await $.command.run({ command: 'ledger:park', args: `${slug} waiting on review` })
+    const [marker] = nextStepOf(files.get(NEW_API) ?? '')
+    expect(marker).toMatch(TODAY)
+    expect(marker?.endsWith('— waiting on review')).toBe(true)
+    expect(text).toBe(`Parked ${slug}. ${marker}`)
+    expect(isMarkdownReached()).toBe(false)
+    expect(files.get(FIX_LOGIN)).toBe(LEDGER)
+    await $.turn.complete(turnEnd)
+    expect(calls).toEqual([`write ${NEW_API}`])
+  })
+}
+
 for (const [name, word] of [
   ['folder', 'new-api'],
   ['branch without its owner', 'api-v2'],
   ['full branch', 'me/api-v2'],
 ] as const) {
-  test(`/ledger:park <other worktree's ${name}> <reason> from a linked worktree refuses and changes nothing`, async ($, on) => {
-    const { files, calls, isMarkdownReached } = world(on, `${WORKTREES}/fix-login/src`, 'ledger:park', {}, LINKED)
+  test(`/ledger:park <other worktree's ${name}, not its task's slug> <reason> from a linked worktree names the slug to type and changes nothing`, async ($, on) => {
+    const { files, calls, isMarkdownReached } = world(on, `${WORKTREES}/fix-login`, 'ledger:park', { [NEW_API]: RENAMED }, LINKED)
     const before = new Map(files)
-    const { text } = await $.command.run({ command: 'ledger:park', args: `${word} waiting on review` })
-    expect(text).toBe(`${word} is another task. Park it from the main checkout, or from that task's own session.`)
+    const { text } = await $.command.run({ command: 'ledger:park', args: `${word} waiting` })
+    expect(text).toBe(
+      `${word} names the worktree ${WORKTREES}/new-api, task api-rework. Nothing was written, and the session was not cleared. Type /ledger:park api-rework <reason>.`,
+    )
     expect(isMarkdownReached()).toBe(false)
     await $.turn.complete(turnEnd)
     expect(calls).toEqual([])
     expect(files).toEqual(before)
+    expect(files.get(FIX_LOGIN)).toBe(LEDGER)
+  })
+}
+
+const TWIN = `${WORKTREES}/twin/.claude/ledger.md`
+const SHARED = LEDGER.replace('fast-steps', 'shared')
+
+for (const [name, contents, worktrees, slug, paths] of [
+  ["its own task and another worktree's task", { [NEW_API]: LEDGER }, LINKED.worktrees, 'fast-steps', [FIX_LOGIN, NEW_API]],
+  ['the tasks in two other worktrees', { [NEW_API]: SHARED, [TWIN]: SHARED }, LINKED.worktrees + worktreeBlock(`${WORKTREES}/twin`, 'me/twin'), 'shared', [NEW_API, TWIN]],
+] as const) {
+  for (const [command, args] of [
+    ['ledger:go', slug],
+    ['ledger:park', `${slug} waiting`],
+  ] as const) {
+    test(`/${command} <slug ${name} share> from a linked worktree names every ledger and changes nothing`, async ($, on) => {
+      const { files, calls, isMarkdownReached } = world(on, `${WORKTREES}/fix-login/src`, command, contents, { ledgers: LINKED.ledgers, worktrees })
+      const before = new Map(files)
+      const { text } = await $.command.run({ command, args })
+      expect(text).toBe(
+        `Several task ledgers are named "${slug}": ${paths.join(', ')}. Nothing was written, and the session was not cleared. Give each task its own slug in its ledger's title.`,
+      )
+      expect(isMarkdownReached()).toBe(false)
+      await $.turn.complete(turnEnd)
+      expect(calls).toEqual([])
+      expect(files).toEqual(before)
+    })
+  }
+}
+
+for (const [name, word] of [
+  ['folder', 'old-spike'],
+  ['branch', 'me/spike-v2'],
+  ['branch without its owner', 'spike-v2'],
+] as const) {
+  test(`/ledger:park <${name} of a worktree without a ledger> <reason> from a linked worktree refuses and changes nothing`, async ($, on) => {
+    const worktrees = LINKED.worktrees + worktreeBlock(`${WORKTREES}/old-spike`, 'me/spike-v2')
+    const { files, calls, isMarkdownReached } = world(on, `${WORKTREES}/fix-login`, 'ledger:park', {}, { ledgers: LINKED.ledgers, worktrees })
+    const before = new Map(files)
+    const { text } = await $.command.run({ command: 'ledger:park', args: `${word} waiting` })
+    expect(text).toBe(
+      `${word} names the worktree ${WORKTREES}/old-spike, which has no task ledger. Nothing was written, and the session was not cleared. To give it one, type /ledger:task --here in a session there.`,
+    )
+    expect(isMarkdownReached()).toBe(false)
+    await $.turn.complete(turnEnd)
+    expect(calls).toEqual([])
+    expect(files).toEqual(before)
+    expect(files.get(FIX_LOGIN)).toBe(LEDGER)
+  })
+}
+
+// The own task is named new-api, the folder of the worktree that holds api-rework.
+const OWN_NAMED_LIKE_SIBLING = { [FIX_LOGIN]: LEDGER.replace('fast-steps', 'new-api'), [NEW_API]: RENAMED }
+
+test("/ledger:park <own slug, another worktree's folder> <reason> from a linked worktree parks its own task", async ($, on) => {
+  const { files, calls, markdownArgs } = world(on, `${WORKTREES}/fix-login`, 'ledger:park', OWN_NAMED_LIKE_SIBLING, LINKED)
+  await $.command.run({ command: 'ledger:park', args: 'new-api waiting' })
+  expect(markdownArgs()).toBe(`task: new-api\nledger: ${FIX_LOGIN}\nreason: waiting`)
+  await $.turn.complete(turnEnd)
+  expect(calls).toEqual([`write ${FIX_LOGIN}`, 'clear'])
+  expect(files.get(NEW_API)).toBe(RENAMED)
+})
+
+test("/ledger:go <own slug, another worktree's folder> from a linked worktree continues its own task", async ($, on) => {
+  const { files, calls, markdownArgs } = world(on, `${WORKTREES}/fix-login`, 'ledger:go', OWN_NAMED_LIKE_SIBLING, LINKED)
+  await $.command.run({ command: 'ledger:go', args: 'new-api' })
+  expect(markdownArgs()).toBe(`task: new-api\nledger: ${FIX_LOGIN}`)
+  await $.turn.complete(turnEnd)
+  expect(calls).toEqual(['clear', 'submit: go new-api'])
+  expect(files.get(NEW_API)).toBe(RENAMED)
+})
+
+const OLD_SPIKE = `${WORKTREES}/old-spike/.claude/ledger.md`
+
+for (const [name, contents] of [
+  ['a ledger with another slug', { [OLD_SPIKE]: LEDGER.replace('fast-steps', 'spike-work') }],
+  ['no ledger', {}],
+] as const) {
+  test(`/ledger:park <slug of one other worktree's task, folder of another with ${name}> <reason> from a linked worktree parks that task`, async ($, on) => {
+    const worktrees = LINKED.worktrees + worktreeBlock(`${WORKTREES}/old-spike`, 'me/spike-v2')
+    const { files, calls, isMarkdownReached } = world(
+      on,
+      `${WORKTREES}/fix-login`,
+      'ledger:park',
+      { [NEW_API]: LEDGER.replace('fast-steps', 'old-spike'), ...contents },
+      { ledgers: LINKED.ledgers, worktrees },
+    )
+    const before = new Map(files)
+    const { text } = await $.command.run({ command: 'ledger:park', args: 'old-spike waiting' })
+    const [marker] = nextStepOf(files.get(NEW_API) ?? '')
+    expect(marker).toMatch(TODAY)
+    expect(marker?.endsWith('— waiting')).toBe(true)
+    expect(text).toBe(`Parked old-spike. ${marker}`)
+    expect(isMarkdownReached()).toBe(false)
+    await $.turn.complete(turnEnd)
+    expect(calls).toEqual([`write ${NEW_API}`])
+    expect(files.get(FIX_LOGIN)).toBe(before.get(FIX_LOGIN))
+    expect(files.get(OLD_SPIKE)).toBe(before.get(OLD_SPIKE))
   })
 }
 
@@ -291,7 +412,7 @@ test('/ledger:park names a marker it could not write and does not clear', async 
 })
 
 test('/ledger:park <other slug> it cannot write says why and clears nothing', async ($, on) => {
-  const { files, calls, isMarkdownReached } = world(on, `${WORKTREES}/fix-login`, 'ledger:park', {}, { broken: 'write' })
+  const { files, calls, isMarkdownReached } = world(on, `${WORKTREES}/fix-login`, 'ledger:park', {}, { broken: 'write', ...LINKED })
   const { text } = await $.command.run({ command: 'ledger:park', args: 'new-api waiting on the API review' })
   expect(text).toMatch(/^Could not park new-api\. .*EACCES/)
   expect(isMarkdownReached()).toBe(false)
@@ -301,7 +422,7 @@ test('/ledger:park <other slug> it cannot write says why and clears nothing', as
 })
 
 test('/ledger:go to a parked task removes the marker and tells the model when and why it was parked', async ($, on) => {
-  const { files, calls, markdownArgs } = world(on, `${WORKTREES}/fix-login`, 'ledger:go', { [NEW_API]: PARKED.replace('fast-steps', 'new-api') })
+  const { files, calls, markdownArgs } = world(on, `${WORKTREES}/fix-login`, 'ledger:go', { [NEW_API]: PARKED.replace('fast-steps', 'new-api') }, LINKED)
   await $.command.run({ command: 'ledger:go', args: 'new-api' })
   expect(files.get(NEW_API)).toBe(LEDGER.replace('fast-steps', 'new-api'))
   expect(markdownArgs()).toBe(`task: new-api\nledger: ${FIX_LOGIN}\nparked: 2026-10-01 — waiting on the API review`)
@@ -310,7 +431,7 @@ test('/ledger:go to a parked task removes the marker and tells the model when an
 })
 
 test('/ledger:go to a task that is not parked writes nothing to it', async ($, on) => {
-  const { calls, markdownArgs } = world(on, `${WORKTREES}/fix-login`, 'ledger:go')
+  const { calls, markdownArgs } = world(on, `${WORKTREES}/fix-login`, 'ledger:go', {}, LINKED)
   await $.command.run({ command: 'ledger:go', args: 'new-api' })
   expect(markdownArgs()).toBe(`task: new-api\nledger: ${FIX_LOGIN}`)
   await $.turn.complete(turnEnd)
@@ -318,7 +439,7 @@ test('/ledger:go to a task that is not parked writes nothing to it', async ($, o
 })
 
 test('/ledger:go to a parked task it cannot unmark clears nothing and says why', async ($, on) => {
-  const { calls, isMarkdownReached } = world(on, `${WORKTREES}/fix-login`, 'ledger:go', { [NEW_API]: PARKED.replace('fast-steps', 'new-api') }, { broken: 'write' })
+  const { calls, isMarkdownReached } = world(on, `${WORKTREES}/fix-login`, 'ledger:go', { [NEW_API]: PARKED.replace('fast-steps', 'new-api') }, { broken: 'write', ...LINKED })
   const { text } = await $.command.run({ command: 'ledger:go', args: 'new-api' })
   expect(text).toContain('Could not remove the parked marker from new-api.')
   expect(text).toContain('EACCES')
@@ -326,6 +447,13 @@ test('/ledger:go to a parked task it cannot unmark clears nothing and says why',
   expect(isMarkdownReached()).toBe(false)
   await $.turn.complete(turnEnd)
   expect(calls).toEqual([`write ${NEW_API}`])
+})
+
+test('/ledger from a linked worktree shows only its own ledger', async ($, on) => {
+  world(on, `${WORKTREES}/fix-login`, 'ledger', {}, LINKED)
+  const { text } = await $.command.run({ command: 'ledger', args: '' })
+  expect(text).toContain('#### fast-steps')
+  expect(text).not.toContain('new-api')
 })
 
 test('/ledger shows a parked task with its date and reason', async ($, on) => {

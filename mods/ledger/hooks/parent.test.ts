@@ -68,6 +68,9 @@ const FAMILY = [
 
 const SHOW_EPIC = 'bin/cc-ledger-parent show epic --json'
 
+// /ledger:go always lists the worktrees, to find another worktree's ledger with the same slug.
+const withoutWorktreeList = (calls: string[]): string[] => calls.filter(call => call !== 'git worktree list --porcelain -z')
+
 test('/ledger:parent <slug> shows the parent, then each child with its status and next step', async ($, on) => {
   const { calls } = world(on, '/repo', {}, { [SHOW_EPIC]: shown(FAMILY) })
 
@@ -362,7 +365,7 @@ test('/ledger:go <child> names the parent to the command', async ($, on) => {
   await $.command.run({ command: 'ledger:go', args: 'child-a' })
 
   expect(markdownArgs()).toBe('task: child-a\nledger: none\nparent: epic')
-  expect(calls).toEqual([])
+  expect(withoutWorktreeList(calls)).toEqual([])
 })
 
 test('/ledger:go <parent> lists the children with their status to the command', async ($, on) => {
@@ -376,7 +379,7 @@ test('/ledger:go <parent> lists the children with their status to the command', 
   await $.command.run({ command: 'ledger:go', args: 'epic' })
 
   expect(markdownArgs()).toBe('task: epic\nledger: none\nchildren: child-a (active), old (retired)')
-  expect(calls).toEqual([SHOW_EPIC])
+  expect(withoutWorktreeList(calls)).toEqual([SHOW_EPIC])
 })
 
 test('/ledger:go <parent> still switches when the children cannot be listed, without a children line', async ($, on) => {

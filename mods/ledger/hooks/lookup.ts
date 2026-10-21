@@ -2,7 +2,7 @@ import type { EngineInterface, ProcessRunResult } from 'claude-code'
 
 import { folderSlug, ledgerPaths, summarize, type BranchState } from './ledger'
 import { defaultBranchOf, isInside, parseCount, stateFailedMessage } from './retire'
-import { basename, parseWorktrees } from './worktrees'
+import { basename, parseWorktrees, type Worktree } from './worktrees'
 import { lookUpPrs } from './worktrees-command'
 
 export type Found = { path: string; slug: string; mtimeMs: number }
@@ -38,23 +38,50 @@ export async function findLedgers($: EngineInterface): Promise<Found[] | { error
   return found.sort((a, b) => b.mtimeMs - a.mtimeMs)
 }
 
-/**
- * Whether `word` names a linked worktree other than the one holding `cwd`: its folder, its branch, or its branch without the owner prefix.
- * False from the main checkout, and when git cannot list the worktrees.
- */
-export async function namesOtherWorktree($: EngineInterface, word: string, cwd: string): Promise<boolean> {
+/** The linked worktrees other than the one holding `cwd`; none from the main checkout, and when git cannot list them. */
+async function otherWorktrees($: EngineInterface, cwd: string): Promise<Worktree[]> {
   let result: ProcessRunResult
   try {
     result = await $.process.run(['git', 'worktree', 'list', '--porcelain', '-z'], { cwd })
   } catch {
-    return false
+    return []
   }
-  if (result.exitCode !== 0) return false
+  if (result.exitCode !== 0) return []
   const worktrees = parseWorktrees(result.stdout)
   // The longest match, because a task worktree can sit inside another one.
   const [own] = worktrees.filter(({ path }) => isInside(cwd, path)).sort((a, b) => b.path.length - a.path.length)
-  if (own === undefined) return false
-  return worktrees.some(({ path, branch }) => path !== own.path && [basename(path), branch, branch.split('/').at(-1)].includes(word))
+  return own === undefined ? [] : worktrees.filter(({ path }) => path !== own.path)
+}
+
+async function ledgerIn($: EngineInterface, worktree: string): Promise<Found | undefined> {
+  const path = `${worktree}/.claude/ledger.md`
+  const stat = await $.fs.stat(path).catch(() => undefined)
+  return stat?.kind === 'file' ? { path, slug: folderSlug(path), mtimeMs: stat.mtimeMs } : undefined
+}
+
+const namesWorktree = ({ path, branch }: Worktree, word: string): boolean => [basename(path), branch, branch.split('/').at(-1)].includes(word)
+
+/** A worktree named by its folder or branch; `slug` is its task's, absent when it has no ledger. */
+export type NamedWorktree = { path: string; slug?: string }
+
+export type OtherWorktreeMatch = { ledgers: Found[]; worktree?: NamedWorktree }
+
+/**
+ * From a linked worktree, findLedgers lists only its own ledger; this finds the ledgers in the other linked worktrees whose slug is
+ * `word`, the same slug a match from the main checkout needs. When none matches and `word` names one of those worktrees by its
+ * folder, its branch, or its branch without the owner prefix, `worktree` is that one.
+ */
+export async function lookUpOtherWorktrees($: EngineInterface, word: string, cwd: string): Promise<OtherWorktreeMatch> {
+  const worktrees = await Promise.all(
+    (await otherWorktrees($, cwd)).map(async worktree => {
+      const ledger = await ledgerIn($, worktree.path)
+      return { worktree, ledger, slug: ledger && (await titleSlug($, ledger.path)) }
+    }),
+  )
+  const ledgers = worktrees.flatMap(({ ledger, slug }) => (ledger && slug === word ? [ledger] : []))
+  if (ledgers.length > 0) return { ledgers }
+  const named = worktrees.find(({ worktree }) => namesWorktree(worktree, word))
+  return named ? { ledgers: [], worktree: { path: named.worktree.path, slug: named.slug } } : { ledgers: [] }
 }
 
 export type BranchRead = {

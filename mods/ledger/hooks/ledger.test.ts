@@ -176,6 +176,10 @@ function world(on: On, cwd: string, ledgers: string[], command: string, broken?:
 
 const turnEnd = { answer: '', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' } as const
 
+// /ledger:go always lists the worktrees, to find another worktree's ledger with the same slug.
+const WORKTREE_LIST = JSON.stringify(['git', 'worktree', 'list', '--porcelain', '-z'])
+const withoutWorktreeList = (commands: string[][]): string[][] => commands.filter(argv => JSON.stringify(argv) !== WORKTREE_LIST)
+
 test('/ledger:close outside a task worktree answers with why, and clears nothing', async ($, on) => {
   const { calls, isMarkdownReached } = world(on, '/repo', [FIX_LOGIN], 'ledger:close')
   const { text } = await $.command.run({ command: 'ledger:close', args: '' })
@@ -488,7 +492,7 @@ for (const { command, args, go } of continuations) {
     await $.command.run({ command, args })
     await $.turn.complete(turnEnd)
     expect(calls).toEqual(['clear', `submit: ${go}`])
-    expect(commands).toEqual([])
+    expect(withoutWorktreeList(commands)).toEqual([])
   })
 
   test(`/${command} reads the ledger again at the end of the turn, after the model finished its last step`, async ($, on) => {
@@ -515,7 +519,7 @@ test('/ledger:go from outside every task worktree logs no retire line', async ($
   await $.command.run({ command: 'ledger:go', args: 'new-api' })
   await $.turn.complete(turnEnd)
   expect(calls).toEqual(['clear', 'submit: go new-api'])
-  expect(commands).toEqual([])
+  expect(withoutWorktreeList(commands)).toEqual([])
 })
 
 test('/ledger:go to the current task logs no retire line', async ($, on) => {
@@ -524,7 +528,7 @@ test('/ledger:go to the current task logs no retire line', async ($, on) => {
   await $.command.run({ command: 'ledger:go', args: 'fast-steps' })
   await $.turn.complete(turnEnd)
   expect(calls).toEqual(['clear', 'submit: go fast-steps'])
-  expect(commands).toEqual([])
+  expect(withoutWorktreeList(commands)).toEqual([])
 })
 
 test('/ledger:close logs no retire line', async ($, on) => {

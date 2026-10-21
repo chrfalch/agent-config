@@ -1,5 +1,5 @@
 ---
-description: Start a web page on this machine that lists every task ledger, like /ledger:all, with filters, search, each ledger's text, and buttons to park, unpark and retire a task. It prints the page's address, which holds a new access key. The page keeps running after this session ends. `stop` stops it.
+description: Start a web page on this machine that lists every task ledger, like /ledger:all, with each child task under its parent, filters, search, each ledger's text, and buttons to park, unpark and retire a task. It prints the page's address, which holds a new access key. The page keeps running after this session ends. `stop` stops it.
 argument-hint: "[stop]"
 ---
 

@@ -51,6 +51,9 @@
   table.ledgers td { border-bottom: 1px solid var(--line); padding: 6px 8px; vertical-align: top; }
   table.ledgers td.when { white-space: nowrap; color: var(--muted); font-variant-numeric: tabular-nums; }
   table.ledgers td.slug { font-weight: 600; }
+  table.ledgers td.slug.nested { padding-left: 24px; }
+  table.ledgers .parent { display: block; font-weight: 400; color: var(--muted); }
+  button.link { background: none; border: 0; border-radius: 0; padding: 0; color: var(--accent); text-decoration: underline; }
   table.ledgers .next { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; }
   table.ledgers tbody tr { cursor: pointer; }
   table.ledgers tbody tr:hover { background: var(--panel); }
@@ -237,6 +240,29 @@ const tasks = n => `${n} ${n === 1 ? 'task' : 'tasks'}`;
 
 const NO_TASKS = { total: 0, counts: {} };
 
+// A child that is not listed under its parent names it, and the name opens the parent wherever the parent is.
+function parentNote({ parent, parentId }) {
+  const note = Object.assign(document.createElement('span'), { className: 'parent', textContent: 'parent: ' });
+  if (parentId === undefined) {
+    note.textContent += parent;
+    return note;
+  }
+  const link = Object.assign(document.createElement('button'), { type: 'button', className: 'link', textContent: parent });
+  link.addEventListener('click', event => {
+    event.stopPropagation();
+    return select(parentId);
+  });
+  note.append(link);
+  return note;
+}
+
+function slugCell(row) {
+  if (row.nested) return cell(`↳ ${row.slug}`, 'slug nested');
+  const td = cell(row.slug, 'slug');
+  if (row.parent !== undefined) td.append(parentNote(row));
+  return td;
+}
+
 // The counts come from the repository's entry in /api/repos, because the total in /api/ledgers is of every repository.
 function render({ ledgers }, { total, counts }) {
   if (fillStatuses(Object.keys(counts))) return load();
@@ -252,10 +278,11 @@ function render({ ledgers }, { total, counts }) {
     // Clamped in a div, because line-clamp does not apply to a table cell.
     const next = document.createElement('td');
     next.append(Object.assign(document.createElement('div'), { className: 'next', textContent: row.next }));
-    tr.append(cell(row.slug, 'slug'), status, cell(when(row.updated), 'when'), next);
+    tr.append(slugCell(row), status, cell(when(row.updated), 'when'), next);
     const open = () => select(row.id);
     tr.addEventListener('click', open);
-    tr.addEventListener('keydown', event => { if (event.key === 'Enter') open(); });
+    // Enter on the parent's name inside the row opens the parent, not this row.
+    tr.addEventListener('keydown', event => { if (event.key === 'Enter' && event.target === tr) open(); });
     return tr;
   }));
   $('empty').textContent = total === 0 ? 'This repository has no ledgers.' : 'No ledger matches these filters.';

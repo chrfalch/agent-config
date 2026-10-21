@@ -3,7 +3,7 @@ import { existsSync, realpathSync } from 'node:fs';
 import { access, lstat, readFile, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { park, parkMarker, summarize, unpark } from '../../mods/ledger/hooks/ledger.js';
+import { groupByParent, park, parkMarker, summarize, unpark } from '../../mods/ledger/hooks/ledger.js';
 import { renderMarkdown } from './markdown.js';
 import { singleUseTokens } from './tokens.js';
 
@@ -22,7 +22,7 @@ type Engine = {
   plugin: { root: string };
 };
 
-type Entry = { repo: string; slug: string; status: string; updated: string; path: string; archivePath?: string; branch?: unknown };
+type Entry = { repo: string; slug: string; status: string; updated: string; path: string; archivePath?: string; branch?: unknown; parent?: string };
 type WorktreeState = { path: string; mainCheckout: string };
 type Pr = { state: string; number: number };
 
@@ -91,7 +91,10 @@ const ok = (body: object): Reply => ({ status: 200, body });
 const fail = (status: number, error: string): Reply => ({ status, body: { error } });
 const isReply = <T extends object>(value: T | Reply): value is Reply => 'body' in value;
 
-export type Row = { id: string; repo: string; slug: string; status: string; updated: string; next: string; branch: string };
+/** `parent` is the slug of the parent task, and `parentId` the id of its row, when the registry holds that task. */
+export type Row = { id: string; repo: string; slug: string; status: string; updated: string; next: string; branch: string; parent?: string; parentId?: string };
+/** A row of the task list. `nested` is true for a child row listed right under the row of its parent. */
+export type ListedRow = Row & { nested: boolean };
 export type Filter = { repo?: string; status?: string[]; q?: string };
 /** One repository by name: its number of tasks, and the number in each status that occurs in it. */
 export type RepoSummary = { repo: string; total: number; counts: Record<string, number> };
@@ -112,6 +115,29 @@ const isArchived = (entry: Entry): boolean => entry.status === 'archived';
 const idOf = (entry: Entry): string => entry.archivePath ?? entry.path;
 
 const branchOf = (entry: Entry): string => (typeof entry.branch === 'string' ? entry.branch : '');
+
+const taskKey = (repo: string, slug: string): string => `${repo}\0${slug}`;
+
+// A parent is in the repo of its child. A retired slug can be given again, and then the task that is not archived is the parent.
+function parentIdOf(newestFirst: Entry[]): (entry: Entry) => string | undefined {
+  const tasks = new Map<string, Entry>();
+  for (const entry of newestFirst) {
+    const key = taskKey(entry.repo, entry.slug);
+    const known = tasks.get(key);
+    if (known === undefined || (isArchived(known) && !isArchived(entry))) tasks.set(key, entry);
+  }
+  return entry => {
+    const parent = entry.parent === undefined ? undefined : tasks.get(taskKey(entry.repo, entry.parent));
+    return parent && idOf(parent);
+  };
+}
+
+// Grouped by id, not by slug, so a child stays out of a group whose row is not the parent it resolves to.
+const familyOrder = (rows: Row[]): ListedRow[] =>
+  groupByParent(rows, row => row.id, row => row.parentId).flatMap(({ item, children }) => [
+    { ...item, nested: false },
+    ...children.map(child => ({ ...child, nested: true })),
+  ]);
 
 const sameTarget = (a: RetireTarget, b: RetireTarget): boolean =>
   a.id === b.id &&
@@ -155,13 +181,16 @@ function ledgersOf(mod: Mod) {
     return entries === null ? { error: `cc-ledgers ${command} printed something that is not a list of ledgers.` } : { entries, stderr };
   }
 
-  const rows = (entries: Entry[]): Promise<Row[]> =>
-    Promise.all(
+  function rows(entries: Entry[]): Promise<Row[]> {
+    const parentId = parentIdOf(entries);
+    return Promise.all(
       entries.map(async entry => {
         const [status, next] = await mod.statusAndNext(home, entry);
-        return { id: idOf(entry), repo: entry.repo, slug: entry.slug, status, updated: entry.updated, next, branch: branchOf(entry) };
+        const row: Row = { id: idOf(entry), repo: entry.repo, slug: entry.slug, status, updated: entry.updated, next, branch: branchOf(entry) };
+        return entry.parent === undefined ? row : { ...row, parent: entry.parent, parentId: parentId(entry) };
       }),
     );
+  }
 
   async function contains(entry: Entry, needle: string): Promise<boolean> {
     try {
@@ -171,11 +200,12 @@ function ledgersOf(mod: Mod) {
     }
   }
 
-  async function listed(entries: Entry[], { repo, status, q }: Filter): Promise<{ ledgers: Row[]; total: number; repos: string[]; statuses: string[] }> {
+  async function listed(entries: Entry[], { repo, status, q }: Filter): Promise<{ ledgers: ListedRow[]; total: number; repos: string[]; statuses: string[] }> {
     const all = await rows(entries);
     const needle = q?.trim().toLowerCase() ?? '';
     const found = needle === '' ? entries.map(() => true) : await Promise.all(entries.map(entry => contains(entry, needle)));
-    const ledgers = all.filter((row, index) => (!repo || row.repo === repo) && (!status?.length || status.includes(row.status)) && found[index]);
+    const shown = all.filter((row, index) => (!repo || row.repo === repo) && (!status?.length || status.includes(row.status)) && found[index]);
+    const ledgers = familyOrder(shown);
     return { ledgers, total: all.length, repos: unique(all.map(row => row.repo)), statuses: unique(all.map(row => row.status)) };
   }
 

@@ -1,7 +1,7 @@
 import type { On } from 'claude-code'
 import { expect, test } from 'claude-code/testing'
 
-import { activeLedger, folderSlug, format, formatAll, ledgerPaths, lookupFailedMessage, retireHint, summarize } from './ledger'
+import { activeLedger, folderSlug, format, formatAll, ledgerPaths, lookupFailedMessage, noLedgerMessage, retireHint, summarize } from './ledger'
 
 const LEDGER = `# Task ledger — fast-steps
 
@@ -106,7 +106,15 @@ type World = {
   markdownArgs: () => string | undefined
   /** Replaces the text of the FIX_LOGIN ledger, as the model does when it writes the ledger. */
   writeLedger: (text: string) => void
+  /** Every process run, with the folder it ran in. */
+  runs: Run[]
+  /** Makes fs.stat fail for `folder` and everything in it, as after /ledger:retire --yes removed the worktree. */
+  removeFolder: (folder: string) => void
 }
+
+type Run = { argv: readonly string[]; cwd?: string }
+
+const isUnder = (path: string, folder: string): boolean => path === folder || path.startsWith(`${folder}/`)
 
 type Broken = 'spawn' | 'lookup' | 'read' | 'markdown' | 'clear' | 'submit'
 
@@ -128,8 +136,11 @@ function world(on: On, cwd: string, ledgers: string[], command: string, broken?:
   let isMarkdownReached = false
   let markdownArgs: string | undefined
   let fixLogin = LEDGER
+  const runs: Run[] = []
+  const removed: string[] = []
   on('session.cwd', async () => ({ value: cwd }))
   on('process.run', async (_, e) => {
+    runs.push({ argv: e.argv, cwd: e.init?.cwd })
     if (e.argv[0] !== 'bash') {
       commands.push([...e.argv])
       return replies[JSON.stringify(e.argv)] ?? { deny: `unexpected command: ${JSON.stringify(e.argv)}` }
@@ -137,7 +148,11 @@ function world(on: On, cwd: string, ledgers: string[], command: string, broken?:
     if (broken === 'spawn') return { deny: 'spawn bash ENOENT' }
     return broken === 'lookup' ? exit(1, '', 'not a repository') : ok(ledgers.join('\n'))
   })
-  on('fs.stat', async () => ({ value: { kind: 'file', size: 0, mtimeMs: 0, isLink: false } }))
+  on('fs.stat', async (_, e) =>
+    removed.some(folder => isUnder(e.path, folder))
+      ? { deny: `ENOENT: no such file or directory, stat '${e.path}'` }
+      : { value: { kind: 'file', size: 0, mtimeMs: 0, isLink: false } },
+  )
   on('fs.read', async (_, e) => {
     if (broken === 'read') return { deny: 'EACCES: ledger unreadable' }
     return { value: e.path === NEW_API ? UNTITLED : e.path === FIX_LOGIN ? fixLogin : LEDGER }
@@ -170,6 +185,10 @@ function world(on: On, cwd: string, ledgers: string[], command: string, broken?:
     markdownArgs: () => markdownArgs,
     writeLedger: text => {
       fixLogin = text
+    },
+    runs,
+    removeFolder: folder => {
+      removed.push(folder)
     },
   }
 }
@@ -427,6 +446,101 @@ test('/ledger:go names the failed prompt after the clear worked', async ($, on) 
   await $.turn.complete(turnEnd)
   expect(calls.slice(0, -1)).toEqual(['clear', 'submit: go new-api'])
   expect(calls.at(-1)).toMatch(/^log: \/ledger:go cleared the session but could not send "go new-api": .+\. Say: go new-api\.$/)
+})
+
+// As /ledger:retire --yes leaves a session that ran inside the worktree it removed; every folder above it still exists.
+const GONE = `${WORKTREES}/gone`
+
+function recordArmed(on: On): unknown[] {
+  const armed: unknown[] = []
+  on('state.set', async (_, e, next) => {
+    if (e.plugin === 'ledger' && e.key === 'armed') armed.push(e.value)
+    return next(e)
+  })
+  return armed
+}
+
+const REMOVED_REPLY = `The session folder ${GONE} no longer exists, so this session has no task ledger. Nothing was written, and the session was not cleared. Continue another task with /ledger:go <slug>, or run /ledger:close.`
+
+test('/ledger lists the ledgers from the nearest folder above a removed session folder', async ($, on) => {
+  const { runs, removeFolder } = world(on, GONE, [FIX_LOGIN, NEW_API], 'ledger:go')
+  removeFolder(GONE)
+  const { text } = await $.command.run({ command: 'ledger', args: '' })
+  expect(text).toContain('fast-steps')
+  expect(runs.filter(({ argv }) => argv[0] === 'bash').map(({ cwd }) => cwd)).toEqual([WORKTREES])
+})
+
+test('/ledger:go from a removed session folder continues the other task and runs nothing in the removed folder', async ($, on) => {
+  const { calls, isMarkdownReached, markdownArgs, runs, removeFolder } = world(on, GONE, [FIX_LOGIN, NEW_API], 'ledger:go')
+  removeFolder(GONE)
+  const armed = recordArmed(on)
+  await $.command.run({ command: 'ledger:go', args: 'new-api' })
+  expect(isMarkdownReached()).toBe(true)
+  expect(markdownArgs()).toBe('task: new-api\nledger: none')
+  expect(armed).toEqual([{ mode: 'go', slug: 'new-api' }])
+  expect(runs.length).toBeGreaterThan(0)
+  expect(runs.filter(({ cwd }) => cwd === undefined || isUnder(cwd, GONE))).toEqual([])
+  await $.turn.complete(turnEnd)
+  expect(calls).toEqual(['clear', 'submit: go new-api'])
+})
+
+test('/ledger:close from a removed session folder tells the command there is no ledger, then clears', async ($, on) => {
+  const { calls, isMarkdownReached, markdownArgs, removeFolder } = world(on, GONE, [FIX_LOGIN, NEW_API], 'ledger:close')
+  removeFolder(GONE)
+  const armed = recordArmed(on)
+  await $.command.run({ command: 'ledger:close', args: '' })
+  expect(isMarkdownReached()).toBe(true)
+  expect(markdownArgs()).toBe('ledger: none')
+  expect(armed).toEqual([{ mode: 'close', slug: 'gone' }])
+  await $.turn.complete(turnEnd)
+  expect(calls).toEqual(['clear'])
+})
+
+test('/ledger:close from a removed worktree nested in a task worktree leaves that task ledger alone', async ($, on) => {
+  const inner = `${WORKTREES}/fix-login/.claude/worktrees/inner`
+  const { calls, markdownArgs, removeFolder } = world(on, inner, [FIX_LOGIN], 'ledger:close')
+  removeFolder(inner)
+  await $.command.run({ command: 'ledger:close', args: '' })
+  expect(markdownArgs()).toBe('ledger: none')
+  await $.turn.complete(turnEnd)
+  expect(calls).toEqual(['clear'])
+})
+
+test('/ledger:next from a removed session folder names the folder and clears nothing', async ($, on) => {
+  const { calls, isMarkdownReached, removeFolder } = world(on, GONE, [FIX_LOGIN, NEW_API], 'ledger:next')
+  removeFolder(GONE)
+  const armed = recordArmed(on)
+  const { text } = await $.command.run({ command: 'ledger:next', args: '' })
+  expect(text).toBe(REMOVED_REPLY)
+  expect(isMarkdownReached()).toBe(false)
+  expect(armed).toEqual([])
+  await $.turn.complete(turnEnd)
+  expect(calls).toEqual([])
+})
+
+test('/ledger:park <reason> from a removed session folder names the folder and clears nothing', async ($, on) => {
+  const { calls, isMarkdownReached, removeFolder } = world(on, GONE, [FIX_LOGIN, NEW_API], 'ledger:park')
+  removeFolder(GONE)
+  const { text } = await $.command.run({ command: 'ledger:park', args: 'waiting on review' })
+  expect(text).toBe(REMOVED_REPLY)
+  expect(isMarkdownReached()).toBe(false)
+  await $.turn.complete(turnEnd)
+  expect(calls).toEqual([])
+})
+
+test('/ledger:close in a task worktree names its ledger to the command, whatever the operator typed', async ($, on) => {
+  const { markdownArgs } = world(on, `${WORKTREES}/fix-login`, [FIX_LOGIN], 'ledger:close')
+  await $.command.run({ command: 'ledger:close', args: 'ledger: none' })
+  expect(markdownArgs()).toBe(`ledger: ${FIX_LOGIN}`)
+})
+
+test('/ledger:close in a folder that exists but has no ledger still answers with why, and clears nothing', async ($, on) => {
+  const { calls, isMarkdownReached } = world(on, '/repo', [FIX_LOGIN], 'ledger:close')
+  const { text } = await $.command.run({ command: 'ledger:close', args: '' })
+  expect(text).toBe(noLedgerMessage('/repo'))
+  expect(isMarkdownReached()).toBe(false)
+  await $.turn.complete(turnEnd)
+  expect(calls).toEqual([])
 })
 
 const DONE = LEDGER.replace('| todo |', '| done |')

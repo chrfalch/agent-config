@@ -33,27 +33,43 @@ function ledgerText(slug: string, { parent, children }: { parent?: string; child
 // The script is keyed by its folder and name, because the plugin root differs from machine to machine.
 const scriptKey = (argv: readonly string[]): string => [(argv[0] ?? '').split('/').slice(-2).join('/'), ...argv.slice(1)].join(' ')
 
-type World = { calls: string[]; markdownArgs: () => string | undefined }
+type World = {
+  calls: string[]
+  markdownArgs: () => string | undefined
+  /** Makes fs.stat fail for `folder` and everything in it, as after /ledger:retire --yes removed the worktree. */
+  removeFolder: (folder: string) => void
+}
 
 /** `ledgers` maps a path to its text, newest first: the first is edited at 4000 ms, the next at 3000 ms, and so on. */
 function world(on: On, cwd: string, ledgers: Record<string, string>, replies: Record<string, Reply> = {}): World {
   const calls: string[] = []
   let markdownArgs: string | undefined
   const paths = Object.keys(ledgers)
+  const removed: string[] = []
   on('session.cwd', async () => ({ value: cwd }))
   on('process.run', async (_, e) => {
     if (e.argv[0] === 'bash') return exit(0, paths.join('\n'))
     calls.push(scriptKey(e.argv))
     return replies[scriptKey(e.argv)] ?? { deny: `unexpected command: ${JSON.stringify(e.argv)}` }
   })
-  on('fs.stat', async (_, e) => ({ value: { kind: 'file', size: 0, mtimeMs: (paths.length - paths.indexOf(e.path)) * 1000, isLink: false } }))
+  on('fs.stat', async (_, e) =>
+    removed.some(folder => e.path === folder || e.path.startsWith(`${folder}/`))
+      ? { deny: `ENOENT: no such file or directory, stat '${e.path}'` }
+      : { value: { kind: 'file', size: 0, mtimeMs: (paths.length - paths.indexOf(e.path)) * 1000, isLink: false } },
+  )
   on('fs.read', async (_, e) => (e.path in ledgers ? { value: ledgers[e.path] ?? '' } : { deny: `ENOENT: ${e.path}` }))
   on('fs.write', async () => ({ value: undefined }))
   on('command.run', { command: 'ledger:go' }, async (_, e) => {
     markdownArgs = e.args
     return { text: '' }
   })
-  return { calls, markdownArgs: () => markdownArgs }
+  return {
+    calls,
+    markdownArgs: () => markdownArgs,
+    removeFolder: folder => {
+      removed.push(folder)
+    },
+  }
 }
 
 const shown = (children: { slug: string; status: string; next: string }[]): Reply =>
@@ -137,6 +153,18 @@ for (const [where, cwd] of [
     expect(calls).toEqual([])
   })
 }
+
+test('/ledger:parent without a slug in a removed worktree nested in a parent task does not show that task as its own', async ($, on) => {
+  const inner = `${WORKTREES}/epic/.claude/worktrees/inner`
+  const epic = ledgerText('epic', { children: ['- child-a'] })
+  const { calls, removeFolder } = world(on, inner, { [pathOf('epic')]: epic }, { [SHOW_EPIC]: shown(FAMILY) })
+  removeFolder(inner)
+
+  const { text } = await $.command.run({ command: 'ledger:parent' })
+
+  expect(text).toStartWith('Usage: /ledger:parent')
+  expect(calls).toEqual([])
+})
 
 for (const args of ['add', 'remove', 'epic add', 'epic add a b', 'epic move child-a', 'add child-a', 'epic child-a']) {
   test(`/ledger:parent ${args} prints the usage and runs nothing`, async ($, on) => {

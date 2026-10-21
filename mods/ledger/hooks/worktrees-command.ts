@@ -1,6 +1,7 @@
 import type { EngineInterface, FsStat } from 'claude-code'
 
 import { summarize } from './ledger'
+import { sessionFolder } from './lookup'
 import {
   basename,
   classifyDerivedData,
@@ -261,7 +262,7 @@ async function pruneOrphans($: EngineInterface, layout: RepoLayout, confirmed: b
 export async function worktreesCommand($: EngineInterface, args: string): Promise<string> {
   const command = parseCommand(args)
   if (command.kind === 'usage') return USAGE
-  const cwd = await $.session.cwd()
+  const { path: cwd } = await sessionFolder($)
   const { error, ...layout } = await linkedWorktrees($, cwd)
   if (error !== undefined) return error
   switch (command.kind) {

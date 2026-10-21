@@ -1,7 +1,7 @@
 import type { EngineInterface } from 'claude-code'
 
-import { activeLedger, folderSlug, summarize, type ChildStatus, type Family, type LedgerSummary } from './ledger'
-import { findLedgers, message, run } from './lookup'
+import { folderSlug, summarize, type ChildStatus, type Family, type LedgerSummary } from './ledger'
+import { findLedgers, message, run, sessionFolder, sessionLedger, type SessionFolder } from './lookup'
 
 const USAGE =
   'Usage: /ledger:parent [<slug>] shows a parent task and its children; /ledger:parent <slug> add <child> and /ledger:parent <slug> remove <child> change them.'
@@ -61,10 +61,10 @@ function formatShown({ parent, goal, children }: Shown): string {
   ].join('\n')
 }
 
-async function ownFamily($: EngineInterface, cwd: string): Promise<{ parent: string | undefined } | { text: string }> {
+async function ownFamily($: EngineInterface, folder: SessionFolder): Promise<{ parent: string | undefined } | { text: string }> {
   const found = await findLedgers($)
   if ('error' in found) return { text: `Could not list task ledgers. ${found.error}` }
-  const active = activeLedger(found.map(({ path }) => path), cwd)
+  const active = sessionLedger(found, folder)
   if (active.kind !== 'one') return { parent: undefined }
   try {
     const { slug, parent, children } = summarize(await $.fs.read(active.path), folderSlug(active.path), 0)
@@ -89,11 +89,12 @@ async function change($: EngineInterface, verb: 'add' | 'remove', parent: string
 
 export async function parentCommand($: EngineInterface, args: string): Promise<string> {
   const words = args.split(/\s+/).filter(word => word !== '')
-  const cwd = await $.session.cwd()
+  const folder = await sessionFolder($)
+  const cwd = folder.path
   const [parent, verb, child] = words
   if (words.length === 1 && (parent === 'add' || parent === 'remove')) return USAGE
   if (parent === undefined) {
-    const own = await ownFamily($, cwd)
+    const own = await ownFamily($, folder)
     if ('text' in own) return own.text
     return own.parent === undefined ? USAGE : show($, own.parent, cwd)
   }

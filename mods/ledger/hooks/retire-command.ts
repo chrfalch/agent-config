@@ -83,21 +83,30 @@ export async function readState($: EngineInterface, path: string): Promise<Workt
 export async function retireCommand($: EngineInterface, args: string): Promise<string> {
   const command = parseRetireArgs(args)
   if (command.kind === 'usage') return RETIRE_USAGE
-  const cwd = await $.session.cwd()
-  const target = await findTarget($, command.slug, cwd)
+  const target = await findTarget($, command.slug, await $.session.cwd())
   if ('text' in target) return target.text
-  const state = await readState($, worktreeOf(target.ledgerPath))
+  return retireLedger($, target.slug, target.ledgerPath, command)
+}
+
+/** Plans or retires the worktree that holds `ledgerPath`, named `slug` in the text. */
+export async function retireLedger(
+  $: EngineInterface,
+  slug: string,
+  ledgerPath: string,
+  { confirmed, forced }: { confirmed: boolean; forced: boolean },
+): Promise<string> {
+  const state = await readState($, worktreeOf(ledgerPath))
   if ('error' in state) return state.error
-  if (!command.confirmed) return formatPlan(target.slug, state, new Date())
+  if (!confirmed) return formatPlan(slug, state, new Date())
   const blockers = retireBlockers(state)
-  if (blockers.length > 0 && !command.forced) return notRetiredMessage(blockers)
+  if (blockers.length > 0 && !forced) return notRetiredMessage(blockers)
 
   // From the main checkout, because the worktree is gone once the script returns.
   const script = `${$.plugin.root}/../../bin/cc-worktree-retire`
   const deletesBranch = isBranchMerged(state)
-  const flags = [...(deletesBranch ? ['--delete-branch', state.head] : []), ...(command.forced ? ['--force'] : [])]
+  const flags = [...(deletesBranch ? ['--delete-branch', state.head] : []), ...(forced ? ['--force'] : [])]
   const { stdout, failure } = await run($, ['bash', script, state.path, ...flags], state.mainCheckout)
   if (failure !== undefined) return formatRetireFailed(failure, stdout)
   const kept = deletesBranch || state.branch === '' ? undefined : { branch: state.branch, reason: keptBranchReason(state) }
-  return formatRetired(target.slug, stdout, isInside(cwd, state.path), kept)
+  return formatRetired(slug, stdout, isInside(await $.session.cwd(), state.path), kept)
 }

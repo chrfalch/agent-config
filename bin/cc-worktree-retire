@@ -86,6 +86,10 @@ if [ -f "$arg" ]; then
     exit 1
   fi
   [ -z "$delete_sha" ] || usage
+  # The worktree mode passes unknown options on to git worktree remove; here nothing would read them.
+  for option in ${remove_flags[@]+"${remove_flags[@]}"}; do
+    case "$option" in --force|-f) ;; *) usage ;; esac
+  done
   main=$(section "$ledger" Location | sed -n -E 's/^- main:[[:space:]]*(.*[^[:space:]])[[:space:]]*$/\1/p' | head -n 1)
   repo=$(basename "$(dirname "$ledger")")
   branch=""

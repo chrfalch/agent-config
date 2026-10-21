@@ -331,8 +331,9 @@ Parent <parent> has no active children left. Retire it with /ledger:retire <pare
 ```
 
 It does not retire the parent task itself. To retire a parent task that still
-has active child tasks, add `--force`; without it the command refuses. Only
-direct child tasks count, here and in the `parent of <n>` count.
+has active child tasks, add `--force`; without it the command refuses.
+`--dry-run` names those child tasks. Only direct child tasks count, here and
+in the `parent of <n>` count.
 
 The parent task can be in a worktree or in the backlog of this repo. Either
 way, its line for the child task is marked retired.

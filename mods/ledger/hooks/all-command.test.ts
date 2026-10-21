@@ -271,3 +271,25 @@ test('/ledger:all rejects an entry whose main checkout is not a string', async (
 
   expect(text).toBe('cc-ledgers printed something that is not a list of ledgers.')
 })
+
+test('/ledger:all nests a backlog parent, child and grandchild in the backlog section as it does active tasks', async ($, on) => {
+  const grandchild = { ...backlogEntry('grandchild', '2026-10-06T08:00:00.000Z'), parent: 'child' }
+  const child = { ...backlogEntry('child', '2026-10-05T08:00:00.000Z'), parent: 'epic' }
+  const other = backlogEntry('other', '2026-10-04T08:00:00.000Z')
+  const epic = backlogEntry('epic', '2026-10-03T08:00:00.000Z')
+  const all = [grandchild, child, other, epic]
+  world(
+    on,
+    { 'bin/cc-ledgers list --json': exit(0, JSON.stringify(all)) },
+    Object.fromEntries(all.map(({ slug, path }) => [path, `# Task ledger — ${slug}\n\n## Goal\nA goal.\n`])),
+  )
+
+  const { text } = await $.command.run({ command: 'ledger:all' })
+
+  expect(text.split('\n').slice(6)).toEqual([
+    `| app | other | ${local(other.updated)} | A goal. |`,
+    `| app | epic | ${local(epic.updated)} | A goal. |`,
+    `| app | ↳ child | ${local(child.updated)} | A goal. |`,
+    `| app |   ↳ grandchild | ${local(grandchild.updated)} | A goal. |`,
+  ])
+})

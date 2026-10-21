@@ -345,12 +345,20 @@ test('/ledger:help prints one line per /ledger command, in order, without a mode
   expect(isMarkdownReached()).toBe(false)
 })
 
-test('/ledger:help says /ledger:retire retires, and names --dry-run and --force but not --yes', async ($, on) => {
+test('/ledger:help says /ledger:retire retires a worktree or backlog task, and names --dry-run and --force but not --yes', async ($, on) => {
   world(on, '/repo', [], 'ledger:help')
   const { text } = await $.command.run({ command: 'ledger:help', args: '' })
   const retire = text.split('\n').find(line => line.startsWith('- `/ledger:retire'))
   expect(retire).toBe(
-    "- `/ledger:retire [<slug>]` — Archive a task's ledger, remove its worktree, and delete its branch when all of its commits are merged. `--dry-run` only shows what it would do. Uncommitted changes and unmerged work need `--force`.",
+    "- `/ledger:retire [<slug>]` — Archive a task's ledger, remove its worktree, and delete its branch when all of its commits are merged. A backlog task of this repo has no worktree or branch: its ledger is archived, then deleted. `--dry-run` only shows what it would do. Uncommitted changes, unmerged work and active child tasks need `--force`.",
+  )
+})
+
+test('/ledger:help says /ledger also shows parent tasks from the backlog', async ($, on) => {
+  world(on, '/repo', [], 'ledger:help')
+  const { text } = await $.command.run({ command: 'ledger:help', args: '' })
+  expect(text.split('\n')[0]).toBe(
+    "- `/ledger` — Show each task ledger's goal, current step and next step. A parent task in this repo's backlog is shown too, marked (backlog). `/ledger <name>` shows one.",
   )
 })
 

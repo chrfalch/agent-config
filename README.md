@@ -227,7 +227,7 @@ to write a ledger, start a task, or switch to one.
 
 | You type | What happens |
 |---|---|
-| `/ledger` | Prints each task ledger's goal, current step and next step. |
+| `/ledger` | Prints each task ledger's goal, current step and next step. A parent task in this repo's backlog is listed too, marked `(backlog)`, with its child tasks under it; so is that task's own parent task in the backlog. Other backlog tasks are not listed. |
 | `/ledger <name>` | Prints each ledger whose name contains `<name>`, in any case. More than one ledger can match. |
 | `/ledger:help` | Prints one line for each `/ledger` command. |
 | `/ledger:task <description>` | Starts a separate task. The agent picks a short name, writes the goal, and runs `bin/cc-task-new`. The script writes a ledger with the goal filled in to the backlog, `~/.claude/ledger-backlog/<repo>/<name>.md`, with no branch or worktree yet. When no task is open, the session moves into the new worktree and continues there. The agent makes that branch and worktree at once, the same way `/ledger:go` does. When another task is open, the ledger stays in the backlog, and the reply ends with a `start:` line, `/ledger:go <name>`. Type it to clear the session and continue in the new task. Either way, you do not open a new terminal. `--stack` makes the branch and worktree at once, on top of the current branch. |
@@ -244,8 +244,8 @@ to write a ledger, start a task, or switch to one.
 | `/ledger:worktrees derived-data` | Lists every folder in `~/Library/Developer/Xcode/DerivedData` with its size. It groups them by where the project is: the main checkout, a linked worktree, another location, or gone. Folders with no source project, and shared caches, have their own groups. |
 | `/ledger:worktrees prune-orphans` | Deletes the DerivedData folders whose project no longer exists. It never deletes shared caches or folders without a recorded project. |
 | `/ledger:worktrees prune-orphans --dry-run` | Lists those folders. It deletes nothing. |
-| `/ledger:retire [<slug>] [--force]` | Copies the task's ledger to `~/.claude/ledger-archive/<repo>/`, removes its worktree and deletes the worktree's build folders. It also deletes the local branch when every commit on it is in the default branch or in a merged PR. A branch with commits after its PR merged stays. It needs `--force` for uncommitted changes, for a branch that has commits not in the default branch and no merged PR, and for a parent task with active child tasks. Retiring a child task marks it retired in its parent ledger. Without a slug it takes the task this session is in. |
-| `/ledger:retire [<slug>] --dry-run` | Lists what retiring the task would do: its worktree, branch, uncommitted changes and archive path. It deletes nothing. |
+| `/ledger:retire [<slug>] [--force]` | Copies the task's ledger to `~/.claude/ledger-archive/<repo>/`, removes its worktree and deletes the worktree's build folders. It also deletes the local branch when every commit on it is in the default branch or in a merged PR. A branch with commits after its PR merged stays. It needs `--force` for uncommitted changes, for a branch that has commits not in the default branch and no merged PR, and for a parent task with active child tasks. Retiring a child task marks it retired in its parent ledger. A backlog task of this repo has no worktree or branch: its ledger is archived, then deleted from the backlog. Without a slug it takes the task this session is in. |
+| `/ledger:retire [<slug>] --dry-run` | Lists what retiring the task would do: its worktree, branch, uncommitted changes and archive path, or for a backlog task its ledger and archive path. It names any active child tasks, which need `--force`. It deletes nothing. |
 | `/ledger:parent [<name>]` | Prints a parent task and, for each child task, its status and next step. Without a name it shows the task this session is in when it has child tasks, or else that task's parent task. |
 | `/ledger:parent <name> add <child>` | Makes `<child>` a child task of `<name>`. It writes both ledgers. A parent task ties together tasks that ship separately, such as stacked PRs. See [Parent tasks](docs/usage.md#parent-tasks). |
 | `/ledger:parent <name> remove <child>` | Removes that relation from both ledgers. |
@@ -258,7 +258,8 @@ A build folder whose project is on a disk that is not connected goes in its own 
 
 To remove a finished worktree, use `bin/cc-worktree-retire <worktree>`. It
 archives the ledger first, then removes the worktree and its Xcode build
-folders.
+folders. Given a backlog ledger, `~/.claude/ledger-backlog/<repo>/<slug>.md`,
+it archives that ledger, then deletes it.
 
 ## Documentation
 
@@ -291,7 +292,7 @@ tests/                    the tests for tools/, bin/ and hooks/
 bin/deploy                installs everything above
 bin/cc-dd-path            prints the shared Xcode build folder for a worktree
 bin/cc-task-new           writes a backlog ledger, or makes a task's branch and worktree
-bin/cc-worktree-retire    archives a worktree's ledger, then removes the worktree
+bin/cc-worktree-retire    archives a worktree's ledger, then removes the worktree; or archives, then deletes a backlog ledger
 bin/cc-ledgers            keeps ~/.claude/ledgers.json, the list of every task ledger
 CONTRIBUTING.md           forking, what to send back, what must never be committed
 ```

@@ -67,7 +67,9 @@ async function tables($: EngineInterface, entries: Entry[]): Promise<string> {
       }),
     ),
     Promise.all(
-      backlog.map(async entry => [entry.repo, entry.slug, formatTime(Date.parse(entry.updated)), truncate(await goalOf($, entry))].map(cell)),
+      familyOrder(backlog).map(async ({ entry, name }) =>
+        [entry.repo, name, formatTime(Date.parse(entry.updated)), truncate(await goalOf($, entry))].map(cell),
+      ),
     ),
   ])
   const active = taskRows.filter(row => row[2] === 'active').length

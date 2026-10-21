@@ -567,6 +567,26 @@ test('retire --delete-branch with a backlog ledger is a usage error and changes 
   assert.ok(existsSync(ledger));
 });
 
+for (const option of ['--dry-run', '--porcelain', 'extra']) {
+  test(`retire ${option} with a backlog ledger is a usage error and changes neither the ledger nor the registry`, (t) => {
+    const { home } = worktreeWithLedger(t);
+    const ledger = backlogTask(home, 'idea');
+    const text = readFileSync(ledger, 'utf8');
+    const upsert = run(home, [path.join(REPO, 'bin/cc-ledgers')], 'upsert', ledger);
+    assert.equal(upsert.status, 0, upsert.stderr);
+    const before = registered(home);
+
+    const result = run(home, retire, ledger, option);
+
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /^usage: cc-worktree-retire /m);
+    assert.equal(result.stdout, '');
+    assert.equal(readFileSync(ledger, 'utf8'), text);
+    assert.equal(existsSync(path.join(home, '.claude/ledger-archive')), false);
+    assert.deepEqual(registered(home), before);
+  });
+}
+
 test('retire of a file that is not a backlog ledger is refused and changes nothing', (t) => {
   const { home, worktree, ledger } = worktreeWithLedger(t);
 

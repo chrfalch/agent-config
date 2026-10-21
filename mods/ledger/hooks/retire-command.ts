@@ -106,6 +106,12 @@ export async function retireCommand($: EngineInterface, args: string): Promise<s
 
 type RetireFlags = { dryRun: boolean; forced: boolean }
 
+// Only for the plan: an unreadable ledger shows no children, and cc-worktree-retire still refuses a parent with active ones.
+async function activeChildrenOf($: EngineInterface, ledgerPath: string): Promise<string[]> {
+  const text = await $.fs.read(ledgerPath).catch(() => '')
+  return (summarize(text, '', 0).children ?? []).filter(({ retired }) => retired === undefined).map(({ slug }) => slug)
+}
+
 /** Plans or retires the backlog task whose ledger is `ledgerPath`: it has no worktree or branch, only the ledger. */
 async function retireBacklogLedger(
   $: EngineInterface,
@@ -114,7 +120,7 @@ async function retireBacklogLedger(
   { dryRun, forced }: RetireFlags,
   cwd: string,
 ): Promise<string> {
-  if (dryRun) return formatBacklogPlan(slug, ledgerPath, new Date())
+  if (dryRun) return formatBacklogPlan(slug, ledgerPath, new Date(), await activeChildrenOf($, ledgerPath))
   const { stdout, failure } = await run($, ['bash', scriptPath($, 'cc-worktree-retire'), ledgerPath, ...(forced ? ['--force'] : [])], cwd)
   return failure === undefined ? formatRetired(slug, stdout, false) : formatRetireFailed(failure, stdout)
 }
@@ -128,7 +134,7 @@ export async function retireLedger(
 ): Promise<string> {
   const state = await readState($, worktreeOf(ledgerPath))
   if ('error' in state) return state.error
-  if (dryRun) return formatPlan(slug, state, new Date())
+  if (dryRun) return formatPlan(slug, state, new Date(), { activeChildren: await activeChildrenOf($, ledgerPath) })
   const blockers = retireBlockers(state)
   if (blockers.length > 0 && !forced) return notRetiredMessage(blockers)
 

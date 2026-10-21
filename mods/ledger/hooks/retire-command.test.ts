@@ -51,10 +51,10 @@ function worktreeReplies(worktree: string, branch: string, overrides: WorktreeRe
   )
 }
 
-/** `removed` is a folder fs.stat no longer finds, as after /ledger:retire removed the worktree. */
-type Setup = { cwd: string; ledgers?: string[]; titles?: Record<string, string>; replies?: Replies; removed?: string }
+/** `removed` is a folder fs.stat no longer finds, as after /ledger:retire removed the worktree. `files` replaces a ledger's whole text. */
+type Setup = { cwd: string; ledgers?: string[]; titles?: Record<string, string>; files?: Record<string, string>; replies?: Replies; removed?: string }
 
-function world(on: On, { cwd, ledgers = [ledgerOf(FIX_LOGIN), ledgerOf(NEW_API)], titles = {}, replies: extra = {}, removed }: Setup): Call[] {
+function world(on: On, { cwd, ledgers = [ledgerOf(FIX_LOGIN), ledgerOf(NEW_API)], titles = {}, files = {}, replies: extra = {}, removed }: Setup): Call[] {
   const calls: Call[] = []
   const known: Replies = {
     ...replies([LEDGER_LIST, ok(ledgers.join('\n'))], [LEDGER_BACKLOG, ok('')], [retireScript(FIX_LOGIN), ok(SCRIPT_OUTPUT)], [retireScript(FIX_LOGIN, '--force'), ok(SCRIPT_OUTPUT)],
@@ -74,6 +74,8 @@ function world(on: On, { cwd, ledgers = [ledgerOf(FIX_LOGIN), ledgerOf(NEW_API)]
     e.path === removed ? { deny: `ENOENT: no such file or directory, stat '${e.path}'` } : { value: { kind: 'file', size: 0, mtimeMs: 0, isLink: false } },
   )
   on('fs.read', async (_, e) => {
+    const file = files[e.path]
+    if (file !== undefined) return { value: file }
     const title = titles[e.path] ?? (e.path === ledgerOf(FIX_LOGIN) ? 'fast-steps' : 'new-api')
     return { value: `# Task ledger — ${title}\n\n## Goal\nSomething.\n` }
   })
@@ -406,10 +408,11 @@ test('retireLedger retires the worktree of the ledger it is given, without looki
 const IDEA = '/home/.claude/ledger-backlog/repo/idea.md'
 const IDEA_OUTPUT = `archived /home/.claude/ledger-archive/repo/2026-10-21-idea.md\nremoved  ${IDEA}\n`
 
-function backlogWorld(on: On, extra: Replies = {}): Call[] {
+function backlogWorld(on: On, extra: Replies = {}, files: Record<string, string> = {}): Call[] {
   return world(on, {
     cwd: REPO,
     titles: { [IDEA]: 'idea' },
+    files,
     replies: { ...replies([LEDGER_BACKLOG, ok(`${IDEA}\n`)], [retireScript(IDEA), ok(IDEA_OUTPUT)], [retireScript(IDEA, '--force'), ok(IDEA_OUTPUT)]), ...extra },
   })
 }
@@ -461,4 +464,28 @@ test('/ledger:retire with an unknown slug says when the backlog could not be che
   expect(text).toStartWith('No task ledger is named "nope". Nothing was retired. Task ledgers: fast-steps, new-api.')
   expect(text).toContain('The backlog could not be checked: ')
   expect(text).toEndWith('boom.')
+})
+
+const withChildren = (slug: string, children: string): string => `# Task ledger — ${slug}\n\n## Goal\nSomething.\n\n## Children\n${children}`
+
+test('/ledger:retire <slug> --dry-run of a backlog parent with active children names them and says it needs --force', async ($, on) => {
+  backlogWorld(on, {}, { [IDEA]: withChildren('idea', '- child-a\n- old (retired 2026-10-01)\n- child-b\n') })
+  const { text } = await $.command.run({ command: 'ledger:retire', args: 'idea --dry-run' })
+  expect(text.split('\n').at(-1)).toBe(
+    'Retiring it needs --force: it has active children (child-a, child-b). Run `/ledger:retire idea --force` to retire it anyway.',
+  )
+})
+
+test('/ledger:retire <slug> --dry-run of a worktree parent with an active child names it and says it needs --force', async ($, on) => {
+  world(on, { cwd: REPO, files: { [ledgerOf(FIX_LOGIN)]: withChildren('fast-steps', '- child-a\n') } })
+  const { text } = await $.command.run({ command: 'ledger:retire', args: 'fast-steps --dry-run' })
+  expect(text.split('\n').at(-1)).toBe(
+    'Retiring it needs --force: it has an active child (child-a). Run `/ledger:retire fast-steps --force` to retire it anyway.',
+  )
+})
+
+test('/ledger:retire <slug> --dry-run of a parent whose children are all retired needs no --force', async ($, on) => {
+  world(on, { cwd: REPO, files: { [ledgerOf(FIX_LOGIN)]: withChildren('fast-steps', '- child-a (retired 2026-10-01)\n') } })
+  const { text } = await $.command.run({ command: 'ledger:retire', args: 'fast-steps --dry-run' })
+  expect(text.split('\n').at(-1)).toBe('Run `/ledger:retire fast-steps` to retire it.')
 })

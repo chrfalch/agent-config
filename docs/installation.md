@@ -96,7 +96,7 @@ before replacing it. With no terminal attached it refuses and tells you to use
 
 ### The ledger mod
 
-The ledger mod is a Claude Code plugin in `mods/ledger`. It adds twelve
+The ledger mod is a Claude Code plugin in `mods/ledger`. It adds fourteen
 commands:
 
 - `/ledger` prints each task ledger's goal, current step and next step.
@@ -140,6 +140,12 @@ commands:
 - `/ledger:all` lists every task ledger on this machine, from every repo,
   active, parked, backlog and archived, with its next step. `--scan` rebuilds that
   list from disk.
+- `/ledger:parent [<slug>]` shows a parent task and each child task's status
+  and next step. `<slug> add <child>` and `<slug> remove <child>` change its
+  child tasks.
+- `/ledger:dashboard` starts a web page on this machine that lists every task
+  ledger, like `/ledger:all`, with buttons to park, unpark and retire a task.
+  `stop` stops it.
 - `/ledger:help` prints one line for each of these commands.
 
 `/ledger:worktrees prune <name>` lists the build folders of one worktree and

@@ -64,7 +64,7 @@ file instead of in the conversation. It ships five things:
   They warn when the deployed config is old, and allow a retry of a denied
   read-only call. See
   [The hooks](docs/installation.md#the-hooks).
-- **A ledger mod** — a Claude Code plugin that adds `/ledger` and twelve
+- **A ledger mod** — a Claude Code plugin that adds `/ledger` and thirteen
   `/ledger:` commands. [Commands](#commands) lists each one.
 
 To set it up, see [Install](#install).
@@ -218,7 +218,8 @@ of every command that a plugin writes as a markdown file, so a plain `/task`
 does not exist.
 
 A hook answers `/ledger`, `/ledger:help`, `/ledger:worktrees`,
-`/ledger:retire`, `/ledger:archive` and `/ledger:all` directly, without a model
+`/ledger:retire`, `/ledger:archive`, `/ledger:all`, `/ledger:parent` and
+`/ledger:dashboard` directly, without a model
 turn. Most of them only print. The `--yes` forms of `/ledger:worktrees` and
 `/ledger:retire` delete files. The other commands run a model turn, for example
 to write a ledger, start a task, or switch to one.
@@ -249,6 +250,8 @@ to write a ledger, start a task, or switch to one.
 | `/ledger:parent <name> remove <child>` | Removes that relation from both ledgers. |
 | `/ledger:all` | Prints a table of every task ledger on the machine, from every repo, active and archived, with its next step. Backlog tasks follow in their own section, **Backlog**. A parked task shows as `parked`. The list lives in `~/.claude/ledgers.json`. A new task, a retire and each session start add to it. |
 | `/ledger:all --scan` | Rebuilds `~/.claude/ledgers.json` from the ledgers under `~/repos` and `~/issues` and the archive in `~/.claude/ledger-archive/`, then prints the table. |
+| `/ledger:dashboard` | Starts a web page on this machine with the `/ledger:all` list, filters by repo and status, and a search of every ledger's text. Click a task to read its ledger. Its buttons copy `go <slug>`, park and unpark the task, and retire it after a preview. It prints the page's address, which holds a new access key each start. It keeps running after the session ends. |
+| `/ledger:dashboard stop` | Stops the dashboard. |
 
 A build folder whose project is on a disk that is not connected goes in its own group, **Disk not connected**, and is never deleted.
 

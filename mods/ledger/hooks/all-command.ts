@@ -12,7 +12,7 @@ const cell = (text: string): string => text.replaceAll('|', '\\|')
 
 const truncate = (text: string): string => (text.length > NEXT_WIDTH ? `${text.slice(0, NEXT_WIDTH - 1)}…` : text)
 
-async function statusAndNext($: EngineInterface, entry: Entry): Promise<[string, string]> {
+export async function statusAndNext($: EngineInterface, entry: Entry): Promise<[string, string]> {
   try {
     const { next, parked } = summarize(await $.fs.read(entry.archivePath ?? entry.path), '', 0)
     return [parked && entry.status === 'active' ? 'parked' : entry.status, next]

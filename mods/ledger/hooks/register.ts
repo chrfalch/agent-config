@@ -29,6 +29,7 @@ import {
   worktreeWithoutLedgerMessage,
 } from './ledger'
 import { archiveCommand } from './archive-command'
+import { dashboardCommand } from './dashboard-command'
 import { findLedgers, lookUpBranch, lookUpOtherWorktrees, message, titleSlug, type Found } from './lookup'
 import { familyOf, parentCommand } from './parent-command'
 import { mainCheckout, otherRepositoryTask, promoteBacklogTask, registeredTasks } from './registry'
@@ -197,6 +198,8 @@ export const register: Register = on => {
   on('command.run', { command: 'ledger:all' }, async ($, e) => ({ text: await allCommand($, e.args ?? '') }))
 
   on('command.run', { command: 'ledger:parent' }, async ($, e) => ({ text: await parentCommand($, e.args ?? '') }))
+
+  on('command.run', { command: 'ledger:dashboard' }, async ($, e) => ({ text: await dashboardCommand($, e.args ?? '') }))
 
   on('command.run', { command: 'ledger:help' }, async () => ({ text: HELP }))
 

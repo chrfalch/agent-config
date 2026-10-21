@@ -340,7 +340,10 @@ list as a normal row and shows `parent: <name>`. This happens when a filter
 hides the parent, and for a child of a child. Click that name to read the
 parent's ledger. When the parent's ledger is not found, the name is plain text.
 **All repositories** goes back to the list, and so does the browser's Back
-button. The address names the open repository, so a reload opens it again.
+button. The address names the open repository and the selected statuses, so a
+reload, Back and Forward show them again. The status filter stays when you open
+another repository. A selected status that this repository has no tasks with
+does not filter here; it filters again in a repository that has it.
 Click a task to read its ledger, its worktree, its branch and its PRs. Its
 buttons copy `go <name>`, park a task with a reason, remove the parked mark,
 and retire a task. Retire first shows what it would do and waits for a second

@@ -290,6 +290,29 @@ test('a status the dashboard has never seen appears as a filter value and filter
   assert.deepEqual(keys((await list(server, '?status=backlog')).ledgers), ['app/fix-login/backlog']);
 });
 
+test('a backlog task can be parked and unparked, but not retired', async t => {
+  const { home, stubBin, fixLogin } = fixture(t);
+  const ledger = ledgerOf(fixLogin);
+  const server = await startForeground(t, home, stubBin);
+  const { token } = await preview(server, ledger);
+  const registry = path.join(home, '.claude/ledgers.json');
+  const entries: { path: string; status: string }[] = JSON.parse(readFileSync(registry, 'utf8'));
+  writeFileSync(registry, JSON.stringify(entries.map(entry => (entry.path === ledger ? { ...entry, status: 'backlog' } : entry))));
+
+  const refusal = 'fix-login is in the backlog and has no worktree yet, so there is nothing to retire.';
+  const previewed = await json<{ error?: string }>(server, 'POST', '/api/retire/preview', { id: ledger });
+  assert.equal(previewed.status, 409);
+  assert.equal(previewed.value.error, refusal);
+  const retired = await json<{ error?: string }>(server, 'POST', '/api/retire', { id: ledger, token, force: true });
+  assert.equal(retired.status, 409);
+  assert.equal(retired.value.error, refusal);
+  assert.ok(existsSync(ledger));
+
+  assert.equal((await json(server, 'POST', '/api/park', { id: ledger, reason: 'later' })).status, 200);
+  assert.equal((await json(server, 'POST', '/api/unpark', { id: ledger })).status, 200);
+  assert.equal(readFileSync(ledger, 'utf8'), FIX_LOGIN);
+});
+
 test('the repo, status and search filters narrow the list and keep every filter value', async t => {
   const { home, stubBin } = fixture(t);
   const server = await startForeground(t, home, stubBin);

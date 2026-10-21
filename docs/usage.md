@@ -335,6 +335,8 @@ with a reason, remove the parked mark, and retire a task. Retire first shows
 what it would do and waits for a second click. When the task has uncommitted
 changes or an unmerged branch, that click is **Retire anyway (--force)**. These
 are the same rules as `/ledger:retire`.
+The dashboard refuses to retire a task in the backlog, because it has no
+worktree yet.
 
 The command prints an address like `http://127.0.0.1:<port>/#key=<key>`. Open
 it in a browser. The key in the address is the password for the page: each

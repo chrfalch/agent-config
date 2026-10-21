@@ -218,7 +218,8 @@ of every command that a plugin writes as a markdown file, so a plain `/task`
 does not exist.
 
 A hook answers `/ledger`, `/ledger:help`, `/ledger:worktrees`,
-`/ledger:retire`, `/ledger:archive` and `/ledger:all` directly, without a model
+`/ledger:retire`, `/ledger:archive`, `/ledger:all`, `/ledger:parent` and
+`/ledger:dashboard` directly, without a model
 turn. Most of them only print. The `--yes` forms of `/ledger:worktrees` and
 `/ledger:retire` delete files. The other commands run a model turn, for example
 to write a ledger, start a task, or switch to one.

@@ -210,6 +210,7 @@ function ledgersOf(mod: Mod) {
   async function retireTarget(id: string): Promise<{ target: RetireTarget; state: WorktreeState } | Reply> {
     const entry = await findActive(id, 'retired');
     if (isReply(entry)) return entry;
+    if (entry.status === 'backlog') return fail(409, `${entry.slug} is in the backlog and has no worktree yet, so there is nothing to retire.`);
     const state = await retirableState(entry);
     if (isReply(state)) return state;
     const real = realPaths(state);

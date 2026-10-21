@@ -1,17 +1,20 @@
 import { isoDate } from './ledger'
 import { basename } from './worktrees'
 
-export type RetireArgs = { kind: 'retire'; slug: string | null; confirmed: boolean; forced: boolean } | { kind: 'usage' }
+export type RetireArgs = { kind: 'retire'; slug: string | null; dryRun: boolean; forced: boolean } | { kind: 'usage' }
 
 export const RETIRE_USAGE =
-  'Usage: /ledger:retire [<slug>] [--yes] [--force]. Without --yes it only shows what would be retired. Run /ledger to see each slug.'
+  'Usage: /ledger:retire [<slug>] [--dry-run] [--force]. --dry-run only shows what would be retired. --force retires a task with uncommitted changes or unmerged work. Run /ledger to see each slug.'
+
+/** `--yes` is still accepted from before retiring was the default, and changes nothing. */
+const RETIRE_FLAGS = new Set(['--dry-run', '--force', '--yes'])
 
 export function parseRetireArgs(args: string): RetireArgs {
   const words = args.split(/\s+/).filter(word => word !== '')
   const flags = words.filter(word => word.startsWith('-'))
   const slugs = words.filter(word => !word.startsWith('-'))
-  if (slugs.length > 1 || flags.some(flag => flag !== '--yes' && flag !== '--force')) return { kind: 'usage' }
-  return { kind: 'retire', slug: slugs[0] ?? null, confirmed: flags.includes('--yes'), forced: flags.includes('--force') }
+  if (slugs.length > 1 || flags.some(flag => !RETIRE_FLAGS.has(flag))) return { kind: 'usage' }
+  return { kind: 'retire', slug: slugs[0] ?? null, dryRun: flags.includes('--dry-run'), forced: flags.includes('--force') }
 }
 
 export const worktreeOf = (ledgerPath: string): string => ledgerPath.split('/').slice(0, -2).join('/')
@@ -129,8 +132,13 @@ function aheadLabel({ ahead, defaultBranch }: WorktreeState): string {
   return ahead === 0 ? 'no commits ahead' : `${plural(ahead, 'commit')} ahead of origin/${defaultBranch}`
 }
 
-export function formatPlan(slug: string, state: WorktreeState, today: Date): string {
-  const blockers = retireBlockers(state)
+function planFooter(slug: string, blockers: string[]): string {
+  if (blockers.length === 0) return `Run \`/ledger:retire ${slug}\` to retire it.`
+  return `Retiring it needs --force: ${blockers.join(' and ')}. Run \`/ledger:retire ${slug} --force\` to retire it anyway.`
+}
+
+/** `footer: false` leaves out the /ledger:retire command that carries out the plan, for the dashboard, which has its own. */
+export function formatPlan(slug: string, state: WorktreeState, today: Date, { footer = true }: { footer?: boolean } = {}): string {
   return [
     `**Retire ${slug}** — nothing done yet`,
     `- worktree: ${state.path}`,
@@ -139,8 +147,7 @@ export function formatPlan(slug: string, state: WorktreeState, today: Date): str
     `- archive: ${archivePath(state, today)}`,
     "- then: git worktree remove, and the worktree's cc-dd-path build folders are deleted",
     ...(state.branch ? [`- local branch: ${state.branch} is ${isBranchMerged(state) ? 'deleted, because it is merged' : `kept, because ${keptBranchReason(state)}`}`] : []),
-    '',
-    blockers.length === 0 ? 'Add --yes to retire it.' : `Add --yes --force to retire it: ${blockers.join(' and ')}`,
+    ...(footer ? ['', planFooter(slug, retireBlockers(state))] : []),
   ].join('\n')
 }
 

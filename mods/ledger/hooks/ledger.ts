@@ -302,11 +302,11 @@ export type BranchState = { ahead: number; prs: { state: string; number: number 
 export function retireHint(slug: string, branch: BranchState | null): string {
   const finished = `Task ${slug} is finished`
   if (branch && (branch.ahead === 0 || branch.prs.some(pr => pr.state === 'MERGED'))) {
-    return `${finished} and merged. Retire it with \`/ledger:retire ${slug} --yes\`.`
+    return `${finished} and merged. Retire it with \`/ledger:retire ${slug}\`.`
   }
   const open = branch?.prs.find(pr => pr.state === 'OPEN')
-  if (open) return `${finished}. After PR #${open.number} merges, run \`/ledger:retire ${slug} --yes\`.`
-  return `${finished}. Run \`/ledger:retire ${slug}\` to see what blocks retiring it.`
+  if (open) return `${finished}. After PR #${open.number} merges, run \`/ledger:retire ${slug}\`.`
+  return `${finished}. Run \`/ledger:retire ${slug} --dry-run\` to see what blocks retiring it.`
 }
 
 export const HELP = [
@@ -319,7 +319,7 @@ export const HELP = [
   "- `/ledger:park [<slug>] <reason>` — Mark a task parked. Without a slug it writes this task's ledger, parks it, then clears the session.",
   "- `/ledger:parent [<slug>]` — Show a parent task and each child's status and next step; without a slug, this task or its parent. `<slug> add <child>` and `<slug> remove <child>` change its children.",
   "- `/ledger:worktrees` — Show each linked git worktree's size, last commit, dirty files, ledger and PR.",
-  '- `/ledger:retire [<slug>]` — Show what retiring a task would archive and remove; `--yes` archives its ledger, removes its worktree, and deletes its branch when all of its commits are merged.',
+  "- `/ledger:retire [<slug>]` — Archive a task's ledger, remove its worktree, and delete its branch when all of its commits are merged. `--dry-run` only shows what it would do. Uncommitted changes and unmerged work need `--force`.",
   "- `/ledger:archive [<term>]` — List this repo's archived ledgers, newest first; a term keeps those that contain it, and `--all` lists every repo.",
   '- `/ledger:all` — Show every task ledger on this machine, active, backlog and archived; `--scan` rebuilds the list from disk.',
   '- `/ledger:dashboard` — Start a web page on this machine that lists every task ledger, with search, details, park and retire. It keeps running after the session ends; `stop` stops it.',

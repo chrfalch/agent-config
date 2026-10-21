@@ -103,24 +103,36 @@ export function formatTable(rows: WorktreeRow[], prError?: string): string {
 
 export type WorktreesCommand =
   | { kind: 'table' }
-  | { kind: 'prune'; name: string; confirmed: boolean }
+  | { kind: 'prune'; name: string; dryRun: boolean }
   | { kind: 'derived-data' }
-  | { kind: 'prune-orphans'; confirmed: boolean }
+  | { kind: 'prune-orphans'; dryRun: boolean }
   | { kind: 'usage' }
 
-export const USAGE = 'Usage: `/ledger:worktrees`, `/ledger:worktrees prune <name> [--yes]`, `/ledger:worktrees derived-data` or `/ledger:worktrees prune-orphans [--yes]`'
+export const USAGE =
+  'Usage: `/ledger:worktrees`, `/ledger:worktrees prune <name> [--dry-run]`, `/ledger:worktrees derived-data` or `/ledger:worktrees prune-orphans [--dry-run]`'
+
+/** `--yes` is still accepted from before pruning was the default, and changes nothing. */
+const FINAL_FLAG = /(?:^|\s+)(--dry-run|--yes)$/
+
+/** Flags count only at the end, because a worktree name may hold spaces and words that start with -. */
+function takeFinalFlags(text: string): { rest: string; dryRun: boolean } {
+  let rest = text
+  let dryRun = false
+  for (let found = rest.match(FINAL_FLAG); found !== null; found = rest.match(FINAL_FLAG)) {
+    dryRun ||= found[1] === '--dry-run'
+    rest = rest.slice(0, found.index)
+  }
+  return { rest, dryRun }
+}
 
 export function parseCommand(args: string): WorktreesCommand {
   const trimmed = args.trim()
   if (trimmed === '') return { kind: 'table' }
   if (trimmed === 'derived-data') return { kind: 'derived-data' }
-  const orphans = trimmed.match(/^prune-orphans(\s+--yes)?$/)
-  if (orphans !== null) return { kind: 'prune-orphans', confirmed: orphans[1] !== undefined }
-  const words = trimmed.match(/^prune\s+(.+)$/s)?.[1]
-  if (words === undefined) return { kind: 'usage' }
-  const confirmedName = words.match(/^(.+?)\s+--yes$/s)?.[1]
-  const name = confirmedName ?? words
-  return name === '--yes' ? { kind: 'usage' } : { kind: 'prune', name, confirmed: confirmedName !== undefined }
+  const { rest, dryRun } = takeFinalFlags(trimmed)
+  if (rest === 'prune-orphans') return { kind: 'prune-orphans', dryRun }
+  const name = rest.match(/^prune\s+(.+)$/s)?.[1]
+  return name === undefined ? { kind: 'usage' } : { kind: 'prune', name, dryRun }
 }
 
 const BUILD_FOLDER_NAMES = new Set(['.build', '.expo-prebuild', '.cache', 'build', '.DerivedData'])
@@ -210,7 +222,7 @@ export function formatPrunePlan(name: string, folders: PruneFolder[]): string {
     '',
     'Folders inside a `.claude` folder are never deleted.',
     '`node_modules` and `Pods` folders are kept, so the worktree still builds.',
-    `Run \`/ledger:worktrees prune ${name} --yes\` to delete them.`,
+    `Run \`/ledger:worktrees prune ${name}\` to delete them.`,
   ].join('\n')
 }
 
@@ -348,7 +360,7 @@ export function formatDerivedData(folders: DerivedDataFolder[]): string {
   return [
     `**${DERIVED_DATA_LABEL}** · ${gb(folders)} GB in ${folderCount(folders)}`,
     ...[...groups.values()].flatMap(groupLines),
-    ...(groups.has('orphan') ? ['', ORPHAN_NOTE, 'Run `/ledger:worktrees prune-orphans --yes` to delete the orphans.'] : []),
+    ...(groups.has('orphan') ? ['', ORPHAN_NOTE, 'Run `/ledger:worktrees prune-orphans` to delete the orphans.'] : []),
   ].join('\n')
 }
 
@@ -362,7 +374,7 @@ export function formatOrphanPlan(orphans: PruneFolder[]): string {
     ...pruneTable(orphans),
     '',
     ORPHAN_NOTE,
-    'Run `/ledger:worktrees prune-orphans --yes` to delete them.',
+    'Run `/ledger:worktrees prune-orphans` to delete them.',
   ].join('\n')
 }
 

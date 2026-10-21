@@ -161,9 +161,9 @@ cannot clear the session, it says so; then type `/clear`, then `go`.
 When every plan step of the task is done, `/ledger:next` first shows one line
 in the fresh session on how to retire the task:
 
-- The branch is merged: ``Task <name> is finished and merged. Retire it with `/ledger:retire <name> --yes`.``
-- The branch has an open PR: ``Task <name> is finished. After PR #<n> merges, run `/ledger:retire <name> --yes`.``
-- Anything else, or git or gh could not tell: ``Task <name> is finished. Run `/ledger:retire <name>` to see what blocks retiring it.``
+- The branch is merged: ``Task <name> is finished and merged. Retire it with `/ledger:retire <name>`.``
+- The branch has an open PR: ``Task <name> is finished. After PR #<n> merges, run `/ledger:retire <name>`.``
+- Anything else, or git or gh could not tell: ``Task <name> is finished. Run `/ledger:retire <name> --dry-run` to see what blocks retiring it.``
 
 A branch is merged when it has no commits ahead of the default branch on
 origin, or when a PR from it was merged. This is the rule `/ledger:retire` uses.
@@ -248,11 +248,12 @@ of the repository: the main checkout or a task worktree.
 When the task you leave with `/ledger:go <name>` has every plan step done,
 the fresh session first shows the same retire line as `/ledger:next`.
 
-When a task is done, `/ledger:retire <name> --yes` archives its ledger and
-removes its worktree. It also deletes the local branch when every commit on it
-is in the default branch or in a merged PR. A branch with commits after its PR
-merged stays. `/ledger:archive <term>` finds the ledger of a task that was
-retired. Add `--all` to search the archive of every repo.
+When a task is done, `/ledger:retire <name>` archives its ledger and removes
+its worktree. Add `--dry-run` to see what it would do first. It also deletes
+the local branch when every commit on it is in the default branch or in a
+merged PR. A branch with commits after its PR merged stays.
+`/ledger:archive <term>` finds the ledger of a task that was retired. Add
+`--all` to search the archive of every repo.
 
 ### Parent tasks
 
@@ -314,12 +315,12 @@ The other commands show the relation too:
 | `/ledger:worktrees`, ledger column | `parent of <n>`, where n counts the child tasks not retired | `child of <parent>` |
 | Session start | `Child task: <child> (<status>).` or `Child task: <child> (retired YYYY-MM-DD).`, one line per child task | `Parent task: <parent> (<status>).` |
 
-When a child task merges, retire it with `/ledger:retire <child> --yes`. Its
+When a child task merges, retire it with `/ledger:retire <child>`. Its
 line in the parent ledger becomes `- <child> (retired YYYY-MM-DD)`. When no
 active child task remains, the command prints:
 
 ```
-Parent <parent> has no active children left. Retire it with /ledger:retire <parent> --yes.
+Parent <parent> has no active children left. Retire it with /ledger:retire <parent>.
 ```
 
 It does not retire the parent task itself. To retire a parent task that still

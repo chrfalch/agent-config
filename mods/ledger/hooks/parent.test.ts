@@ -36,7 +36,7 @@ const scriptKey = (argv: readonly string[]): string => [(argv[0] ?? '').split('/
 type World = {
   calls: string[]
   markdownArgs: () => string | undefined
-  /** Makes fs.stat fail for `folder` and everything in it, as after /ledger:retire --yes removed the worktree. */
+  /** Makes fs.stat fail for `folder` and everything in it, as after /ledger:retire removed the worktree. */
   removeFolder: (folder: string) => void
 }
 

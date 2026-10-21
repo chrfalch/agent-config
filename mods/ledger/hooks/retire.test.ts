@@ -20,23 +20,32 @@ import {
   type WorktreeState,
 } from './retire'
 
-test('parseRetireArgs takes an optional slug and the two flags in any order', () => {
-  expect(parseRetireArgs('')).toEqual({ kind: 'retire', slug: null, confirmed: false, forced: false })
-  expect(parseRetireArgs('  ')).toEqual({ kind: 'retire', slug: null, confirmed: false, forced: false })
-  expect(parseRetireArgs('fix-login')).toEqual({ kind: 'retire', slug: 'fix-login', confirmed: false, forced: false })
-  expect(parseRetireArgs('--force --yes fix-login')).toEqual({ kind: 'retire', slug: 'fix-login', confirmed: true, forced: true })
-  expect(parseRetireArgs('--yes')).toEqual({ kind: 'retire', slug: null, confirmed: true, forced: false })
+test('parseRetireArgs takes an optional slug and the flags in any order', () => {
+  expect(parseRetireArgs('')).toEqual({ kind: 'retire', slug: null, dryRun: false, forced: false })
+  expect(parseRetireArgs('  ')).toEqual({ kind: 'retire', slug: null, dryRun: false, forced: false })
+  expect(parseRetireArgs('fix-login')).toEqual({ kind: 'retire', slug: 'fix-login', dryRun: false, forced: false })
+  expect(parseRetireArgs('--force fix-login')).toEqual({ kind: 'retire', slug: 'fix-login', dryRun: false, forced: true })
+  expect(parseRetireArgs('--dry-run')).toEqual({ kind: 'retire', slug: null, dryRun: true, forced: false })
+  expect(parseRetireArgs('--force fix-login --dry-run')).toEqual({ kind: 'retire', slug: 'fix-login', dryRun: true, forced: true })
+})
+
+test('parseRetireArgs still takes --yes, and it changes nothing', () => {
+  expect(parseRetireArgs('--yes')).toEqual(parseRetireArgs(''))
+  expect(parseRetireArgs('--force --yes fix-login')).toEqual(parseRetireArgs('--force fix-login'))
+  expect(parseRetireArgs('fix-login --yes --dry-run')).toEqual(parseRetireArgs('fix-login --dry-run'))
 })
 
 test('parseRetireArgs answers with usage for a second word or an unknown flag', () => {
   expect(parseRetireArgs('fix-login new-api')).toEqual({ kind: 'usage' })
   expect(parseRetireArgs('fix-login --yess')).toEqual({ kind: 'usage' })
+  expect(parseRetireArgs('fix-login --dry')).toEqual({ kind: 'usage' })
   expect(parseRetireArgs('-y')).toEqual({ kind: 'usage' })
 })
 
-test('the usage text says what happens without --yes and where the slugs are', () => {
-  expect(RETIRE_USAGE).toContain('Usage: /ledger:retire [<slug>] [--yes] [--force]. Without --yes it only shows what would be retired.')
-  expect(RETIRE_USAGE).toContain('/ledger')
+test('the usage text names --dry-run for a preview, --force for blockers, and where the slugs are', () => {
+  expect(RETIRE_USAGE).toBe(
+    'Usage: /ledger:retire [<slug>] [--dry-run] [--force]. --dry-run only shows what would be retired. --force retires a task with uncommitted changes or unmerged work. Run /ledger to see each slug.',
+  )
 })
 
 test('worktreeOf is the folder that holds .claude/ledger.md', () => {
@@ -106,7 +115,7 @@ test('archivePath names the archive after the main checkout and the last segment
   expect(archivePath({ ...CLEAN, branch: '', path: '/elsewhere/detached-wt' }, OCT_5)).toBe('~/.claude/ledger-archive/repo/2026-10-05-detached-wt.md')
 })
 
-test('formatPlan for a clean, merged worktree asks only for --yes', () => {
+test('formatPlan for a clean, merged worktree gives the command that retires it', () => {
   expect(formatPlan('fast-steps', { ...CLEAN, ahead: 1, mergedPr: { kind: 'merged', number: 24, heads: [HEAD] } }, OCT_5)).toBe(
     [
       '**Retire fast-steps** — nothing done yet',
@@ -117,17 +126,19 @@ test('formatPlan for a clean, merged worktree asks only for --yes', () => {
       "- then: git worktree remove, and the worktree's cc-dd-path build folders are deleted",
       '- local branch: me/fix-login is deleted, because it is merged',
       '',
-      'Add --yes to retire it.',
+      'Run `/ledger:retire fast-steps` to retire it.',
     ].join('\n'),
   )
 })
 
-test('formatPlan for dirty, unmerged work asks for --yes --force and says why', () => {
+test('formatPlan for dirty, unmerged work says why it needs --force', () => {
   const state: WorktreeState = { ...CLEAN, dirty: 2, ahead: 3, defaultBranch: 'develop', mergedPr: { kind: 'unknown', error: 'gh pr list failed (exit 4): auth required' } }
   const lines = formatPlan('fast-steps', state, OCT_5).split('\n')
   expect(lines[2]).toBe('- branch: me/fix-login · 3 commits ahead of origin/develop · could not check PRs: gh pr list failed (exit 4): auth required')
   expect(lines[3]).toBe('- uncommitted changes: 2')
-  expect(lines.at(-1)).toBe('Add --yes --force to retire it: it has 2 uncommitted changes and its branch is not merged')
+  expect(lines.at(-1)).toBe(
+    'Retiring it needs --force: it has 2 uncommitted changes and its branch is not merged. Run `/ledger:retire fast-steps --force` to retire it anyway.',
+  )
 })
 
 test('an ahead count git could not give counts as unmerged unless a merged PR exists, and the plan says why', () => {
@@ -203,7 +214,7 @@ test('formatPlan says an unmerged branch is kept, and names no branch for a deta
 test('formatPlan retires a branch whose PR merged before its last commit, and keeps the branch', () => {
   const lines = formatPlan('fast-steps', { ...CLEAN, ahead: 3, mergedPr: { kind: 'merged', number: 24, heads: ['0ld0001'] } }, OCT_5).split('\n')
   expect(lines).toContain('- local branch: me/fix-login is kept, because it has commits that are not in its merged PR')
-  expect(lines.at(-1)).toBe('Add --yes to retire it.')
+  expect(lines.at(-1)).toBe('Run `/ledger:retire fast-steps` to retire it.')
 })
 
 test('keptBranchReason says why the branch is kept', () => {
@@ -220,4 +231,13 @@ test('formatRetired says which branch it kept, before the working directory note
     '',
     "This session's working directory was removed with the worktree. Continue another task with /ledger:go <slug>, or run /ledger:close.",
   ])
+})
+
+test('formatPlan without its footer ends at the plan and names no flag, for the dashboard', () => {
+  const dirty: WorktreeState = { ...CLEAN, dirty: 2, ahead: 3 }
+  for (const state of [CLEAN, dirty]) {
+    const lines = formatPlan('fast-steps', state, OCT_5, { footer: false }).split('\n')
+    expect(lines).toEqual(formatPlan('fast-steps', state, OCT_5).split('\n').slice(0, -2))
+    expect(lines.join('\n')).not.toMatch(/--yes|--dry-run|--force/)
+  }
 })

@@ -162,7 +162,7 @@ async function deleteFolder($: EngineInterface, folder: PruneFolder, problem: st
   return failure === undefined ? undefined : `Could not delete ${folder.label}: rm ${failure}`
 }
 
-async function prune($: EngineInterface, worktrees: Worktree[], name: string, confirmed: boolean, cwd: string): Promise<string> {
+async function prune($: EngineInterface, worktrees: Worktree[], name: string, dryRun: boolean, cwd: string): Promise<string> {
   const [match, ...others] = worktrees.filter(({ path }) => basename(path) === name)
   if (match === undefined) {
     const names = worktrees.map(({ path }) => basename(path)).join(', ') || 'none'
@@ -184,7 +184,7 @@ async function prune($: EngineInterface, worktrees: Worktree[], name: string, co
     })),
   )
   const folders = sized.filter(folder => !isEmptyFolder(folder))
-  if (!confirmed || folders.length === 0) return formatPrunePlan(name, folders)
+  if (dryRun || folders.length === 0) return formatPrunePlan(name, folders)
 
   const failures = await Promise.all(folders.map(async folder => deleteFolder($, folder, await deletionProblem($, folder.path, scope), cwd)))
   return formatPruned(
@@ -244,10 +244,10 @@ async function orphanDeletionProblem($: EngineInterface, path: string, derivedDa
   return isOrphan(entry, layout) ? undefined : 'it is no longer an orphan.'
 }
 
-async function pruneOrphans($: EngineInterface, layout: RepoLayout, confirmed: boolean, cwd: string): Promise<string> {
+async function pruneOrphans($: EngineInterface, layout: RepoLayout, dryRun: boolean, cwd: string): Promise<string> {
   const derivedData = await derivedDataPath($)
   const orphans = (await derivedDataFolders($, derivedData, layout, cwd)).filter(({ group }) => group.kind === 'orphan')
-  if (!confirmed || derivedData === null || orphans.length === 0) return formatOrphanPlan(orphans)
+  if (dryRun || derivedData === null || orphans.length === 0) return formatOrphanPlan(orphans)
 
   const failures = await Promise.all(
     orphans.map(async folder => deleteFolder($, folder, await orphanDeletionProblem($, folder.path, derivedData, layout, cwd), cwd)),
@@ -269,10 +269,10 @@ export async function worktreesCommand($: EngineInterface, args: string): Promis
     case 'table':
       return table($, layout.worktrees, cwd)
     case 'prune':
-      return prune($, layout.worktrees, command.name, command.confirmed, cwd)
+      return prune($, layout.worktrees, command.name, command.dryRun, cwd)
     case 'derived-data':
       return derivedDataReport($, layout, cwd)
     case 'prune-orphans':
-      return pruneOrphans($, layout, command.confirmed, cwd)
+      return pruneOrphans($, layout, command.dryRun, cwd)
   }
 }

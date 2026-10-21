@@ -49,7 +49,7 @@ function worktreeReplies(worktree: string, branch: string, overrides: WorktreeRe
   )
 }
 
-/** `removed` is a folder fs.stat no longer finds, as after /ledger:retire --yes removed the worktree. */
+/** `removed` is a folder fs.stat no longer finds, as after /ledger:retire removed the worktree. */
 type Setup = { cwd: string; ledgers?: string[]; titles?: Record<string, string>; replies?: Replies; removed?: string }
 
 function world(on: On, { cwd, ledgers = [ledgerOf(FIX_LOGIN), ledgerOf(NEW_API)], titles = {}, replies: extra = {}, removed }: Setup): Call[] {
@@ -79,6 +79,8 @@ function world(on: On, { cwd, ledgers = [ledgerOf(FIX_LOGIN), ledgerOf(NEW_API)]
 }
 
 const ranScript = (calls: Call[]): Call[] => calls.filter(({ argv }) => argv[1]?.endsWith('/bin/cc-worktree-retire'))
+
+const NEEDS_FORCE = 'Retiring it needs --force: its branch is not merged. Run `/ledger:retire fast-steps --force` to retire it anyway.'
 
 test('/ledger:retire with a stray word answers with usage and runs nothing', async ($, on) => {
   const calls = world(on, { cwd: REPO })
@@ -128,30 +130,30 @@ test('/ledger:retire with a slug two ledgers share names both paths', async ($, 
   expect(text).not.toContain('session was not cleared')
 })
 
-test('/ledger:retire <slug> shows the plan for that task and runs only read-only commands', async ($, on) => {
+test('/ledger:retire <slug> --dry-run shows the plan for that task and runs only read-only commands', async ($, on) => {
   const calls = world(on, { cwd: REPO })
-  const { text } = await $.command.run({ command: 'ledger:retire', args: 'new-api' })
+  const { text } = await $.command.run({ command: 'ledger:retire', args: 'new-api --dry-run' })
   const lines = text.split('\n')
   expect(lines[0]).toBe('**Retire new-api** — nothing done yet')
   expect(lines[1]).toBe(`- worktree: ${NEW_API}`)
   expect(lines[2]).toBe('- branch: me/new-api · no commits ahead · no merged PR')
   expect(lines[3]).toBe('- uncommitted changes: none')
   expect(lines[4]).toMatch(/^- archive: ~\/\.claude\/ledger-archive\/repo\/\d{4}-\d{2}-\d{2}-new-api\.md$/)
-  expect(lines.at(-1)).toBe('Add --yes to retire it.')
+  expect(lines.at(-1)).toBe('Run `/ledger:retire new-api` to retire it.')
   expect(ranScript(calls)).toEqual([])
   expect(calls.filter(({ argv }) => argv[0] === 'git').every(({ cwd }) => cwd === NEW_API)).toBe(true)
 })
 
-test('/ledger:retire without a slug in a task worktree plans that task', async ($, on) => {
+test('/ledger:retire --dry-run without a slug in a task worktree plans that task', async ($, on) => {
   world(on, { cwd: `${FIX_LOGIN}/src`, ledgers: [ledgerOf(FIX_LOGIN)] })
-  const { text } = await $.command.run({ command: 'ledger:retire', args: '' })
+  const { text } = await $.command.run({ command: 'ledger:retire', args: '--dry-run' })
   expect(text.split('\n')[0]).toBe('**Retire fast-steps** — nothing done yet')
 })
 
 test('/ledger:retire refuses a ledger in the main checkout', async ($, on) => {
   const dirs = ok('/repo/.claude/worktrees/fix-login/.git\n/repo/.claude/worktrees/fix-login/.git\n')
   const calls = world(on, { cwd: REPO, replies: worktreeReplies(FIX_LOGIN, 'me/fix-login', { dirs }) })
-  const { text } = await $.command.run({ command: 'ledger:retire', args: 'fast-steps --yes --force' })
+  const { text } = await $.command.run({ command: 'ledger:retire', args: 'fast-steps --force' })
   expect(text).toBe(`${FIX_LOGIN} is the main checkout, not a linked worktree. /ledger:retire removes only linked worktrees.`)
   expect(ranScript(calls)).toEqual([])
 })
@@ -159,7 +161,7 @@ test('/ledger:retire refuses a ledger in the main checkout', async ($, on) => {
 test('/ledger:retire stops when a git command fails', async ($, on) => {
   const status = exit(128, '', 'fatal: index corrupt')
   const calls = world(on, { cwd: REPO, replies: worktreeReplies(FIX_LOGIN, 'me/fix-login', { status }) })
-  const { text } = await $.command.run({ command: 'ledger:retire', args: 'fast-steps --yes' })
+  const { text } = await $.command.run({ command: 'ledger:retire', args: 'fast-steps' })
   expect(text).toBe(`Could not read the state of ${FIX_LOGIN}. git status --porcelain failed (exit 128): fatal: index corrupt`)
   expect(ranScript(calls)).toEqual([])
 })
@@ -167,33 +169,33 @@ test('/ledger:retire stops when a git command fails', async ($, on) => {
 test('/ledger:retire counts commits against main when origin/HEAD is not set', async ($, on) => {
   const originHead = exit(128, '', 'fatal: ref refs/remotes/origin/HEAD is not a symbolic ref')
   world(on, { cwd: REPO, replies: worktreeReplies(FIX_LOGIN, 'me/fix-login', { originHead, ahead: ok('1\n'), gh: ok('[{"number":24}]') }) })
-  const { text } = await $.command.run({ command: 'ledger:retire', args: 'fast-steps' })
+  const { text } = await $.command.run({ command: 'ledger:retire', args: 'fast-steps --dry-run' })
   expect(text.split('\n')[2]).toBe('- branch: me/fix-login · 1 commit ahead of origin/main · merged PR #24')
 })
 
-test('/ledger:retire still plans when git cannot compare with origin, and counts the branch as unmerged', async ($, on) => {
+test('/ledger:retire --dry-run still plans when git cannot compare with origin, and counts the branch as unmerged', async ($, on) => {
   const ahead = exit(128, '', "fatal: bad revision 'origin/main..HEAD'\n")
   const calls = world(on, { cwd: REPO, replies: worktreeReplies(FIX_LOGIN, 'me/fix-login', { ahead }) })
-  const { text } = await $.command.run({ command: 'ledger:retire', args: 'fast-steps' })
+  const { text } = await $.command.run({ command: 'ledger:retire', args: 'fast-steps --dry-run' })
   const lines = text.split('\n')
   expect(lines[2]).toBe("- branch: me/fix-login · could not compare with origin/main: fatal: bad revision 'origin/main..HEAD' · no merged PR")
-  expect(lines.at(-1)).toBe('Add --yes --force to retire it: its branch is not merged')
-  const refused = await $.command.run({ command: 'ledger:retire', args: 'fast-steps --yes' })
+  expect(lines.at(-1)).toBe(NEEDS_FORCE)
+  const refused = await $.command.run({ command: 'ledger:retire', args: 'fast-steps' })
   expect(refused.text).toContain('Not retired: its branch is not merged.')
   expect(ranScript(calls)).toEqual([])
 })
 
-test('/ledger:retire --yes retires when git cannot compare with origin but the PR is merged', async ($, on) => {
+test('/ledger:retire retires when git cannot compare with origin but the PR is merged', async ($, on) => {
   const ahead = exit(128, '', "fatal: bad revision 'origin/main..HEAD'")
   const calls = world(on, { cwd: REPO, replies: worktreeReplies(FIX_LOGIN, 'me/fix-login', { ahead, gh: mergedPr(HEAD) }) })
-  await $.command.run({ command: 'ledger:retire', args: 'fast-steps --yes' })
+  await $.command.run({ command: 'ledger:retire', args: 'fast-steps' })
   expect(ranScript(calls).map(({ argv }) => argv.slice(2))).toEqual([[FIX_LOGIN, '--delete-branch', HEAD]])
 })
 
-test('/ledger:retire --yes keeps the branch when git cannot compare with origin and the merged PR ends elsewhere', async ($, on) => {
+test('/ledger:retire keeps the branch when git cannot compare with origin and the merged PR ends elsewhere', async ($, on) => {
   const ahead = exit(128, '', "fatal: bad revision 'origin/main..HEAD'")
   const calls = world(on, { cwd: REPO, replies: worktreeReplies(FIX_LOGIN, 'me/fix-login', { ahead, gh: mergedPr('0ld0001') }) })
-  const { text } = await $.command.run({ command: 'ledger:retire', args: 'fast-steps --yes' })
+  const { text } = await $.command.run({ command: 'ledger:retire', args: 'fast-steps' })
   expect(ranScript(calls).map(({ argv }) => argv.slice(2))).toEqual([[FIX_LOGIN]])
   expect(text.split('\n').at(-1)).toBe('- kept branch me/fix-login, because it has commits that are not in its merged PR')
 })
@@ -201,14 +203,14 @@ test('/ledger:retire --yes keeps the branch when git cannot compare with origin 
 test('/ledger:retire counts unmerged work when gh cannot be asked, and shows why', async ($, on) => {
   const gh = exit(4, '', 'gh auth login required')
   world(on, { cwd: REPO, replies: worktreeReplies(FIX_LOGIN, 'me/fix-login', { ahead: ok('2\n'), gh }) })
-  const { text } = await $.command.run({ command: 'ledger:retire', args: 'fast-steps' })
+  const { text } = await $.command.run({ command: 'ledger:retire', args: 'fast-steps --dry-run' })
   expect(text).toContain('could not check PRs: gh pr list failed (exit 4): gh auth login required')
-  expect(text.split('\n').at(-1)).toBe('Add --yes --force to retire it: its branch is not merged')
+  expect(text.split('\n').at(-1)).toBe(NEEDS_FORCE)
 })
 
-test('/ledger:retire --yes on a clean, merged worktree runs the script from the main checkout', async ($, on) => {
+test('/ledger:retire on a clean, merged worktree runs the script from the main checkout', async ($, on) => {
   const calls = world(on, { cwd: REPO })
-  const { text } = await $.command.run({ command: 'ledger:retire', args: '--yes fast-steps' })
+  const { text } = await $.command.run({ command: 'ledger:retire', args: 'fast-steps' })
   expect(text).toBe(
     [
       '**Retired fast-steps**',
@@ -224,30 +226,50 @@ test('/ledger:retire --yes on a clean, merged worktree runs the script from the 
   expect(script?.cwd).toBe(REPO)
 })
 
-test('/ledger:retire --yes refuses uncommitted changes without --force', async ($, on) => {
+test('/ledger:retire --yes retires the same way as no flag', async ($, on) => {
+  const calls = world(on, { cwd: REPO })
+  const plain = await $.command.run({ command: 'ledger:retire', args: 'fast-steps' })
+  const yes = await $.command.run({ command: 'ledger:retire', args: '--yes fast-steps' })
+  expect(yes.text).toBe(plain.text)
+  const [first, second, ...more] = ranScript(calls)
+  expect(more).toEqual([])
+  expect(second).toEqual(first)
+})
+
+test('/ledger:retire --dry-run --force on blocked work only shows the plan', async ($, on) => {
+  const calls = world(on, { cwd: REPO, replies: worktreeReplies(FIX_LOGIN, 'me/fix-login', { status: ok(' M a.ts\n'), ahead: ok('2\n') }) })
+  const { text } = await $.command.run({ command: 'ledger:retire', args: 'fast-steps --dry-run --force' })
+  expect(text.split('\n')[0]).toBe('**Retire fast-steps** — nothing done yet')
+  expect(text.split('\n').at(-1)).toBe(
+    'Retiring it needs --force: it has 1 uncommitted change and its branch is not merged. Run `/ledger:retire fast-steps --force` to retire it anyway.',
+  )
+  expect(ranScript(calls)).toEqual([])
+})
+
+test('/ledger:retire refuses uncommitted changes without --force', async ($, on) => {
   const calls = world(on, { cwd: REPO, replies: worktreeReplies(FIX_LOGIN, 'me/fix-login', { status: ok(' M a.ts\n?? b.ts\n') }) })
-  const { text } = await $.command.run({ command: 'ledger:retire', args: 'fast-steps --yes' })
+  const { text } = await $.command.run({ command: 'ledger:retire', args: 'fast-steps' })
   expect(text).toBe('Not retired: it has 2 uncommitted changes. Add --force to retire it anyway. Uncommitted changes are lost with the worktree.')
   expect(ranScript(calls)).toEqual([])
 })
 
-test('/ledger:retire --yes refuses an unmerged branch without --force', async ($, on) => {
+test('/ledger:retire refuses an unmerged branch without --force', async ($, on) => {
   const calls = world(on, { cwd: REPO, replies: worktreeReplies(FIX_LOGIN, 'me/fix-login', { ahead: ok('2\n') }) })
-  const { text } = await $.command.run({ command: 'ledger:retire', args: 'fast-steps --yes' })
+  const { text } = await $.command.run({ command: 'ledger:retire', args: 'fast-steps' })
   expect(text).toContain('Not retired: its branch is not merged.')
   expect(ranScript(calls)).toEqual([])
 })
 
-test('/ledger:retire --yes retires commits ahead when their PR is merged', async ($, on) => {
+test('/ledger:retire retires commits ahead when their PR is merged', async ($, on) => {
   const calls = world(on, { cwd: REPO, replies: worktreeReplies(FIX_LOGIN, 'me/fix-login', { ahead: ok('2\n'), gh: mergedPr(HEAD) }) })
-  await $.command.run({ command: 'ledger:retire', args: 'fast-steps --yes' })
+  await $.command.run({ command: 'ledger:retire', args: 'fast-steps' })
   expect(ranScript(calls).map(({ argv }) => argv.slice(2))).toEqual([[FIX_LOGIN, '--delete-branch', HEAD]])
 })
 
-test('/ledger:retire --yes deletes the branch when any of its merged PRs ends at HEAD', async ($, on) => {
+test('/ledger:retire deletes the branch when any of its merged PRs ends at HEAD', async ($, on) => {
   const gh = ok(JSON.stringify([{ number: 31, headRefOid: '0ld0001' }, { number: 24, headRefOid: HEAD }]))
   const calls = world(on, { cwd: REPO, replies: worktreeReplies(FIX_LOGIN, 'me/fix-login', { ahead: ok('2\n'), gh }) })
-  await $.command.run({ command: 'ledger:retire', args: 'fast-steps --yes' })
+  await $.command.run({ command: 'ledger:retire', args: 'fast-steps' })
   expect(ranScript(calls).map(({ argv }) => argv.slice(2))).toEqual([[FIX_LOGIN, '--delete-branch', HEAD]])
 })
 
@@ -255,16 +277,16 @@ test('/ledger:retire counts commits ahead at the HEAD it read, so a commit that 
   const git = (...args: string[]) => ['git', '-C', FIX_LOGIN, ...args]
   const movedSinceRead = replies([git('rev-list', '--count', 'origin/main..HEAD'), ok('3\n')])
   const calls = world(on, { cwd: REPO, replies: { ...worktreeReplies(FIX_LOGIN, 'me/fix-login'), ...movedSinceRead } })
-  await $.command.run({ command: 'ledger:retire', args: 'fast-steps --yes' })
+  await $.command.run({ command: 'ledger:retire', args: 'fast-steps' })
   expect(ranScript(calls).map(({ argv }) => argv.slice(2))).toEqual([[FIX_LOGIN, '--delete-branch', HEAD]])
 })
 
-test('/ledger:retire --yes retires the worktree but keeps a branch with commits after its PR merged', async ($, on) => {
+test('/ledger:retire retires the worktree but keeps a branch with commits after its PR merged', async ($, on) => {
   const calls = world(on, { cwd: REPO, replies: worktreeReplies(FIX_LOGIN, 'me/fix-login', { ahead: ok('3\n'), gh: mergedPr('0ld0001') }) })
-  const plan = await $.command.run({ command: 'ledger:retire', args: 'fast-steps' })
+  const plan = await $.command.run({ command: 'ledger:retire', args: 'fast-steps --dry-run' })
   expect(plan.text.split('\n')).toContain('- local branch: me/fix-login is kept, because it has commits that are not in its merged PR')
-  expect(plan.text.split('\n').at(-1)).toBe('Add --yes to retire it.')
-  const { text } = await $.command.run({ command: 'ledger:retire', args: 'fast-steps --yes' })
+  expect(plan.text.split('\n').at(-1)).toBe('Run `/ledger:retire fast-steps` to retire it.')
+  const { text } = await $.command.run({ command: 'ledger:retire', args: 'fast-steps' })
   expect(ranScript(calls).map(({ argv }) => argv.slice(2))).toEqual([[FIX_LOGIN]])
   expect(text.split('\n').at(-1)).toBe('- kept branch me/fix-login, because it has commits that are not in its merged PR')
 })
@@ -273,79 +295,79 @@ const UNBORN: WorktreeReplies = { head: exit(1, '', ''), aheadOf: 'HEAD', ahead:
 
 test('/ledger:retire on a branch with no commits yet needs --force and keeps the branch', async ($, on) => {
   const calls = world(on, { cwd: REPO, replies: worktreeReplies(FIX_LOGIN, 'me/fix-login', UNBORN) })
-  const plan = await $.command.run({ command: 'ledger:retire', args: 'fast-steps' })
+  const plan = await $.command.run({ command: 'ledger:retire', args: 'fast-steps --dry-run' })
   expect(plan.text.split('\n')).toContain('- local branch: me/fix-login is kept, because it has no commits yet')
-  expect(plan.text.split('\n').at(-1)).toBe('Add --yes --force to retire it: its branch is not merged')
-  const refused = await $.command.run({ command: 'ledger:retire', args: 'fast-steps --yes' })
+  expect(plan.text.split('\n').at(-1)).toBe(NEEDS_FORCE)
+  const refused = await $.command.run({ command: 'ledger:retire', args: 'fast-steps' })
   expect(refused.text).toContain('Not retired: its branch is not merged.')
   expect(ranScript(calls)).toEqual([])
-  await $.command.run({ command: 'ledger:retire', args: 'fast-steps --yes --force' })
+  await $.command.run({ command: 'ledger:retire', args: 'fast-steps --force' })
   expect(ranScript(calls).map(({ argv }) => argv.slice(2))).toEqual([[FIX_LOGIN, '--force']])
 })
 
-test('/ledger:retire --yes keeps a branch with no commits yet even when a merged PR reports no head', async ($, on) => {
+test('/ledger:retire keeps a branch with no commits yet even when a merged PR reports no head', async ($, on) => {
   const calls = world(on, { cwd: REPO, replies: worktreeReplies(FIX_LOGIN, 'me/fix-login', { ...UNBORN, gh: mergedPr('') }) })
-  const { text } = await $.command.run({ command: 'ledger:retire', args: 'fast-steps --yes' })
+  const { text } = await $.command.run({ command: 'ledger:retire', args: 'fast-steps' })
   expect(ranScript(calls).map(({ argv }) => argv.slice(2))).toEqual([[FIX_LOGIN]])
   expect(text.split('\n').at(-1)).toBe('- kept branch me/fix-login, because it has no commits yet')
 })
 
-test('/ledger:retire --yes --force passes --force to the script', async ($, on) => {
+test('/ledger:retire --force passes --force to the script', async ($, on) => {
   const calls = world(on, { cwd: REPO, replies: worktreeReplies(FIX_LOGIN, 'me/fix-login', { status: ok(' M a.ts\n'), ahead: ok('2\n') }) })
-  const { text } = await $.command.run({ command: 'ledger:retire', args: 'fast-steps --force --yes' })
+  const { text } = await $.command.run({ command: 'ledger:retire', args: 'fast-steps --force' })
   expect(text.split('\n')[0]).toBe('**Retired fast-steps**')
   expect(text.split('\n').at(-1)).toBe('- kept branch me/fix-login, because it is not merged')
   expect(ranScript(calls).map(({ argv }) => argv.slice(2))).toEqual([[FIX_LOGIN, '--force']])
 })
 
-test('/ledger:retire --yes reports a script that fails, with what it printed first', async ($, on) => {
+test('/ledger:retire reports a script that fails, with what it printed first', async ($, on) => {
   const failed = exit(128, 'archived /a.md\n', "fatal: '/repo/.claude/worktrees/fix-login' contains modified or untracked files\n")
   world(on, { cwd: REPO, replies: replies([retireScript(FIX_LOGIN, '--delete-branch', HEAD), failed]) })
-  const { text } = await $.command.run({ command: 'ledger:retire', args: 'fast-steps --yes' })
+  const { text } = await $.command.run({ command: 'ledger:retire', args: 'fast-steps' })
   expect(text).toBe(
     ["cc-worktree-retire failed (exit 128): fatal: '/repo/.claude/worktrees/fix-login' contains modified or untracked files", '- archived /a.md'].join('\n'),
   )
 })
 
-test('/ledger:retire --yes from inside the worktree says the session lost its working directory', async ($, on) => {
+test('/ledger:retire from inside the worktree says the session lost its working directory', async ($, on) => {
   world(on, { cwd: `${FIX_LOGIN}/src`, ledgers: [ledgerOf(FIX_LOGIN)] })
-  const { text } = await $.command.run({ command: 'ledger:retire', args: '--yes' })
+  const { text } = await $.command.run({ command: 'ledger:retire', args: '' })
   expect(text.split('\n')[0]).toBe('**Retired fast-steps**')
   expect(text.split('\n').at(-1)).toBe(
     "This session's working directory was removed with the worktree. Continue another task with /ledger:go <slug>, or run /ledger:close.",
   )
 })
 
-test('/ledger:retire --yes from a session folder removed earlier looks up ledgers from the folder above it', async ($, on) => {
+test('/ledger:retire from a session folder removed earlier looks up ledgers from the folder above it', async ($, on) => {
   const gone = '/repo/.claude/worktrees/gone'
   const calls = world(on, { cwd: gone, removed: gone })
-  const { text } = await $.command.run({ command: 'ledger:retire', args: 'fast-steps --yes' })
+  const { text } = await $.command.run({ command: 'ledger:retire', args: 'fast-steps' })
   expect(text.split('\n')[0]).toBe('**Retired fast-steps**')
   expect(text).not.toContain('working directory')
   expect(calls.filter(({ argv }) => argv[1]?.endsWith('/hooks/ledger-list.sh')).map(({ cwd }) => cwd)).toEqual(['/repo/.claude/worktrees'])
 })
 
-test('/ledger:retire --yes from the main checkout leaves out the working directory note', async ($, on) => {
+test('/ledger:retire from the main checkout leaves out the working directory note', async ($, on) => {
   world(on, { cwd: REPO })
-  const { text } = await $.command.run({ command: 'ledger:retire', args: 'fast-steps --yes' })
+  const { text } = await $.command.run({ command: 'ledger:retire', args: 'fast-steps' })
   expect(text).not.toContain('working directory')
 })
 
-test('/ledger:retire <slug> says the merged branch is deleted', async ($, on) => {
+test('/ledger:retire <slug> --dry-run says the merged branch is deleted', async ($, on) => {
   world(on, { cwd: REPO })
-  const { text } = await $.command.run({ command: 'ledger:retire', args: 'new-api' })
+  const { text } = await $.command.run({ command: 'ledger:retire', args: 'new-api --dry-run' })
   expect(text.split('\n')).toContain('- local branch: me/new-api is deleted, because it is merged')
 })
 
-test('/ledger:retire <slug> says an unmerged branch is kept', async ($, on) => {
+test('/ledger:retire <slug> --dry-run says an unmerged branch is kept', async ($, on) => {
   world(on, { cwd: REPO, replies: worktreeReplies(FIX_LOGIN, 'me/fix-login', { ahead: ok('2\n') }) })
-  const { text } = await $.command.run({ command: 'ledger:retire', args: 'fast-steps' })
+  const { text } = await $.command.run({ command: 'ledger:retire', args: 'fast-steps --dry-run' })
   expect(text.split('\n')).toContain('- local branch: me/fix-login is kept, because it is not merged')
 })
 
-test('/ledger:retire --yes --force on a merged branch with uncommitted changes still deletes the branch', async ($, on) => {
+test('/ledger:retire --force on a merged branch with uncommitted changes still deletes the branch', async ($, on) => {
   const calls = world(on, { cwd: REPO, replies: worktreeReplies(FIX_LOGIN, 'me/fix-login', { status: ok(' M a.ts\n') }) })
-  const { text } = await $.command.run({ command: 'ledger:retire', args: 'fast-steps --yes --force' })
+  const { text } = await $.command.run({ command: 'ledger:retire', args: 'fast-steps --force' })
   expect(ranScript(calls).map(({ argv }) => argv.slice(2))).toEqual([[FIX_LOGIN, '--delete-branch', HEAD, '--force']])
   expect(text).not.toContain('kept branch')
 })
@@ -374,7 +396,7 @@ test('retireLedger retires the worktree of the ledger it is given, without looki
     ...worktreeReplies(NEW_API, 'me/new-api'),
     ...replies([retireScript(NEW_API, '--delete-branch', HEAD), ok('removed  /repo/.claude/worktrees/new-api\n')]),
   })
-  const text = await retireLedger(engine, 'fast-steps', ledgerOf(NEW_API), { confirmed: true, forced: false })
+  const text = await retireLedger(engine, 'fast-steps', ledgerOf(NEW_API), { dryRun: false, forced: false })
   expect(text.split('\n')[0]).toBe('**Retired fast-steps**')
   expect(ranScript(calls).map(({ argv }) => argv[2])).toEqual([NEW_API])
 })

@@ -21,7 +21,7 @@ export async function run($: EngineInterface, argv: string[], cwd: string): Prom
 }
 
 /**
- * The folder to run commands in. `removed` is the session's own folder when it no longer exists, as after /ledger:retire --yes
+ * The folder to run commands in. `removed` is the session's own folder when it no longer exists, as after /ledger:retire
  * from inside the worktree; `path` is then the nearest folder above it that does.
  */
 export type SessionFolder = { path: string; removed?: string }

@@ -273,7 +273,7 @@ const today = () => {
   const now = new Date();
   return [now.getFullYear(), now.getMonth() + 1, now.getDate()].map((part) => String(part).padStart(2, '0')).join('-');
 };
-const HINT = 'Parent epic has no active children left. Retire it with /ledger:retire epic --yes.';
+const HINT = 'Parent epic has no active children left. Retire it with /ledger:retire epic.';
 
 test('retire of a child marks it retired in the parent Children section', (t) => {
   const { home, worktree, parent } = family(t, '- wt-title\n- sibling\n');

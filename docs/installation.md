@@ -127,13 +127,13 @@ commands:
   task, and adds the mark. With the slug of another task it only adds the mark.
 - `/ledger:worktrees` prints each linked git worktree's size, last commit,
   dirty files, ledger and PR.
-- `/ledger:retire [<slug>]` shows what retiring a task would archive and
-  remove. `--yes` runs `bin/cc-worktree-retire`: it archives the task's
-  ledger, removes its worktree and deletes the worktree's build folders.
+- `/ledger:retire [<slug>]` runs `bin/cc-worktree-retire`: it archives the
+  task's ledger, removes its worktree and deletes the worktree's build folders.
   It also deletes the local branch when every commit on it is in the default
   branch or in a merged PR. A branch with commits after its PR merged stays.
-  Uncommitted changes also need `--force`, and so does a branch that has
-  commits not in the default branch and no merged PR.
+  Uncommitted changes need `--force`, and so does a branch that has commits
+  not in the default branch and no merged PR. `--dry-run` only shows what
+  retiring would archive and remove.
 - `/ledger:archive [<term>]` lists this repo's archived ledgers in
   `~/.claude/ledger-archive/`, newest first. A term keeps the ledgers that
   contain it. `--all` lists the archive of every repo.
@@ -148,11 +148,11 @@ commands:
   `stop` stops it.
 - `/ledger:help` prints one line for each of these commands.
 
-`/ledger:worktrees prune <name>` lists the build folders of one worktree and
-their sizes. These are ignored folders such as `build` and `.expo-prebuild`,
-and the worktree's Xcode build folders from `bin/cc-dd-path`. Empty folders
-are left out. Add `--yes` to delete them. The command never deletes the
-worktree itself or anything in `.claude`. It also keeps `node_modules` and
+`/ledger:worktrees prune <name>` deletes the build folders of one worktree.
+These are ignored folders such as `build` and `.expo-prebuild`, and the
+worktree's Xcode build folders from `bin/cc-dd-path`. Empty folders are left
+out. Add `--dry-run` to only list them and their sizes. The command never
+deletes the worktree itself or anything in `.claude`. It also keeps `node_modules` and
 `Pods`, so the worktree still builds without a new install.
 
 Deploy installs the mod through the `claude` CLI, at user scope:

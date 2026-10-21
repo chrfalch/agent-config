@@ -35,8 +35,8 @@ type Mod = {
   worktreeOf(ledgerPath: string): string;
   readState(engine: Engine, worktree: string): Promise<WorktreeState | { error: string }>;
   retireBlockers(state: WorktreeState): string[];
-  formatPlan(slug: string, state: WorktreeState, today: Date): string;
-  retireLedger(engine: Engine, slug: string, ledgerPath: string, options: { confirmed: boolean; forced: boolean }): Promise<string>;
+  formatPlan(slug: string, state: WorktreeState, today: Date, options?: { footer?: boolean }): string;
+  retireLedger(engine: Engine, slug: string, ledgerPath: string, options: { dryRun: boolean; forced: boolean }): Promise<string>;
   lookUpPrs(engine: Engine, branch: string, cwd: string): Promise<{ prs: Pr[] | null; error?: string }>;
   titleSlug(engine: Engine, ledgerPath: string): Promise<string>;
 };
@@ -277,7 +277,7 @@ function ledgersOf(mod: Mod) {
     const { target, state, ledgerPath } = found;
     if (!sameTarget(previewed, target)) return fail(409, `Nothing was retired: ${target.slug} changed since the preview. Preview it again.`);
     // From the main checkout: from the worktree itself, /ledger:retire would say this session's folder was removed.
-    const text = await mod.retireLedger(engine(state.mainCheckout), target.slug, ledgerPath, { confirmed: true, forced: force });
+    const text = await mod.retireLedger(engine(state.mainCheckout), target.slug, ledgerPath, { dryRun: false, forced: force });
     const retired = !existsSync(state.path);
     return { status: retired ? 200 : 409, body: { retired, text, html: renderMarkdown(text) } };
   }
@@ -354,7 +354,7 @@ function ledgersOf(mod: Mod) {
       const found = await retireTarget(id);
       if (isReply(found)) return found;
       const { target, state } = found;
-      const text = mod.formatPlan(target.slug, state, new Date());
+      const text = mod.formatPlan(target.slug, state, new Date(), { footer: false });
       return ok({ text, html: renderMarkdown(text), blockers: target.blockers, token: retireTokens.issue(target) });
     },
 

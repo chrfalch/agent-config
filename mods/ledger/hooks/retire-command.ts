@@ -93,11 +93,11 @@ export async function retireLedger(
   $: EngineInterface,
   slug: string,
   ledgerPath: string,
-  { confirmed, forced }: { confirmed: boolean; forced: boolean },
+  { dryRun, forced }: { dryRun: boolean; forced: boolean },
 ): Promise<string> {
   const state = await readState($, worktreeOf(ledgerPath))
   if ('error' in state) return state.error
-  if (!confirmed) return formatPlan(slug, state, new Date())
+  if (dryRun) return formatPlan(slug, state, new Date())
   const blockers = retireBlockers(state)
   if (blockers.length > 0 && !forced) return notRetiredMessage(blockers)
 

@@ -220,8 +220,9 @@ does not exist.
 A hook answers `/ledger`, `/ledger:help`, `/ledger:worktrees`,
 `/ledger:retire`, `/ledger:archive`, `/ledger:all`, `/ledger:parent` and
 `/ledger:dashboard` directly, without a model
-turn. Most of them only print. The `--yes` forms of `/ledger:worktrees` and
-`/ledger:retire` delete files. The other commands run a model turn, for example
+turn. Most of them only print. `/ledger:retire` and the two prune forms of
+`/ledger:worktrees` delete files. Add `--dry-run` to see what they would delete
+first. The other commands run a model turn, for example
 to write a ledger, start a task, or switch to one.
 
 | You type | What happens |
@@ -238,13 +239,13 @@ to write a ledger, start a task, or switch to one.
 | `/ledger:park [<slug>] <reason>` | Marks a task parked, with the date and the reason. With the slug of another task, it only marks that task. Without a slug, it writes this task's ledger, parks it, then clears the session. |
 | `/ledger:archive [<term>] [--all]` | Lists this repo's archived ledgers in `~/.claude/ledger-archive/`, newest first, one line each. A term keeps the ledgers that contain it, in any case, and shows the first matching line. `--all` lists every repo. |
 | `/ledger:worktrees` | Prints a table of the repo's linked git worktrees, largest first, with size, last commit, changed files, ledger and PR. |
-| `/ledger:worktrees prune <name>` | Lists the build folders of that worktree and their sizes. It deletes nothing. |
-| `/ledger:worktrees prune <name> --yes` | Deletes those build folders. It keeps `node_modules`, `Pods`, `.claude` and the worktree itself. |
+| `/ledger:worktrees prune <name>` | Deletes the build folders of that worktree. It keeps `node_modules`, `Pods`, `.claude` and the worktree itself. |
+| `/ledger:worktrees prune <name> --dry-run` | Lists those build folders and their sizes. It deletes nothing. |
 | `/ledger:worktrees derived-data` | Lists every folder in `~/Library/Developer/Xcode/DerivedData` with its size. It groups them by where the project is: the main checkout, a linked worktree, another location, or gone. Folders with no source project, and shared caches, have their own groups. |
-| `/ledger:worktrees prune-orphans` | Lists the DerivedData folders whose project no longer exists. It deletes nothing. |
-| `/ledger:worktrees prune-orphans --yes` | Deletes those folders. It never deletes shared caches or folders without a recorded project. |
-| `/ledger:retire [<slug>]` | Lists what retiring the task would do: its worktree, branch, uncommitted changes and archive path. It deletes nothing. Without a slug it takes the task this session is in. |
-| `/ledger:retire [<slug>] --yes [--force]` | Copies the task's ledger to `~/.claude/ledger-archive/<repo>/`, removes its worktree and deletes the worktree's build folders. It also deletes the local branch when every commit on it is in the default branch or in a merged PR. A branch with commits after its PR merged stays. It needs `--force` for uncommitted changes, for a branch that has commits not in the default branch and no merged PR, and for a parent task with active child tasks. Retiring a child task marks it retired in its parent ledger. |
+| `/ledger:worktrees prune-orphans` | Deletes the DerivedData folders whose project no longer exists. It never deletes shared caches or folders without a recorded project. |
+| `/ledger:worktrees prune-orphans --dry-run` | Lists those folders. It deletes nothing. |
+| `/ledger:retire [<slug>] [--force]` | Copies the task's ledger to `~/.claude/ledger-archive/<repo>/`, removes its worktree and deletes the worktree's build folders. It also deletes the local branch when every commit on it is in the default branch or in a merged PR. A branch with commits after its PR merged stays. It needs `--force` for uncommitted changes, for a branch that has commits not in the default branch and no merged PR, and for a parent task with active child tasks. Retiring a child task marks it retired in its parent ledger. Without a slug it takes the task this session is in. |
+| `/ledger:retire [<slug>] --dry-run` | Lists what retiring the task would do: its worktree, branch, uncommitted changes and archive path. It deletes nothing. |
 | `/ledger:parent [<name>]` | Prints a parent task and, for each child task, its status and next step. Without a name it shows the task this session is in when it has child tasks, or else that task's parent task. |
 | `/ledger:parent <name> add <child>` | Makes `<child>` a child task of `<name>`. It writes both ledgers. A parent task ties together tasks that ship separately, such as stacked PRs. See [Parent tasks](docs/usage.md#parent-tasks). |
 | `/ledger:parent <name> remove <child>` | Removes that relation from both ledgers. |

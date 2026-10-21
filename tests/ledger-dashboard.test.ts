@@ -677,6 +677,7 @@ test('the retire preview reports the plan and its blockers, and deletes nothing'
   assert.match(value.text, /^\*\*Retire fix-login\*\* — nothing done yet/);
   assert.match(value.text, new RegExp(`- worktree: ${fixLogin}`));
   assert.deepEqual(value.blockers, ['its branch is not merged']);
+  assert.doesNotMatch(value.text, /--yes|--dry-run|\/ledger:retire/);
   assert.match(value.token, /^[A-Za-z0-9_-]{32,}$/);
   assert.ok(existsSync(ledgerOf(fixLogin)));
   assert.deepEqual(readdirSync(path.join(home, '.claude/ledger-archive/app')), ['2026-10-01-old-task.md']);

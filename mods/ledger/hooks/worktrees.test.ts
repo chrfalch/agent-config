@@ -339,26 +339,33 @@ test('/ledger:worktrees reports a failed git worktree list with its exit code an
   expect(text).toBe('Could not list worktrees. git worktree list failed (exit 128): fatal: not a git repository')
 })
 
-test('parseCommand reads no arguments as the table and prune <name> [--yes] as a prune', () => {
+test('parseCommand reads no arguments as the table and prune <name> [--dry-run] as a prune', () => {
   expect(parseCommand('')).toEqual({ kind: 'table' })
   expect(parseCommand('  ')).toEqual({ kind: 'table' })
-  expect(parseCommand('prune big')).toEqual({ kind: 'prune', name: 'big', confirmed: false })
-  expect(parseCommand(' prune  big  --yes ')).toEqual({ kind: 'prune', name: 'big', confirmed: true })
-  expect(parseCommand('prune\tbig\t--yes')).toEqual({ kind: 'prune', name: 'big', confirmed: true })
+  expect(parseCommand('prune big')).toEqual({ kind: 'prune', name: 'big', dryRun: false })
+  expect(parseCommand(' prune  big  --dry-run ')).toEqual({ kind: 'prune', name: 'big', dryRun: true })
+  expect(parseCommand('prune\tbig\t--dry-run')).toEqual({ kind: 'prune', name: 'big', dryRun: true })
 })
 
-test('parseCommand reads every word after prune but a final --yes as the name, with its spacing kept', () => {
-  expect(parseCommand('prune my wt')).toEqual({ kind: 'prune', name: 'my wt', confirmed: false })
-  expect(parseCommand('prune my  wt --yes')).toEqual({ kind: 'prune', name: 'my  wt', confirmed: true })
-  expect(parseCommand('prune big --force')).toEqual({ kind: 'prune', name: 'big --force', confirmed: false })
-  expect(parseCommand('prune big --yes more')).toEqual({ kind: 'prune', name: 'big --yes more', confirmed: false })
+test('parseCommand still takes a final --yes after prune <name>, and it changes nothing', () => {
+  expect(parseCommand('prune big --yes')).toEqual(parseCommand('prune big'))
+  expect(parseCommand('prune big --yes --dry-run')).toEqual(parseCommand('prune big --dry-run'))
+  expect(parseCommand('prune big --dry-run --yes')).toEqual(parseCommand('prune big --dry-run'))
 })
 
-test('parseCommand allows a name that starts with -, but not the name --yes alone', () => {
-  expect(parseCommand('prune -x')).toEqual({ kind: 'prune', name: '-x', confirmed: false })
-  expect(parseCommand('prune --force --yes')).toEqual({ kind: 'prune', name: '--force', confirmed: true })
-  expect(parseCommand('prune --yes')).toEqual({ kind: 'usage' })
-  expect(parseCommand('prune --yes --yes')).toEqual({ kind: 'usage' })
+test('parseCommand reads every word after prune but the final flags as the name, with its spacing kept', () => {
+  expect(parseCommand('prune my wt')).toEqual({ kind: 'prune', name: 'my wt', dryRun: false })
+  expect(parseCommand('prune my  wt --dry-run')).toEqual({ kind: 'prune', name: 'my  wt', dryRun: true })
+  expect(parseCommand('prune big --force')).toEqual({ kind: 'prune', name: 'big --force', dryRun: false })
+  expect(parseCommand('prune big --dry-run more')).toEqual({ kind: 'prune', name: 'big --dry-run more', dryRun: false })
+})
+
+test('parseCommand allows a name that starts with -, but not a name that is only flags', () => {
+  expect(parseCommand('prune -x')).toEqual({ kind: 'prune', name: '-x', dryRun: false })
+  expect(parseCommand('prune --force --dry-run')).toEqual({ kind: 'prune', name: '--force', dryRun: true })
+  for (const args of ['prune --yes', 'prune --dry-run', 'prune --yes --dry-run']) {
+    expect(parseCommand(args)).toEqual({ kind: 'usage' })
+  }
 })
 
 test('parseCommand reads anything else as a request for usage', () => {
@@ -556,14 +563,14 @@ const PRUNE_TABLE = [
   '| apps/x/.expo-prebuild | ? |',
 ]
 
-test('/ledger:worktrees prune <name> lists the build folders it would delete, largest first, skips empty ones, and deletes nothing', async ($, on) => {
+test('/ledger:worktrees prune <name> --dry-run lists the build folders it would delete, largest first, skips empty ones, and deletes nothing', async ($, on) => {
   const { argvs, run } = recording(pruneReplies())
   on('session.cwd', async () => ({ value: REPO }))
   on('process.run', run)
   on('fs.exists', fakeExists)
   on('fs.list', fakeDerivedData)
   mock.env(on, { HOME })
-  const { text } = await $.command.run({ command: 'ledger:worktrees', args: 'prune big' })
+  const { text } = await $.command.run({ command: 'ledger:worktrees', args: 'prune big --dry-run' })
   expect(text).toBe(
     [
       '**Prune big** · dry run · 18.1 GB in 6 folders',
@@ -572,13 +579,26 @@ test('/ledger:worktrees prune <name> lists the build folders it would delete, la
       '',
       'Folders inside a `.claude` folder are never deleted.',
       '`node_modules` and `Pods` folders are kept, so the worktree still builds.',
-      'Run `/ledger:worktrees prune big --yes` to delete them.',
+      'Run `/ledger:worktrees prune big` to delete them.',
     ].join('\n'),
   )
   expect(rmCalls(argvs)).toEqual([])
 })
 
-test('/ledger:worktrees prune <name> --yes runs rm -rf -- once per non-empty folder, by absolute path, and nothing else', async ($, on) => {
+test('/ledger:worktrees prune <name> runs rm -rf -- once per non-empty folder, by absolute path, and nothing else', async ($, on) => {
+  const { argvs, run } = recording(pruneReplies())
+  on('session.cwd', async () => ({ value: REPO }))
+  on('process.run', run)
+  on('fs.exists', fakeExists)
+  on('fs.list', fakeDerivedData)
+  on('fs.stat', fakeRealFs())
+  mock.env(on, { HOME })
+  const { text } = await $.command.run({ command: 'ledger:worktrees', args: 'prune big' })
+  expect(text).toBe(['**Pruned big** · 18.1 GB freed in 6 folders', '', ...PRUNE_TABLE].join('\n'))
+  expect(argvs.filter(argv => argv[0] !== 'du').sort(byArgv)).toEqual([WORKTREE_LIST, IGNORED_STATUS, ...PRUNE_FOLDERS.map(rm)].sort(byArgv))
+})
+
+test('/ledger:worktrees prune <name> --yes deletes the same as no flag', async ($, on) => {
   const { argvs, run } = recording(pruneReplies())
   on('session.cwd', async () => ({ value: REPO }))
   on('process.run', run)
@@ -587,11 +607,11 @@ test('/ledger:worktrees prune <name> --yes runs rm -rf -- once per non-empty fol
   on('fs.stat', fakeRealFs())
   mock.env(on, { HOME })
   const { text } = await $.command.run({ command: 'ledger:worktrees', args: 'prune big --yes' })
-  expect(text).toBe(['**Pruned big** · 18.1 GB freed in 6 folders', '', ...PRUNE_TABLE].join('\n'))
-  expect(argvs.filter(argv => argv[0] !== 'du').sort(byArgv)).toEqual([WORKTREE_LIST, IGNORED_STATUS, ...PRUNE_FOLDERS.map(rm)].sort(byArgv))
+  expect(text.split('\n')[0]).toBe('**Pruned big** · 18.1 GB freed in 6 folders')
+  expect(rmCalls(argvs)).toEqual(PRUNE_FOLDERS.map(rm).sort(byArgv))
 })
 
-test('/ledger:worktrees prune <name> --yes starts every rm before any of them finishes', async ($, on) => {
+test('/ledger:worktrees prune <name> starts every rm before any of them finishes', async ($, on) => {
   const run = fakeRun(pruneReplies())
   let started = 0
   let startedWhenFirstFinished: number | undefined
@@ -607,25 +627,25 @@ test('/ledger:worktrees prune <name> --yes starts every rm before any of them fi
   on('fs.list', fakeDerivedData)
   on('fs.stat', fakeRealFs())
   mock.env(on, { HOME })
-  await $.command.run({ command: 'ledger:worktrees', args: 'prune big --yes' })
+  await $.command.run({ command: 'ledger:worktrees', args: 'prune big' })
   expect(startedWhenFirstFinished).toBe(PRUNE_FOLDERS.length)
 })
 
-test('/ledger:worktrees prune <name> --yes reports each folder rm could not delete', async ($, on) => {
+test('/ledger:worktrees prune <name> reports each folder rm could not delete', async ($, on) => {
   on('session.cwd', async () => ({ value: REPO }))
   on('process.run', fakeRun({ ...pruneReplies(), ...replies([rm(`${BIG}/.build`), exit(1, '', 'rm: .build/x: Permission denied\n')]) }))
   on('fs.exists', fakeExists)
   on('fs.list', fakeDerivedData)
   on('fs.stat', fakeRealFs())
   mock.env(on, { HOME })
-  const { text } = await $.command.run({ command: 'ledger:worktrees', args: 'prune big --yes' })
+  const { text } = await $.command.run({ command: 'ledger:worktrees', args: 'prune big' })
   const lines = text.split('\n')
   expect(lines[0]).toBe('**Pruned big** · 16.1 GB freed in 5 folders')
   expect(lines).not.toContain('| .build | 2.0 |')
   expect(lines.at(-1)).toBe('Could not delete .build: rm failed (exit 1): rm: .build/x: Permission denied')
 })
 
-test('/ledger:worktrees prune <name> --yes skips a symbolic link, a path that resolves outside the worktree or into a .claude folder, and one that does not resolve', async ($, on) => {
+test('/ledger:worktrees prune <name> skips a symbolic link, a path that resolves outside the worktree or into a .claude folder, and one that does not resolve', async ($, on) => {
   const redirected: Record<string, string | undefined> = {
     [`${BIG}/packages/app/.cache`]: '/elsewhere/app/.cache',
     [`${BIG}/packages/app/ios/build`]: `${BIG}/.claude/worktrees/x/build`,
@@ -638,7 +658,7 @@ test('/ledger:worktrees prune <name> --yes skips a symbolic link, a path that re
   on('fs.list', fakeDerivedData)
   on('fs.stat', fakeRealFs({ links: [`${BIG}/.build`], realPath: path => (path in redirected ? redirected[path] : path) }))
   mock.env(on, { HOME })
-  const { text } = await $.command.run({ command: 'ledger:worktrees', args: 'prune big --yes' })
+  const { text } = await $.command.run({ command: 'ledger:worktrees', args: 'prune big' })
   expect(text).toBe(
     [
       '**Pruned big** · 15.0 GB freed in 2 folders',
@@ -654,7 +674,7 @@ test('/ledger:worktrees prune <name> --yes skips a symbolic link, a path that re
   expect(rmCalls(argvs)).toEqual([rm(DEBUG_SIM), rm(RELEASE_SIM)].sort(byArgv))
 })
 
-test('/ledger:worktrees prune <name> --yes compares real paths with the real worktree, and skips Xcode folders when DerivedData does not resolve', async ($, on) => {
+test('/ledger:worktrees prune <name> compares real paths with the real worktree, and skips Xcode folders when DerivedData does not resolve', async ($, on) => {
   const { argvs, run } = recording(pruneReplies())
   on('session.cwd', async () => ({ value: REPO }))
   on('process.run', run)
@@ -662,7 +682,7 @@ test('/ledger:worktrees prune <name> --yes compares real paths with the real wor
   on('fs.list', fakeDerivedData)
   on('fs.stat', fakeRealFs({ realPath: path => (path === DERIVED_DATA ? undefined : path.startsWith(BIG) ? `/private${path}` : path) }))
   mock.env(on, { HOME })
-  const { text } = await $.command.run({ command: 'ledger:worktrees', args: 'prune big --yes' })
+  const { text } = await $.command.run({ command: 'ledger:worktrees', args: 'prune big' })
   const lines = text.split('\n')
   expect(lines[0]).toBe('**Pruned big** · 3.1 GB freed in 4 folders')
   expect(lines.slice(-2)).toEqual([
@@ -676,7 +696,7 @@ for (const [state, env] of [
   ['unset', {}],
   ['a relative path', { HOME: 'Users/me' }],
 ] as const) {
-  test(`/ledger:worktrees prune <name> looks for no Xcode build folders when HOME is ${state}, and still lists the worktree's own`, async ($, on) => {
+  test(`/ledger:worktrees prune <name> --dry-run looks for no Xcode build folders when HOME is ${state}, and still lists the worktree's own`, async ($, on) => {
     const listed: string[] = []
     on('session.cwd', async () => ({ value: REPO }))
     on('process.run', fakeRun(pruneReplies()))
@@ -686,7 +706,7 @@ for (const [state, env] of [
       return fakeDerivedData(_$, e)
     })
     mock.env(on, env)
-    const { text } = await $.command.run({ command: 'ledger:worktrees', args: 'prune big' })
+    const { text } = await $.command.run({ command: 'ledger:worktrees', args: 'prune big --dry-run' })
     expect(listed).toEqual([])
     expect(text.split('\n').slice(0, 8)).toEqual(['**Prune big** · dry run · 3.1 GB in 4 folders', '', ...PRUNE_TABLE.slice(0, 2), ...PRUNE_TABLE.slice(4)])
   })
@@ -698,11 +718,11 @@ test('/ledger:worktrees prune <name> says so when there is nothing to prune', as
   on('fs.exists', fakeExists)
   on('fs.list', async (_$: unknown, e: { path: string }) => ({ deny: `ENOENT: ${e.path}` }))
   mock.env(on, { HOME })
-  const { text } = await $.command.run({ command: 'ledger:worktrees', args: 'prune big --yes' })
+  const { text } = await $.command.run({ command: 'ledger:worktrees', args: 'prune big' })
   expect(text).toBe('Nothing to prune in big.')
 })
 
-test('/ledger:worktrees prune <name> --yes says there is nothing to prune, and deletes nothing, when every build folder is empty', async ($, on) => {
+test('/ledger:worktrees prune <name> says there is nothing to prune, and deletes nothing, when every build folder is empty', async ($, on) => {
   const { argvs, run } = recording({ ...pruneReplies(), ...replies([IGNORED_STATUS, ok('!! android/build/\n!! node_modules/\n')]) })
   on('session.cwd', async () => ({ value: REPO }))
   on('process.run', run)
@@ -710,7 +730,7 @@ test('/ledger:worktrees prune <name> --yes says there is nothing to prune, and d
   on('fs.list', async (_$: unknown, e: { path: string }) => (e.path === DERIVED_DATA ? { value: [dir('cc-big-b4dd60-Debug-device')] } : { deny: `ENOENT: ${e.path}` }))
   on('fs.stat', fakeRealFs())
   mock.env(on, { HOME })
-  const { text } = await $.command.run({ command: 'ledger:worktrees', args: 'prune big --yes' })
+  const { text } = await $.command.run({ command: 'ledger:worktrees', args: 'prune big' })
   expect(text).toBe('Nothing to prune in big.')
   expect(rmCalls(argvs)).toEqual([])
 })
@@ -757,25 +777,26 @@ test('/ledger:worktrees prune refuses a name that two linked worktrees share', a
 test('/ledger:worktrees prints a usage line for arguments it does not know', async ($, on) => {
   on('session.cwd', async () => ({ value: REPO }))
   on('process.run', fakeRun(pruneReplies()))
-  for (const args of ['prune', 'prune --yes', 'clean']) {
+  for (const args of ['prune', 'prune --yes', 'prune --dry-run', 'clean']) {
     const { text } = await $.command.run({ command: 'ledger:worktrees', args })
-    expect(text).toBe('Usage: `/ledger:worktrees`, `/ledger:worktrees prune <name> [--yes]`, `/ledger:worktrees derived-data` or `/ledger:worktrees prune-orphans [--yes]`')
+    expect(text).toBe('Usage: `/ledger:worktrees`, `/ledger:worktrees prune <name> [--dry-run]`, `/ledger:worktrees derived-data` or `/ledger:worktrees prune-orphans [--dry-run]`')
   }
 })
 
-test('parseCommand reads derived-data and prune-orphans [--yes], with no other words', () => {
+test('parseCommand reads derived-data and prune-orphans [--dry-run], with no other words', () => {
   expect(parseCommand('derived-data')).toEqual({ kind: 'derived-data' })
   expect(parseCommand(' derived-data ')).toEqual({ kind: 'derived-data' })
-  expect(parseCommand('prune-orphans')).toEqual({ kind: 'prune-orphans', confirmed: false })
-  expect(parseCommand(' prune-orphans\t--yes ')).toEqual({ kind: 'prune-orphans', confirmed: true })
-  for (const args of ['derived-data extra', 'derived-data --yes', 'prune-orphans extra', 'prune-orphans --yes extra', 'prune-orphans --force', 'prune-orphansx', 'derived-datax']) {
+  expect(parseCommand('prune-orphans')).toEqual({ kind: 'prune-orphans', dryRun: false })
+  expect(parseCommand(' prune-orphans\t--dry-run ')).toEqual({ kind: 'prune-orphans', dryRun: true })
+  expect(parseCommand('prune-orphans --yes')).toEqual(parseCommand('prune-orphans'))
+  for (const args of ['derived-data extra', 'derived-data --dry-run', 'prune-orphans extra', 'prune-orphans --dry-run extra', 'prune-orphans --force', 'prune-orphansx', 'derived-datax']) {
     expect(parseCommand(args)).toEqual({ kind: 'usage' })
   }
 })
 
 test('parseCommand still reads prune with a space before the name as a prune, never as prune-orphans', () => {
-  expect(parseCommand('prune -orphans')).toEqual({ kind: 'prune', name: '-orphans', confirmed: false })
-  expect(parseCommand('prune prune-orphans --yes')).toEqual({ kind: 'prune', name: 'prune-orphans', confirmed: true })
+  expect(parseCommand('prune -orphans')).toEqual({ kind: 'prune', name: '-orphans', dryRun: false })
+  expect(parseCommand('prune prune-orphans --dry-run')).toEqual({ kind: 'prune', name: 'prune-orphans', dryRun: true })
 })
 
 test('parseMainWorktree reads the first worktree git lists, which is the main checkout', () => {
@@ -1062,7 +1083,7 @@ test('/ledger:worktrees derived-data groups every DerivedData folder by where it
       '| SDKExplicitPrecompiledModules | 1.0 |',
       '',
       'An orphan was built from a project that no longer exists on disk.',
-      'Run `/ledger:worktrees prune-orphans --yes` to delete the orphans.',
+      'Run `/ledger:worktrees prune-orphans` to delete the orphans.',
     ].join('\n'),
   )
   expect(rmCalls(argvs)).toEqual([])
@@ -1078,14 +1099,14 @@ test('/ledger:worktrees derived-data says so when DerivedData has no folders or 
   expect(text).toBe('No folders in ~/Library/Developer/Xcode/DerivedData.')
 })
 
-test('/ledger:worktrees prune-orphans lists only the orphans and deletes nothing', async ($, on) => {
+test('/ledger:worktrees prune-orphans --dry-run lists only the orphans and deletes nothing', async ($, on) => {
   const { argvs, run } = recording(derivedDataReplies())
   on('session.cwd', async () => ({ value: REPO }))
   on('process.run', run)
   on('fs.exists', fakeXcodeExists)
   on('fs.list', fakeXcodeList)
   mock.env(on, { HOME })
-  const { text } = await $.command.run({ command: 'ledger:worktrees', args: 'prune-orphans' })
+  const { text } = await $.command.run({ command: 'ledger:worktrees', args: 'prune-orphans --dry-run' })
   expect(text).toBe(
     [
       '**Prune orphans in ~/Library/Developer/Xcode/DerivedData** · dry run · 1.0 GB in 2 folders',
@@ -1093,13 +1114,26 @@ test('/ledger:worktrees prune-orphans lists only the orphans and deletes nothing
       ...ORPHAN_TABLE,
       '',
       'An orphan was built from a project that no longer exists on disk.',
-      'Run `/ledger:worktrees prune-orphans --yes` to delete them.',
+      'Run `/ledger:worktrees prune-orphans` to delete them.',
     ].join('\n'),
   )
   expect(rmCalls(argvs)).toEqual([])
 })
 
-test('/ledger:worktrees prune-orphans --yes runs rm -rf -- on each orphan and on no other folder', async ($, on) => {
+test('/ledger:worktrees prune-orphans runs rm -rf -- on each orphan and on no other folder', async ($, on) => {
+  const { argvs, run } = recording(derivedDataReplies())
+  on('session.cwd', async () => ({ value: REPO }))
+  on('process.run', run)
+  on('fs.exists', fakeXcodeExists)
+  on('fs.list', fakeXcodeList)
+  on('fs.stat', fakeRealFs())
+  mock.env(on, { HOME })
+  const { text } = await $.command.run({ command: 'ledger:worktrees', args: 'prune-orphans' })
+  expect(text).toBe(['**Pruned orphans in ~/Library/Developer/Xcode/DerivedData** · 1.0 GB freed in 2 folders', '', ...ORPHAN_TABLE].join('\n'))
+  expect(rmCalls(argvs)).toEqual([rm(GONE_A), rm(GONE_B)])
+})
+
+test('/ledger:worktrees prune-orphans --yes deletes the same as no flag', async ($, on) => {
   const { argvs, run } = recording(derivedDataReplies())
   on('session.cwd', async () => ({ value: REPO }))
   on('process.run', run)
@@ -1108,11 +1142,11 @@ test('/ledger:worktrees prune-orphans --yes runs rm -rf -- on each orphan and on
   on('fs.stat', fakeRealFs())
   mock.env(on, { HOME })
   const { text } = await $.command.run({ command: 'ledger:worktrees', args: 'prune-orphans --yes' })
-  expect(text).toBe(['**Pruned orphans in ~/Library/Developer/Xcode/DerivedData** · 1.0 GB freed in 2 folders', '', ...ORPHAN_TABLE].join('\n'))
+  expect(text.split('\n')[0]).toBe('**Pruned orphans in ~/Library/Developer/Xcode/DerivedData** · 1.0 GB freed in 2 folders')
   expect(rmCalls(argvs)).toEqual([rm(GONE_A), rm(GONE_B)])
 })
 
-test('/ledger:worktrees prune-orphans --yes skips a folder whose project came back before deletion, and a symbolic link', async ($, on) => {
+test('/ledger:worktrees prune-orphans skips a folder whose project came back before deletion, and a symbolic link', async ($, on) => {
   const { argvs, run } = recording(derivedDataReplies())
   let goneAsked = 0
   on('session.cwd', async () => ({ value: REPO }))
@@ -1125,7 +1159,7 @@ test('/ledger:worktrees prune-orphans --yes skips a folder whose project came ba
   on('fs.list', fakeXcodeList)
   on('fs.stat', fakeRealFs({ links: [GONE_B] }))
   mock.env(on, { HOME })
-  const { text } = await $.command.run({ command: 'ledger:worktrees', args: 'prune-orphans --yes' })
+  const { text } = await $.command.run({ command: 'ledger:worktrees', args: 'prune-orphans' })
   expect(text).toBe(
     [
       '**Pruned orphans in ~/Library/Developer/Xcode/DerivedData** · 0.0 GB freed in 0 folders',
@@ -1137,7 +1171,7 @@ test('/ledger:worktrees prune-orphans --yes skips a folder whose project came ba
   expect(rmCalls(argvs)).toEqual([])
 })
 
-test('/ledger:worktrees prune-orphans --yes skips an orphan whose real path is not directly inside the real DerivedData', async ($, on) => {
+test('/ledger:worktrees prune-orphans skips an orphan whose real path is not directly inside the real DerivedData', async ($, on) => {
   const { argvs, run } = recording(derivedDataReplies())
   on('session.cwd', async () => ({ value: REPO }))
   on('process.run', run)
@@ -1145,7 +1179,7 @@ test('/ledger:worktrees prune-orphans --yes skips an orphan whose real path is n
   on('fs.list', fakeXcodeList)
   on('fs.stat', fakeRealFs({ realPath: path => (path === GONE_A ? '/elsewhere/Gone-a' : path) }))
   mock.env(on, { HOME })
-  const { text } = await $.command.run({ command: 'ledger:worktrees', args: 'prune-orphans --yes' })
+  const { text } = await $.command.run({ command: 'ledger:worktrees', args: 'prune-orphans' })
   expect(text.split('\n').at(-1)).toBe(`Skipped ${GONE_A}: it resolves to /elsewhere/Gone-a, which is not directly inside ${DERIVED_DATA}.`)
   expect(rmCalls(argvs)).toEqual([rm(GONE_B)])
 })
@@ -1157,7 +1191,7 @@ test('/ledger:worktrees prune-orphans says so when there are no orphans', async 
   on('fs.exists', async () => ({ value: true }))
   on('fs.list', fakeXcodeList)
   mock.env(on, { HOME })
-  const { text } = await $.command.run({ command: 'ledger:worktrees', args: 'prune-orphans --yes' })
+  const { text } = await $.command.run({ command: 'ledger:worktrees', args: 'prune-orphans' })
   expect(text).toBe('Nothing to prune: no orphans in ~/Library/Developer/Xcode/DerivedData.')
   expect(rmCalls(argvs)).toEqual([])
 })
@@ -1223,19 +1257,19 @@ test('/ledger:worktrees derived-data shows a folder whose disk is not connected 
       ...GONE_SSD_TABLE,
       '',
       'An orphan was built from a project that no longer exists on disk.',
-      'Run `/ledger:worktrees prune-orphans --yes` to delete the orphans.',
+      'Run `/ledger:worktrees prune-orphans` to delete the orphans.',
     ].join('\n'),
   )
   expect(rmCalls(argvs)).toEqual([])
 })
 
-test('/ledger:worktrees prune-orphans leaves out a folder whose disk is not connected', async ($, on) => {
+test('/ledger:worktrees prune-orphans --dry-run leaves out a folder whose disk is not connected', async ($, on) => {
   on('session.cwd', async () => ({ value: REPO }))
   on('process.run', fakeRun(volumeReplies()))
   on('fs.exists', fakeVolumeExists)
   on('fs.list', xcodeList(VOLUME_FOLDERS))
   mock.env(on, { HOME })
-  const { text } = await $.command.run({ command: 'ledger:worktrees', args: 'prune-orphans' })
+  const { text } = await $.command.run({ command: 'ledger:worktrees', args: 'prune-orphans --dry-run' })
   expect(text).toBe(
     [
       '**Prune orphans in ~/Library/Developer/Xcode/DerivedData** · dry run · 1.0 GB in 1 folder',
@@ -1243,12 +1277,12 @@ test('/ledger:worktrees prune-orphans leaves out a folder whose disk is not conn
       ...GONE_SSD_TABLE,
       '',
       'An orphan was built from a project that no longer exists on disk.',
-      'Run `/ledger:worktrees prune-orphans --yes` to delete them.',
+      'Run `/ledger:worktrees prune-orphans` to delete them.',
     ].join('\n'),
   )
 })
 
-test('/ledger:worktrees prune-orphans --yes never deletes a folder whose disk is not connected', async ($, on) => {
+test('/ledger:worktrees prune-orphans never deletes a folder whose disk is not connected', async ($, on) => {
   const { argvs, run } = recording(volumeReplies())
   on('session.cwd', async () => ({ value: REPO }))
   on('process.run', run)
@@ -1256,12 +1290,12 @@ test('/ledger:worktrees prune-orphans --yes never deletes a folder whose disk is
   on('fs.list', xcodeList(VOLUME_FOLDERS))
   on('fs.stat', fakeRealFs())
   mock.env(on, { HOME })
-  const { text } = await $.command.run({ command: 'ledger:worktrees', args: 'prune-orphans --yes' })
+  const { text } = await $.command.run({ command: 'ledger:worktrees', args: 'prune-orphans' })
   expect(text).toBe(['**Pruned orphans in ~/Library/Developer/Xcode/DerivedData** · 1.0 GB freed in 1 folder', '', ...GONE_SSD_TABLE].join('\n'))
   expect(rmCalls(argvs)).toEqual([rm(GONE_SSD)])
 })
 
-test('/ledger:worktrees prune-orphans --yes skips an orphan whose disk was disconnected before deletion', async ($, on) => {
+test('/ledger:worktrees prune-orphans skips an orphan whose disk was disconnected before deletion', async ($, on) => {
   const { argvs, run } = recording(volumeReplies())
   let ssdAsked = 0
   on('session.cwd', async () => ({ value: REPO }))
@@ -1274,7 +1308,7 @@ test('/ledger:worktrees prune-orphans --yes skips an orphan whose disk was disco
   on('fs.list', xcodeList(VOLUME_FOLDERS))
   on('fs.stat', fakeRealFs())
   mock.env(on, { HOME })
-  const { text } = await $.command.run({ command: 'ledger:worktrees', args: 'prune-orphans --yes' })
+  const { text } = await $.command.run({ command: 'ledger:worktrees', args: 'prune-orphans' })
   expect(text.split('\n').at(-1)).toBe(`Skipped ${GONE_SSD}: it is no longer an orphan.`)
   expect(rmCalls(argvs)).toEqual([])
 })
@@ -1302,7 +1336,7 @@ test('/ledger:worktrees derived-data puts a folder whose /Volumes folder is only
   expect(text).toContain(['**Orphan** · 2.0 GB in 2 folders', '', '| Folder | Size GB |', '|---|---:|', '| Gone-ssd | 1.0 |', '| Gone-boot | 1.0 |'].join('\n'))
 })
 
-test('/ledger:worktrees prune-orphans --yes deletes the orphans on a mounted disk and on the boot disk link, and never a folder whose /Volumes folder is only left behind', async ($, on) => {
+test('/ledger:worktrees prune-orphans deletes the orphans on a mounted disk and on the boot disk link, and never a folder whose /Volumes folder is only left behind', async ($, on) => {
   const { argvs, run } = recording(volumeReplies(STALE_FOLDERS))
   on('session.cwd', async () => ({ value: REPO }))
   on('process.run', run)
@@ -1310,6 +1344,6 @@ test('/ledger:worktrees prune-orphans --yes deletes the orphans on a mounted dis
   on('fs.list', xcodeList(STALE_FOLDERS))
   on('fs.stat', fakeBootLink)
   mock.env(on, { HOME })
-  await $.command.run({ command: 'ledger:worktrees', args: 'prune-orphans --yes' })
+  await $.command.run({ command: 'ledger:worktrees', args: 'prune-orphans' })
   expect(rmCalls(argvs)).toEqual([rm(GONE_BOOT), rm(GONE_SSD)])
 })

@@ -184,5 +184,5 @@ if [ -n "$delete_sha" ]; then
 fi
 
 if [ -n "$marked" ] && [ -z "$(active_children "$parent_ledger")" ]; then
-  echo "Parent $parent has no active children left. Retire it with /ledger:retire $parent --yes."
+  echo "Parent $parent has no active children left. Retire it with /ledger:retire $parent."
 fi

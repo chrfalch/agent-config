@@ -108,7 +108,7 @@ type World = {
   writeLedger: (text: string) => void
   /** Every process run, with the folder it ran in. */
   runs: Run[]
-  /** Makes fs.stat fail for `folder` and everything in it, as after /ledger:retire --yes removed the worktree. */
+  /** Makes fs.stat fail for `folder` and everything in it, as after /ledger:retire removed the worktree. */
   removeFolder: (folder: string) => void
 }
 
@@ -345,6 +345,15 @@ test('/ledger:help prints one line per /ledger command, in order, without a mode
   expect(isMarkdownReached()).toBe(false)
 })
 
+test('/ledger:help says /ledger:retire retires, and names --dry-run and --force but not --yes', async ($, on) => {
+  world(on, '/repo', [], 'ledger:help')
+  const { text } = await $.command.run({ command: 'ledger:help', args: '' })
+  const retire = text.split('\n').find(line => line.startsWith('- `/ledger:retire'))
+  expect(retire).toBe(
+    "- `/ledger:retire [<slug>]` — Archive a task's ledger, remove its worktree, and delete its branch when all of its commits are merged. `--dry-run` only shows what it would do. Uncommitted changes and unmerged work need `--force`.",
+  )
+})
+
 for (const args of ['', '   ']) {
   test(`/ledger:go with ${args ? 'only spaces' : 'no slug'} prints the usage and clears nothing`, async ($, on) => {
     const { calls, isMarkdownReached } = world(on, `${WORKTREES}/fix-login`, [FIX_LOGIN, NEW_API], 'ledger:go')
@@ -448,7 +457,7 @@ test('/ledger:go names the failed prompt after the clear worked', async ($, on) 
   expect(calls.at(-1)).toMatch(/^log: \/ledger:go cleared the session but could not send "go new-api": .+\. Say: go new-api\.$/)
 })
 
-// As /ledger:retire --yes leaves a session that ran inside the worktree it removed; every folder above it still exists.
+// As /ledger:retire leaves a session that ran inside the worktree it removed; every folder above it still exists.
 const GONE = `${WORKTREES}/gone`
 
 function recordArmed(on: On): unknown[] {
@@ -544,9 +553,9 @@ test('/ledger:close in a folder that exists but has no ledger still answers with
 })
 
 const DONE = LEDGER.replace('| todo |', '| done |')
-const MERGED_LINE = 'Task fast-steps is finished and merged. Retire it with `/ledger:retire fast-steps --yes`.'
-const OPEN_PR_LINE = 'Task fast-steps is finished. After PR #31 merges, run `/ledger:retire fast-steps --yes`.'
-const UNMERGED_LINE = 'Task fast-steps is finished. Run `/ledger:retire fast-steps` to see what blocks retiring it.'
+const MERGED_LINE = 'Task fast-steps is finished and merged. Retire it with `/ledger:retire fast-steps`.'
+const OPEN_PR_LINE = 'Task fast-steps is finished. After PR #31 merges, run `/ledger:retire fast-steps`.'
+const UNMERGED_LINE = 'Task fast-steps is finished. Run `/ledger:retire fast-steps --dry-run` to see what blocks retiring it.'
 
 test('retireHint tells a merged task to retire', () => {
   expect(retireHint('fast-steps', { ahead: 0, prs: [] })).toBe(MERGED_LINE)

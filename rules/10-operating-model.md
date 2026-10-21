@@ -165,9 +165,9 @@ transcript is re-billed on every turn; the ledger is read once per fresh session
 Absolute. A worktree is disposable. Its ledger is the record of the task.
 
 - Retire a worktree with `/ledger:retire <slug>`. Ask the operator to type it.
-  A hook answers it, so you cannot invoke it yourself. Alone it only shows what
-  it would archive and remove. With `--yes` it runs `bin/cc-worktree-retire`.
-  Uncommitted changes or an unmerged branch also need `--force`.
+  A hook answers it, so you cannot invoke it yourself. It runs
+  `bin/cc-worktree-retire`. With `--dry-run` it only shows what it would
+  archive and remove. Uncommitted changes or an unmerged branch need `--force`.
 - `bin/cc-worktree-retire` copies `.claude/ledger.md` to
   `~/.claude/ledger-archive/<repo>/<YYYY-MM-DD>-<slug>.md`, checks the copy,
   then runs `git worktree remove`. Running it twice archives once. It also

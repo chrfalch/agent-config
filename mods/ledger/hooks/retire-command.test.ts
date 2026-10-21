@@ -49,9 +49,10 @@ function worktreeReplies(worktree: string, branch: string, overrides: WorktreeRe
   )
 }
 
-type Setup = { cwd: string; ledgers?: string[]; titles?: Record<string, string>; replies?: Replies }
+/** `removed` is a folder fs.stat no longer finds, as after /ledger:retire --yes removed the worktree. */
+type Setup = { cwd: string; ledgers?: string[]; titles?: Record<string, string>; replies?: Replies; removed?: string }
 
-function world(on: On, { cwd, ledgers = [ledgerOf(FIX_LOGIN), ledgerOf(NEW_API)], titles = {}, replies: extra = {} }: Setup): Call[] {
+function world(on: On, { cwd, ledgers = [ledgerOf(FIX_LOGIN), ledgerOf(NEW_API)], titles = {}, replies: extra = {}, removed }: Setup): Call[] {
   const calls: Call[] = []
   const known: Replies = {
     ...replies([LEDGER_LIST, ok(ledgers.join('\n'))], [retireScript(FIX_LOGIN), ok(SCRIPT_OUTPUT)], [retireScript(FIX_LOGIN, '--force'), ok(SCRIPT_OUTPUT)],
@@ -67,7 +68,9 @@ function world(on: On, { cwd, ledgers = [ledgerOf(FIX_LOGIN), ledgerOf(NEW_API)]
     calls.push({ argv: e.argv, cwd: e.init?.cwd })
     return known[argvKey(e.argv)] ?? { deny: `unexpected command: ${JSON.stringify(e.argv)}` }
   })
-  on('fs.stat', async () => ({ value: { kind: 'file', size: 0, mtimeMs: 0, isLink: false } }))
+  on('fs.stat', async (_, e) =>
+    e.path === removed ? { deny: `ENOENT: no such file or directory, stat '${e.path}'` } : { value: { kind: 'file', size: 0, mtimeMs: 0, isLink: false } },
+  )
   on('fs.read', async (_, e) => {
     const title = titles[e.path] ?? (e.path === ledgerOf(FIX_LOGIN) ? 'fast-steps' : 'new-api')
     return { value: `# Task ledger — ${title}\n\n## Goal\nSomething.\n` }
@@ -311,6 +314,15 @@ test('/ledger:retire --yes from inside the worktree says the session lost its wo
   expect(text.split('\n').at(-1)).toBe(
     "This session's working directory was removed with the worktree. Continue another task with /ledger:go <slug>, or run /ledger:close.",
   )
+})
+
+test('/ledger:retire --yes from a session folder removed earlier looks up ledgers from the folder above it', async ($, on) => {
+  const gone = '/repo/.claude/worktrees/gone'
+  const calls = world(on, { cwd: gone, removed: gone })
+  const { text } = await $.command.run({ command: 'ledger:retire', args: 'fast-steps --yes' })
+  expect(text.split('\n')[0]).toBe('**Retired fast-steps**')
+  expect(text).not.toContain('working directory')
+  expect(calls.filter(({ argv }) => argv[1]?.endsWith('/hooks/ledger-list.sh')).map(({ cwd }) => cwd)).toEqual(['/repo/.claude/worktrees'])
 })
 
 test('/ledger:retire --yes from the main checkout leaves out the working directory note', async ($, on) => {

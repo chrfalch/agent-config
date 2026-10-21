@@ -2,8 +2,19 @@
 description: Write the latest results to this task's ledger, then clear the session
 ---
 
-Update `.claude/ledger.md` in the current working directory. It exists: the
-command checked that before this prompt ran. Do not start a task.
+The ledger hook replaces the operator's argument with one line:
+
+```
+$ARGUMENTS
+```
+
+If the line is `ledger: none`, this session's folder no longer exists, so
+there is no ledger to update. Write nothing and create nothing. Reply with one
+line: there was no ledger to update, and the session clears automatically
+after this turn. Stop there.
+
+Otherwise the line is `ledger: <path>`. Update the ledger at that path. It
+exists: the command checked that before this prompt ran. Do not start a task.
 
 1. Use Edit. Never rewrite the whole file.
 2. Write facts, not narrative:

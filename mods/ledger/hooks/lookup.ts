@@ -1,7 +1,7 @@
 import type { EngineInterface, ProcessRunResult } from 'claude-code'
 
-import { folderSlug, ledgerPaths, summarize, type BranchState } from './ledger'
-import { defaultBranchOf, isInside, parseCount, stateFailedMessage } from './retire'
+import { activeLedger, folderSlug, ledgerPaths, summarize, type ActiveLedger, type BranchState } from './ledger'
+import { defaultBranchOf, dirname, isInside, parseCount, stateFailedMessage } from './retire'
 import { basename, parseWorktrees, type Worktree } from './worktrees'
 import { lookUpPrs } from './worktrees-command'
 
@@ -20,10 +20,35 @@ export async function run($: EngineInterface, argv: string[], cwd: string): Prom
   }
 }
 
+/**
+ * The folder to run commands in. `removed` is the session's own folder when it no longer exists, as after /ledger:retire --yes
+ * from inside the worktree; `path` is then the nearest folder above it that does.
+ */
+export type SessionFolder = { path: string; removed?: string }
+
+async function exists($: EngineInterface, path: string): Promise<boolean> {
+  return $.fs.stat(path).then(() => true, () => false)
+}
+
+export async function sessionFolder($: EngineInterface): Promise<SessionFolder> {
+  const cwd = await $.session.cwd()
+  if (await exists($, cwd)) return { path: cwd }
+  for (let folder = cwd; folder !== '/'; ) {
+    folder = dirname(folder) || '/'
+    if (await exists($, folder)) return { path: folder, removed: cwd }
+  }
+  // Not even / is there, so fs.stat itself is failing, which says nothing about the session folder.
+  return { path: cwd }
+}
+
+/** The ledger of the session's own task. A removed session folder has none: a ledger above it belongs to another task. */
+export const sessionLedger = (found: Found[], folder: SessionFolder): ActiveLedger =>
+  folder.removed === undefined ? activeLedger(found.map(({ path }) => path), folder.path) : { kind: 'none' }
+
 // The SessionStart hook's own lookup, so /ledger and the hook always agree on which ledgers exist.
 export async function findLedgers($: EngineInterface): Promise<Found[] | { error: string }> {
   const script = `${$.plugin.root}/../../hooks/ledger-list.sh`
-  const cwd = await $.session.cwd()
+  const { path: cwd } = await sessionFolder($)
   let result: ProcessRunResult
   try {
     result = await $.process.run(['bash', script, 'paths'], { cwd })

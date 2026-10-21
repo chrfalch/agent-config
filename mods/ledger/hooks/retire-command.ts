@@ -1,7 +1,7 @@
 import type { EngineInterface } from 'claude-code'
 
-import { activeLedger, folderSlug, severalLedgersMessage, sharedSlugMessage, unknownTaskMessage } from './ledger'
-import { findLedgers, readBranch, run, titleSlug } from './lookup'
+import { folderSlug, severalLedgersMessage, sharedSlugMessage, unknownTaskMessage } from './ledger'
+import { findLedgers, readBranch, run, sessionFolder, sessionLedger, titleSlug, type SessionFolder } from './lookup'
 import {
   dirname,
   formatPlan,
@@ -28,14 +28,14 @@ type Target = { slug: string; ledgerPath: string } | { text: string }
 
 const UNRETIRED = 'Nothing was retired.'
 
-async function findTarget($: EngineInterface, slug: string | null, cwd: string): Promise<Target> {
+async function findTarget($: EngineInterface, slug: string | null, folder: SessionFolder): Promise<Target> {
   const found = await findLedgers($)
   if ('error' in found) return { text: `Could not list task ledgers. ${found.error}` }
   const paths = found.map(({ path }) => path)
   if (slug === null) {
-    const active = activeLedger(paths, cwd)
-    if (active.kind === 'none') return { text: noTaskMessage(cwd) }
-    if (active.kind === 'several') return { text: severalLedgersMessage(cwd, active.paths.map(folderSlug), UNRETIRED) }
+    const active = sessionLedger(found, folder)
+    if (active.kind === 'none') return { text: noTaskMessage(folder.removed ?? folder.path) }
+    if (active.kind === 'several') return { text: severalLedgersMessage(folder.path, active.paths.map(folderSlug), UNRETIRED) }
     return { slug: await titleSlug($, active.path), ledgerPath: active.path }
   }
   const slugs = await Promise.all(paths.map(path => titleSlug($, path)))
@@ -83,7 +83,7 @@ export async function readState($: EngineInterface, path: string): Promise<Workt
 export async function retireCommand($: EngineInterface, args: string): Promise<string> {
   const command = parseRetireArgs(args)
   if (command.kind === 'usage') return RETIRE_USAGE
-  const target = await findTarget($, command.slug, await $.session.cwd())
+  const target = await findTarget($, command.slug, await sessionFolder($))
   if ('text' in target) return target.text
   return retireLedger($, target.slug, target.ledgerPath, command)
 }
@@ -108,5 +108,6 @@ export async function retireLedger(
   const { stdout, failure } = await run($, ['bash', script, state.path, ...flags], state.mainCheckout)
   if (failure !== undefined) return formatRetireFailed(failure, stdout)
   const kept = deletesBranch || state.branch === '' ? undefined : { branch: state.branch, reason: keptBranchReason(state) }
+  // The session's own folder, not sessionFolder's fallback: the question is whether this retire removed it.
   return formatRetired(slug, stdout, isInside(await $.session.cwd(), state.path), kept)
 }

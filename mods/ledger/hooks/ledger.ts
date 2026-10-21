@@ -212,6 +212,10 @@ export function severalLedgersMessage(cwd: string, slugs: string[], outcome = UN
   return `Several task ledgers hold ${cwd}: ${slugs.join(', ')}. ${outcome} Run this command from a task worktree that is not inside another one.`
 }
 
+export function removedFolderMessage(folder: string): string {
+  return `The session folder ${folder} no longer exists, so this session has no task ledger. ${UNCHANGED} Continue another task with /ledger:go <slug>, or run /ledger:close.`
+}
+
 export function lookupFailedMessage(error: string): string {
   return `Could not check this task's ledger. ${error} ${UNCHANGED}`
 }

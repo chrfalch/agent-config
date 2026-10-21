@@ -11,7 +11,7 @@ import {
   readArchived,
   type ArchivedLedger,
 } from './archive'
-import { message } from './lookup'
+import { message, sessionFolder } from './lookup'
 import { basename } from './worktrees'
 
 type Entry = { name: string; kind: string }
@@ -76,7 +76,7 @@ export async function archiveCommand($: EngineInterface, args: string): Promise<
     if ('error' in entries) return entries.error
     repos = entries.filter(({ kind }) => kind === 'dir').map(({ name }) => name)
   } else {
-    const found = await repoName($, await $.session.cwd())
+    const found = await repoName($, (await sessionFolder($)).path)
     if ('error' in found) return found.error
     repo = found.name
     repos = [repo]

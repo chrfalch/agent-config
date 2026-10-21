@@ -2,7 +2,6 @@ import type { EngineInterface, Register } from 'claude-code'
 
 import { allCommand } from './all-command'
 import {
-  activeLedger,
   backlogUncheckedMessage,
   folderSlug,
   formatAll,
@@ -18,6 +17,7 @@ import {
   parkMarker,
   promotedThenFailedMessage,
   promoteFailedMessage,
+  removedFolderMessage,
   retireHint,
   severalLedgersMessage,
   sharedSlugMessage,
@@ -30,11 +30,12 @@ import {
 } from './ledger'
 import { archiveCommand } from './archive-command'
 import { dashboardCommand } from './dashboard-command'
-import { findLedgers, lookUpBranch, lookUpOtherWorktrees, message, titleSlug, type Found } from './lookup'
+import { findLedgers, lookUpBranch, lookUpOtherWorktrees, message, sessionFolder, sessionLedger, titleSlug, type Found } from './lookup'
 import { familyOf, parentCommand } from './parent-command'
 import { mainCheckout, otherRepositoryTask, promoteBacklogTask, registeredTasks } from './registry'
 import { worktreeOf } from './retire'
 import { retireCommand } from './retire-command'
+import { basename } from './worktrees'
 import { worktreesCommand } from './worktrees-command'
 
 const armed = { plugin: 'ledger', key: 'armed' } as const
@@ -72,17 +73,28 @@ export const register: Register = on => {
     return { text: formatAll(summaries) }
   })
 
-  // The markdown command writes to the ledger, so it must not run unless exactly one ledger is active.
+  // The markdown command writes to the ledger, so it must not run unless exactly one ledger is active. The exception is
+  // /ledger:close after the session folder was removed: told there is no ledger, it writes nothing, and its turn's end clears.
   on('command.run', { command: ['ledger:close', 'ledger:next'] }, async ($, e, next) => {
     const found = await findLedgers($)
     if ('error' in found) return { text: lookupFailedMessage(found.error) }
-    const cwd = await $.session.cwd()
-    const active = activeLedger(found.map(ledger => ledger.path), cwd)
-    if (active.kind === 'none') return { text: noLedgerMessage(cwd) }
-    if (active.kind === 'several') return { text: severalLedgersMessage(cwd, active.paths.map(folderSlug)) }
+    const folder = await sessionFolder($)
+    const active = sessionLedger(found, folder)
+    if (active.kind === 'none') {
+      if (folder.removed === undefined) return { text: noLedgerMessage(folder.path) }
+      if (e.command === 'ledger:next') return { text: removedFolderMessage(folder.removed) }
+      await $.state.set(armed, { mode: 'close', slug: basename(folder.removed) })
+      return next({ ...e, args: 'ledger: none' })
+    }
+    if (active.kind === 'several') return { text: severalLedgersMessage(folder.path, active.paths.map(folderSlug)) }
     const slug = await titleSlug($, active.path)
-    await $.state.set(armed, e.command === 'ledger:next' ? { mode: 'next', slug, ledger: active.path } : { mode: 'close', slug })
-    return next(e)
+    if (e.command === 'ledger:next') {
+      await $.state.set(armed, { mode: 'next', slug, ledger: active.path })
+      return next(e)
+    }
+    await $.state.set(armed, { mode: 'close', slug })
+    // Set here, so only this hook can tell close.md that there is no ledger.
+    return next({ ...e, args: `ledger: ${active.path}` })
   }).catch(async ($, e, next) => {
     await $.state.set(armed, null)
     return next.called ? next(e) : { text: lookupFailedMessage(next.error.message ?? next.error.kind) }
@@ -99,7 +111,8 @@ export const register: Register = on => {
     const found = await findLedgers($)
     if ('error' in found) return { text: lookupFailedMessage(found.error) }
     const tasks = await Promise.all(found.map(async ledger => summarize(await $.fs.read(ledger.path), folderSlug(ledger.path), 0)))
-    const cwd = await $.session.cwd()
+    const folder = await sessionFolder($)
+    const cwd = folder.path
     const local = found.filter((_, index) => tasks[index]?.slug === target)
     const matches = uniqueByPath([...local, ...(await lookUpOtherWorktrees($, target, cwd)).ledgers])
     const [match] = matches
@@ -110,7 +123,7 @@ export const register: Register = on => {
     const isUnregistered = match === undefined && registered.length === 0
     if (match === undefined && backlog.length === 0 && !isUnregistered) return { text: unknownTaskMessage(target, tasks) }
     if (matches.length > 1) return { text: sharedSlugMessage(target, matches.map(ledger => ledger.path)) }
-    const active = activeLedger(found.map(ledger => ledger.path), cwd)
+    const active = sessionLedger(found, folder)
     if (active.kind === 'several') return { text: severalLedgersMessage(cwd, active.paths.map(folderSlug)) }
     let ledger = match?.path
     let promotedWorktree: string | undefined
@@ -156,7 +169,8 @@ export const register: Register = on => {
     if ('error' in found) return { text: lookupFailedMessage(found.error) }
     const slugs = await Promise.all(found.map(ledger => titleSlug($, ledger.path)))
     const [first = '', ...rest] = words
-    const cwd = await $.session.cwd()
+    const folder = await sessionFolder($)
+    const cwd = folder.path
     const local = found.filter((_, index) => slugs[index] === first)
     const elsewhere = await lookUpOtherWorktrees($, first, cwd)
     const named = uniqueByPath([...local, ...elsewhere.ledgers])
@@ -169,7 +183,7 @@ export const register: Register = on => {
       return { text: slug === undefined ? worktreeWithoutLedgerMessage(first, path) : worktreeTaskMessage(first, path, slug) }
     }
     const marker = parkMarker(new Date(), reason)
-    const active = activeLedger(found.map(ledger => ledger.path), cwd)
+    const active = sessionLedger(found, folder)
     if (target && !(active.kind === 'one' && active.path === target.path)) {
       try {
         await $.fs.write(target.path, park(await $.fs.read(target.path), marker))
@@ -178,7 +192,7 @@ export const register: Register = on => {
       }
       return { text: `Parked ${first}. ${marker}` }
     }
-    if (active.kind === 'none') return { text: noLedgerMessage(cwd) }
+    if (active.kind === 'none') return { text: folder.removed === undefined ? noLedgerMessage(cwd) : removedFolderMessage(folder.removed) }
     if (active.kind === 'several') return { text: severalLedgersMessage(cwd, active.paths.map(folderSlug)) }
     const slug = await titleSlug($, active.path)
     await $.state.set(armed, { mode: 'park', slug, ledger: active.path, marker })

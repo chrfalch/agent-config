@@ -92,7 +92,7 @@ const fail = (status: number, error: string): Reply => ({ status, body: { error 
 const isReply = <T extends object>(value: T | Reply): value is Reply => 'body' in value;
 
 export type Row = { id: string; repo: string; slug: string; status: string; updated: string; next: string; branch: string };
-export type Filter = { repo?: string; status?: string; q?: string };
+export type Filter = { repo?: string; status?: string[]; q?: string };
 
 /**
  * What a retire preview showed. A retire goes ahead only while its task still looks the same. The real paths count too,
@@ -173,7 +173,7 @@ function ledgersOf(mod: Mod) {
     const all = await rows(entries);
     const needle = q?.trim().toLowerCase() ?? '';
     const found = needle === '' ? entries.map(() => true) : await Promise.all(entries.map(entry => contains(entry, needle)));
-    const ledgers = all.filter((row, index) => (!repo || row.repo === repo) && (!status || row.status === status) && found[index]);
+    const ledgers = all.filter((row, index) => (!repo || row.repo === repo) && (!status?.length || status.includes(row.status)) && found[index]);
     return { ledgers, total: all.length, repos: unique(all.map(row => row.repo)), statuses: unique(all.map(row => row.status)) };
   }
 

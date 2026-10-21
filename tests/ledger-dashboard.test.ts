@@ -345,6 +345,28 @@ test('the repo, status and search filters narrow the list and keep every filter 
   assert.deepEqual(keys((await list(server, '?q=nothing-has-this')).ledgers), []);
 });
 
+test('the status filter takes several statuses and lists the tasks of any of them', async t => {
+  const { home, stubBin } = fixture(t);
+  const server = await startForeground(t, home, stubBin);
+  const all = (await list(server)).ledgers;
+  const ofStatus = (...statuses: string[]): string[] => keys(all.filter(row => statuses.includes(row.status)));
+  assert.ok(ofStatus('active').length > 0 && ofStatus('parked').length > 0);
+  assert.ok(ofStatus('active', 'parked').length < all.length);
+
+  assert.deepEqual(keys((await list(server, '?status=active&status=parked')).ledgers), ofStatus('active', 'parked'));
+  assert.deepEqual(keys((await list(server, '?status=parked')).ledgers), ofStatus('parked'));
+  assert.deepEqual(keys((await list(server, '?status=')).ledgers), keys(all));
+  assert.deepEqual(keys((await list(server, '?status=&status=parked')).ledgers), ofStatus('parked'));
+});
+
+test('the page offers the statuses as a group of checkboxes, not a single select', async t => {
+  const { home, stubBin } = fixture(t);
+  const server = await startForeground(t, home, stubBin);
+  const page = (await request(server, 'GET', '/', { key: null })).text;
+  assert.doesNotMatch(page, /<select[^>]*id="status"/);
+  assert.match(page, /<fieldset[^>]*id="status"[^>]*>\s*<legend>Status<\/legend>/);
+});
+
 test('the detail renders the ledger as escaped Markdown with its worktree, branch, PRs and go command', async t => {
   const { home, stubBin, fixLogin } = fixture(t);
   const server = await startForeground(t, home, stubBin);

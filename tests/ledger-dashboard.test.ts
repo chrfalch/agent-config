@@ -25,6 +25,7 @@ type Detail = {
   branch: string;
   prs: { state: string; number: number }[] | null;
   go: string | null;
+  parked: boolean;
 };
 type Preview = { text: string; blockers: string[]; token: string };
 type Retired = { retired: boolean; text: string };
@@ -311,6 +312,24 @@ test('a backlog task can be parked and unparked, but not retired', async t => {
   assert.equal((await json(server, 'POST', '/api/park', { id: ledger, reason: 'later' })).status, 200);
   assert.equal((await json(server, 'POST', '/api/unpark', { id: ledger })).status, 200);
   assert.equal(readFileSync(ledger, 'utf8'), FIX_LOGIN);
+});
+
+test('the detail says a parked backlog task is parked, though its status stays backlog', async t => {
+  const { home, stubBin, fixLogin } = fixture(t);
+  const ledger = ledgerOf(fixLogin);
+  const registry = path.join(home, '.claude/ledgers.json');
+  const entries: { path: string; status: string }[] = JSON.parse(readFileSync(registry, 'utf8'));
+  writeFileSync(registry, JSON.stringify(entries.map(entry => (entry.path === ledger ? { ...entry, status: 'backlog' } : entry))));
+  const server = await startForeground(t, home, stubBin);
+  const detail = async (): Promise<Detail> => (await json<Detail>(server, 'GET', detailOf(ledger))).value;
+
+  assert.equal((await detail()).parked, false);
+  assert.equal((await json(server, 'POST', '/api/park', { id: ledger, reason: 'later' })).status, 200);
+  const parked = await detail();
+  assert.equal(parked.status, 'backlog');
+  assert.equal(parked.parked, true);
+  assert.equal((await json(server, 'POST', '/api/unpark', { id: ledger })).status, 200);
+  assert.equal((await detail()).parked, false);
 });
 
 test('the repo, status and search filters narrow the list and keep every filter value', async t => {
@@ -1176,7 +1195,7 @@ function pageAnswer(pathname: string, body: Body): object {
   if (route === '/api/ledgers') return { ledgers: PAGE_ROWS, total: PAGE_ROWS.length, repos: ['app'], statuses: ['active'] };
   if (route === '/api/ledger') {
     const row = pageRow(new URLSearchParams(query));
-    return { ...row, html: '', path: row.id, worktree: '', worktreeExists: true, prs: [], go: `go ${row.slug}` };
+    return { ...row, html: '', path: row.id, worktree: '', worktreeExists: true, prs: [], go: `go ${row.slug}`, parked: false };
   }
   if (route === '/api/retire/preview') {
     const { slug } = pageRow(body);
@@ -1204,6 +1223,23 @@ test('the page retires the task whose preview it shows, and drops that preview w
   await page.byId('retire').click();
   await page.byId('force').click();
   assert.deepEqual(retires(page.sent), [{ id: PAGE_ROWS[1]?.id, token: 'token-b', force: true }]);
+});
+
+test('the page offers Unpark and no Retire for a parked backlog task, and Park for an unparked one', async () => {
+  for (const parked of [true, false]) {
+    const page = openPage((pathname, body) => {
+      const answer = pageAnswer(pathname, body);
+      return pathname.startsWith('/api/ledger?') ? { ...answer, status: 'backlog', parked } : answer;
+    });
+    await settle();
+    const [a] = page.byId('rows').children;
+    assert.ok(a);
+
+    await a.click();
+    assert.equal(page.byId('park-form').hidden, parked, `parked: ${parked}`);
+    assert.equal(page.byId('unpark').hidden, !parked, `parked: ${parked}`);
+    assert.equal(page.byId('retire').hidden, true, `parked: ${parked}`);
+  }
 });
 
 test('the page drops a preview that arrives after another task opened', async () => {

@@ -263,8 +263,8 @@ function showDetail(detail) {
   const archived = detail.go === null;
   $('actions').hidden = archived;
   $('copy').textContent = `Copy “${detail.go}”`;
-  $('park-form').hidden = detail.status === 'parked';
-  $('unpark').hidden = detail.status !== 'parked';
+  $('park-form').hidden = detail.parked;
+  $('unpark').hidden = !detail.parked;
   $('retire').hidden = detail.status === 'backlog';
   hidePreview();
   $('body').innerHTML = detail.html; // Rendered on the server from HTML-escaped text.

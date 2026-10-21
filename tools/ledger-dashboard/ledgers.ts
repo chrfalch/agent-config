@@ -3,7 +3,7 @@ import { existsSync, realpathSync } from 'node:fs';
 import { access, lstat, readFile, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { park, parkMarker, unpark } from '../../mods/ledger/hooks/ledger.js';
+import { park, parkMarker, summarize, unpark } from '../../mods/ledger/hooks/ledger.js';
 import { renderMarkdown } from './markdown.js';
 import { singleUseTokens } from './tokens.js';
 
@@ -288,6 +288,7 @@ function ledgersOf(mod: Mod) {
         prs: prs?.prs ?? null,
         ...(prs?.error && { prError: prs.error }),
         go: isArchived(entry) ? null : `go ${entry.slug}`,
+        parked: summarize(text, '', 0).parked !== undefined,
       });
     },
 

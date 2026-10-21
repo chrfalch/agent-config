@@ -11,7 +11,7 @@ import { freshHome, REPO, run } from './helpers.js';
 const LAUNCHER = path.join(REPO, 'bin/cc-ledger-dashboard');
 const CC_LEDGERS = path.join(REPO, 'bin/cc-ledgers');
 
-type Row = { id: string; repo: string; slug: string; status: string; updated: string; next: string; branch: string };
+type Row = { id: string; repo: string; slug: string; status: string; updated: string; next: string; branch: string; parent?: string; parentId?: string; nested?: boolean };
 type Listed = { ledgers: Row[]; repos: string[]; statuses: string[] };
 type Detail = {
   id: string;
@@ -509,6 +509,115 @@ test('an archived row with the slug of an active task opens the archive copy, an
     assert.equal((await request(server, 'POST', route, { body: { id: copy, ...body } })).status, 409, route);
   }
   assert.equal(readFileSync(ledgerOf(fixLogin), 'utf8'), FIX_LOGIN);
+});
+
+type Registered = { repo: string; slug: string; status: string; updated: string; path: string; parent?: string };
+
+function editRegistry(home: string, edit: (entry: Registered) => Registered): void {
+  const registry = path.join(home, '.claude/ledgers.json');
+  const entries: Registered[] = JSON.parse(readFileSync(registry, 'utf8'));
+  writeFileSync(registry, JSON.stringify(entries.map(edit)));
+}
+
+// In app, newest first: child-b of epic, fix-login, child-a of epic, epic, then the two older tasks of the fixture.
+const FAMILY: Record<string, Partial<Registered>> = {
+  'app/child-b': { updated: '2026-10-20T06:00:00.000Z', parent: 'epic' },
+  'app/fix-login': { updated: '2026-10-20T05:00:00.000Z' },
+  'app/child-a': { updated: '2026-10-20T04:00:00.000Z', parent: 'epic' },
+  'app/epic': { updated: '2026-10-20T03:00:00.000Z' },
+  'app/waiting': { updated: '2026-10-20T02:00:00.000Z' },
+  'app/old-task': { updated: '2026-10-20T01:00:00.000Z' },
+};
+
+function family(t: TestContext) {
+  const tasks = fixture(t);
+  for (const slug of ['epic', 'child-a', 'child-b']) backlogLedger(tasks.home, 'app', slug, tasks.app);
+  assert.equal(run(tasks.home, [CC_LEDGERS], 'scan').status, 0);
+  editRegistry(tasks.home, entry => ({ ...entry, ...FAMILY[`${entry.repo}/${entry.slug}`] }));
+  return { ...tasks, epic: path.join(tasks.home, '.claude/ledger-backlog/app/epic.md') };
+}
+
+const shape = (rows: Row[]): string[] => rows.map(row => `${row.nested ? '↳ ' : ''}${row.slug}`);
+
+test('a row carries the slug of its parent task from the registry, and a row without a parent has none', async t => {
+  const { home, stubBin, epic } = family(t);
+  const server = await startForeground(t, home, stubBin);
+  const rows = (await list(server, '?repo=app')).ledgers;
+  const parents = Object.fromEntries(rows.map(row => [row.slug, row.parent]));
+  assert.deepEqual(parents, { 'child-b': 'epic', 'fix-login': undefined, 'child-a': 'epic', epic: undefined, waiting: undefined, 'old-task': undefined });
+  assert.equal(rows.find(row => row.slug === 'child-a')?.parentId, epic);
+});
+
+test('each child row follows its parent row, and the groups and the children inside them stay newest first', async t => {
+  const { home, stubBin } = family(t);
+  const server = await startForeground(t, home, stubBin);
+  const rows = (await list(server, '?repo=app')).ledgers;
+  assert.deepEqual(shape(rows), ['fix-login', 'epic', '↳ child-b', '↳ child-a', 'waiting', 'old-task']);
+  assert.equal(rows.length, Object.keys(FAMILY).length);
+});
+
+test('a child whose parent the filter hides stays a normal row that names its parent, and the parent stays out of the list', async t => {
+  const { home, stubBin, epic } = family(t);
+  const server = await startForeground(t, home, stubBin);
+  const [child, ...others] = (await list(server, '?repo=app&q=child-a')).ledgers;
+  assert.deepEqual(others, []);
+  assert.equal(child?.slug, 'child-a');
+  assert.equal(child?.nested, false);
+  assert.equal(child?.parent, 'epic');
+  assert.equal(child?.parentId, epic);
+});
+
+test('a parent is looked up in the repo of its child only, though another repo has a task of that slug', async t => {
+  const { home, stubBin, fixLogin } = family(t);
+  backlogLedger(home, 'web', 'child-w', path.join(home, 'repos/web'));
+  assert.equal(run(home, [CC_LEDGERS], 'scan').status, 0);
+  editRegistry(home, entry => ({
+    ...entry,
+    ...FAMILY[`${entry.repo}/${entry.slug}`],
+    ...(entry.repo === 'app' && entry.slug === 'child-a' && { parent: 'fix-login' }),
+    ...(entry.repo === 'web' && entry.slug === 'child-w' && { parent: 'epic' }),
+  }));
+  const server = await startForeground(t, home, stubBin);
+  const rows = (await list(server)).ledgers;
+  const childA = rows.find(row => row.slug === 'child-a');
+  const childW = rows.find(row => row.slug === 'child-w');
+  assert.equal(childA?.parentId, ledgerOf(fixLogin));
+  assert.equal(childW?.parent, 'epic');
+  assert.equal(childW?.parentId, undefined);
+  assert.equal(childW?.nested, false);
+  const app = shape(rows.filter(row => row.repo === 'app'));
+  assert.deepEqual(app, ['fix-login', '↳ child-a', 'epic', '↳ child-b', 'waiting', 'old-task']);
+  const appFixLogin = rows.findIndex(row => row.id === ledgerOf(fixLogin));
+  assert.equal(rows[appFixLogin + 1]?.slug, 'child-a');
+});
+
+test('a parent resolves to the task that is not archived before an archived one of that slug, else to the archived one', async t => {
+  const { home, stubBin, epic, oldTask } = family(t);
+  const archivedEpic = path.join(home, '.claude/ledger-archive/app/2026-10-02-epic.md');
+  writeFileSync(archivedEpic, OLD_TASK.replace('old-task', 'epic'));
+  assert.equal(run(home, [CC_LEDGERS], 'scan').status, 0);
+  editRegistry(home, entry => ({
+    ...entry,
+    ...FAMILY[`${entry.repo}/${entry.slug}`],
+    ...(entry.slug === 'epic' && entry.status === 'archived' && { updated: '2026-10-20T07:00:00.000Z' }),
+    ...(entry.slug === 'child-b' && { parent: 'old-task' }),
+    ...(entry.slug === 'waiting' && { parent: 'nowhere' }),
+  }));
+  const server = await startForeground(t, home, stubBin);
+  const rows = (await list(server, '?repo=app')).ledgers;
+  const parentIds = Object.fromEntries(rows.filter(row => row.parent !== undefined).map(row => [row.slug, row.parentId]));
+  assert.deepEqual(parentIds, { 'child-a': epic, 'child-b': oldTask, waiting: undefined });
+  assert.deepEqual(shape(rows), ['epic', 'fix-login', 'epic', '↳ child-a', 'waiting', 'old-task', '↳ child-b']);
+  assert.equal(rows[2]?.id, epic);
+});
+
+test('grouping neither adds nor drops a row, so the list counts each task the filter shows once', async t => {
+  const { home, stubBin } = family(t);
+  const server = await startForeground(t, home, stubBin);
+  const all = (await list(server)).ledgers;
+  assert.equal(all.length, Object.keys(FAMILY).length + 1);
+  assert.equal(new Set(all.map(row => row.id)).size, all.length);
+  assert.deepEqual(shape((await list(server, '?repo=app&status=backlog')).ledgers), ['epic', '↳ child-b', '↳ child-a']);
 });
 
 test('an id that is not a ledger in the registry gets 404, and a missing id 400', async t => {
@@ -1204,7 +1313,7 @@ class FakeElement {
   }
   /** With a `target`, the event comes from that element inside this one, as an event that bubbles up to this one does. */
   async dispatch(type: string, target: FakeElement = this): Promise<void> {
-    const event = { currentTarget: this, target, preventDefault() {} };
+    const event = { currentTarget: this, target, preventDefault() {}, stopPropagation() {} };
     await Promise.all((this.listeners.get(type) ?? []).map(listener => listener(event)));
   }
   click(): Promise<void> {
@@ -1589,6 +1698,37 @@ test('the page says there are no ledgers when the registry is empty', async () =
   assert.deepEqual(page.sent.map(({ pathname }) => pathname), ['/api/repos']);
   assert.equal(page.byId('no-repos').hidden, false);
   assert.deepEqual(repoButtons(page), []);
+});
+
+test('the page indents a child under its parent, names the parent of a child that is not, and opens that parent from its name', async () => {
+  const [a, b, c, idea] = PAGE_ROWS;
+  assert.ok(a && b && c && idea);
+  const rows = [
+    { ...a, nested: false },
+    { ...c, parent: 'a', parentId: a.id, nested: true },
+    { ...b, parent: 'c', parentId: c.id, nested: false },
+    { ...idea, repo: 'app', parent: 'gone', nested: false },
+  ];
+  const repos = [{ repo: 'app', total: 4, counts: { active: 2, parked: 1, backlog: 1 } }];
+  const page = openPage((pathname, body) => (pathname === '/api/repos' ? { repos } : pageAnswer(pathname, body, rows)));
+  await settle();
+  assert.deepEqual(listedSlugs(page), ['a', '↳ c', 'b', 'idea']);
+  assert.equal(page.byId('count').textContent, '4 tasks, 2 active');
+
+  const [slugA, slugC, slugB, slugIdea] = page.byId('rows').children.map(tr => tr.children[0]);
+  assert.ok(slugA && slugC && slugB && slugIdea);
+  assert.deepEqual([slugA.children, slugC.children], [[], []]);
+  const [gone] = slugIdea.children;
+  assert.equal(gone?.textContent, 'parent: gone');
+  assert.deepEqual(gone?.children, []);
+  const link = slugB.children[0]?.children[0];
+  assert.ok(link);
+  assert.equal(link.textContent, 'c');
+
+  await link.click();
+  const opened = page.sent.filter(({ pathname }) => pathname.startsWith('/api/ledger?')).at(-1);
+  assert.equal(new URLSearchParams(opened?.pathname.split('?')[1]).get('id'), c.id);
+  assert.equal(page.byId('detail-title').textContent, 'c');
 });
 
 test('the page drops the task list of a repository it has left', async () => {

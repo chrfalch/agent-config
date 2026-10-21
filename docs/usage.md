@@ -333,6 +333,11 @@ repositories. Each one shows its number of tasks and how many have each status.
 Click a repository to see its tasks. You can filter them by status, and search
 the text of their ledgers. You can select more than one status; the list then
 shows the tasks with any of them. With no status selected, it shows every task.
+A child task comes right after its parent task, with a `↳` before its name,
+as in `/ledger:all`. A child that is not right under its parent stays in the
+list as a normal row and shows `parent: <name>`. This happens when a filter
+hides the parent, and for a child of a child. Click that name to read the
+parent's ledger. When the parent's ledger is not found, the name is plain text.
 **All repositories** goes back to the list, and so does the browser's Back
 button. The address names the open repository, so a reload opens it again.
 Click a task to read its ledger, its worktree, its branch and its PRs. Its

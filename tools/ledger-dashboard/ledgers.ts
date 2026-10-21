@@ -36,12 +36,12 @@ type Mod = {
   readState(engine: Engine, worktree: string): Promise<WorktreeState | { error: string }>;
   retireBlockers(state: WorktreeState): string[];
   formatPlan(slug: string, state: WorktreeState, today: Date): string;
-  retireCommand(engine: Engine, args: string): Promise<string>;
+  retireLedger(engine: Engine, slug: string, ledgerPath: string, options: { confirmed: boolean; forced: boolean }): Promise<string>;
   lookUpPrs(engine: Engine, branch: string, cwd: string): Promise<{ prs: Pr[] | null; error?: string }>;
   titleSlug(engine: Engine, ledgerPath: string): Promise<string>;
 };
 
-const MOD_EXPORTS = ['run', 'parseEntries', 'statusAndNext', 'worktreeOf', 'readState', 'retireBlockers', 'formatPlan', 'retireCommand', 'lookUpPrs', 'titleSlug'] as const satisfies readonly (keyof Mod)[];
+const MOD_EXPORTS = ['run', 'parseEntries', 'statusAndNext', 'worktreeOf', 'readState', 'retireBlockers', 'formatPlan', 'retireLedger', 'lookUpPrs', 'titleSlug'] as const satisfies readonly (keyof Mod)[];
 
 async function loadMod(): Promise<Mod> {
   const modules = ['lookup', 'registry', 'all-command', 'retire', 'retire-command', 'worktrees-command'];
@@ -198,16 +198,16 @@ function ledgersOf(mod: Mod) {
     return 'error' in state ? fail(409, state.error) : state;
   }
 
-  // /ledger:retire finds its task by the title in each ledger, while the registry keeps the slug it was given first.
+  // The registry keeps the slug a task was given first; a retitled task would be previewed and retired under a name it no longer has.
   async function retirableState(entry: Entry): Promise<WorktreeState | Reply> {
     const state = await worktreeState(entry);
     if (isReply(state)) return state;
     const title = await mod.titleSlug(home, entry.path);
     if (title === entry.slug) return state;
-    return fail(409, `The ledger of ${entry.slug} is now titled ${title}. Retiring it by its old name could remove another task's worktree. Rescan, then retire ${title}.`);
+    return fail(409, `The ledger of ${entry.slug} is now titled ${title}. Rescan so the dashboard shows its current name, then retire ${title}.`);
   }
 
-  async function retireTarget(id: string): Promise<{ target: RetireTarget; state: WorktreeState } | Reply> {
+  async function retireTarget(id: string): Promise<{ target: RetireTarget; state: WorktreeState; ledgerPath: string } | Reply> {
     const entry = await findActive(id, 'retired');
     if (isReply(entry)) return entry;
     if (entry.status === 'backlog') return fail(409, `${entry.slug} is in the backlog and has no worktree yet, so there is nothing to retire.`);
@@ -215,7 +215,7 @@ function ledgersOf(mod: Mod) {
     if (isReply(state)) return state;
     const real = realPaths(state);
     if (isReply(real)) return real;
-    return { state, target: { id, repo: entry.repo, slug: entry.slug, worktree: state.path, ...real, blockers: mod.retireBlockers(state) } };
+    return { state, ledgerPath: entry.path, target: { id, repo: entry.repo, slug: entry.slug, worktree: state.path, ...real, blockers: mod.retireBlockers(state) } };
   }
 
   function takeRetireToken(token: string, id: string, force: boolean): RetireTarget | Reply {
@@ -232,19 +232,11 @@ function ledgersOf(mod: Mod) {
     if (isReply(previewed)) return previewed;
     const found = await retireTarget(id);
     if (isReply(found)) return found;
-    const { target, state } = found;
+    const { target, state, ledgerPath } = found;
     if (!sameTarget(previewed, target)) return fail(409, `Nothing was retired: ${target.slug} changed since the preview. Preview it again.`);
-    const { slug } = target;
-    // /ledger:retire takes the slug as one word, and a word that starts with - as a flag.
-    if (/\s/.test(slug) || slug.startsWith('-')) return fail(409, `${slug} is not a slug /ledger:retire can take. Retire it from a terminal with bin/cc-worktree-retire.`);
-    // /ledger:retire takes no path, so it finds the worktree by this slug again; the check after it catches a mismatch.
     // From the main checkout: from the worktree itself, /ledger:retire would say this session's folder was removed.
-    const text = await mod.retireCommand(engine(state.mainCheckout), [slug, '--yes', ...(force ? ['--force'] : [])].join(' '));
+    const text = await mod.retireLedger(engine(state.mainCheckout), target.slug, ledgerPath, { confirmed: true, forced: force });
     const retired = !existsSync(state.path);
-    // The ledger can be retitled while /ledger:retire runs, and then the worktree it removed is another task's.
-    if (!retired && text.startsWith(`**Retired ${slug}**`)) {
-      return fail(500, `/ledger:retire reported ${slug} retired, but its worktree ${state.path} is still there. Check which worktree it removed with git worktree list in ${state.mainCheckout}.`);
-    }
     return { status: retired ? 200 : 409, body: { retired, text, html: renderMarkdown(text) } };
   }
 

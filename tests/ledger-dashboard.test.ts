@@ -541,6 +541,21 @@ test('retire with the token of a preview that needs force, and force, archives t
   assert.deepEqual(keys((await list(server, '?repo=app')).ledgers), ['app/fix-login/archived', 'app/old-task/archived', 'app/waiting/parked']);
 });
 
+test('retire removes the worktree of the previewed ledger even when its slug is not one word', async t => {
+  const { home, stubBin, app, fixLogin } = fixture(t);
+  const spaced = worktreeWithLedger(home, app, 'spaced', 'me/spaced', '# Task ledger — fix login\n\n## Goal\nA slug with a space.\n');
+  assert.equal(run(home, [CC_LEDGERS], 'scan').status, 0);
+  const server = await startForeground(t, home, stubBin);
+
+  const { token } = await preview(server, ledgerOf(spaced));
+  const retired = await json<Retired>(server, 'POST', '/api/retire', { id: ledgerOf(spaced), token, force: true });
+  assert.equal(retired.status, 200, JSON.stringify(retired.value));
+  assert.equal(retired.value.retired, true);
+  assert.match(retired.value.text, /^\*\*Retired fix login\*\*/);
+  assert.equal(existsSync(spaced), false);
+  assert.ok(existsSync(fixLogin));
+});
+
 test('retire refuses a ledger retitled since it was registered, and removes no worktree', async t => {
   const { home, stubBin, app, fixLogin } = fixture(t);
   writeFileSync(path.join(fixLogin, '.claude/ledger.md'), FIX_LOGIN.replace('# Task ledger — fix-login', '# Task ledger — fix-login-v2'));
@@ -730,28 +745,6 @@ test('retire tokens expire, and each one is taken once', async () => {
   const fresh = tokens.issue('fresh');
   now += 10 * 60_000 - 1;
   assert.equal(tokens.take(fresh), 'fresh');
-});
-
-// bash answers a cc-worktree-retire run with success and removes nothing; every other run goes to the real bash.
-function bashStub(bin: string): void {
-  const script = `#!${process.execPath}
-const args = process.argv.slice(2);
-if (args[0]?.endsWith('/cc-worktree-retire')) process.exit(0);
-const { status } = require('node:child_process').spawnSync('/bin/bash', args, { stdio: 'inherit' });
-process.exit(status ?? 1);
-`;
-  writeFileSync(path.join(bin, 'bash'), script, { mode: 0o755 });
-}
-
-test('retire answers 500 when /ledger:retire reports the task retired but its worktree is still there', async t => {
-  const { home, stubBin, fixLogin } = fixture(t);
-  bashStub(stubBin);
-  const server = await startForeground(t, home, stubBin);
-  const { token } = await preview(server, ledgerOf(fixLogin));
-  const reply = await json<{ error?: string }>(server, 'POST', '/api/retire', { id: ledgerOf(fixLogin), token, force: true });
-  assert.equal(reply.status, 500);
-  assert.match(reply.value.error ?? '', /reported fix-login retired, but its worktree .* is still there/);
-  assert.ok(existsSync(fixLogin));
 });
 
 test('rescan rebuilds the registry from disk', async t => {

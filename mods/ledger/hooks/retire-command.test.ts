@@ -1,7 +1,8 @@
-import type { On } from 'claude-code'
+import type { EngineInterface, On } from 'claude-code'
 import { expect, test } from 'claude-code/testing'
 
 import { RETIRE_USAGE } from './retire'
+import { retireLedger } from './retire-command'
 
 type Reply = { value: { exitCode: number; stdout: string; stderr: string; isStdoutTruncated: false; isStderrTruncated: false } } | { deny: string }
 
@@ -335,4 +336,33 @@ test('/ledger:retire --yes --force on a merged branch with uncommitted changes s
   const { text } = await $.command.run({ command: 'ledger:retire', args: 'fast-steps --yes --force' })
   expect(ranScript(calls).map(({ argv }) => argv.slice(2))).toEqual([[FIX_LOGIN, '--delete-branch', HEAD, '--force']])
   expect(text).not.toContain('kept branch')
+})
+
+// The test kit's `$` drives commands, so a direct call gets an engine that answers only what retireLedger may use.
+function fakeEngine(known: Replies): { engine: EngineInterface; calls: Call[] } {
+  const calls: Call[] = []
+  const engine = {
+    process: {
+      run: async (argv: string[], init?: { cwd?: string }) => {
+        calls.push({ argv, cwd: init?.cwd })
+        const reply = known[argvKey(argv)]
+        if (reply === undefined || 'deny' in reply) throw new Error(`unexpected command: ${JSON.stringify(argv)}`)
+        return reply.value
+      },
+    },
+    session: { cwd: async () => REPO },
+    plugin: { root: '/plugins/ledger' },
+  }
+  return { engine: engine as unknown as EngineInterface, calls }
+}
+
+test('retireLedger retires the worktree of the ledger it is given, without looking up its slug', async () => {
+  const { engine, calls } = fakeEngine({
+    ...worktreeReplies(FIX_LOGIN, 'me/fix-login'),
+    ...worktreeReplies(NEW_API, 'me/new-api'),
+    ...replies([retireScript(NEW_API, '--delete-branch', HEAD), ok('removed  /repo/.claude/worktrees/new-api\n')]),
+  })
+  const text = await retireLedger(engine, 'fast-steps', ledgerOf(NEW_API), { confirmed: true, forced: false })
+  expect(text.split('\n')[0]).toBe('**Retired fast-steps**')
+  expect(ranScript(calls).map(({ argv }) => argv[2])).toEqual([NEW_API])
 })

@@ -180,10 +180,11 @@ const $ = id => document.getElementById(id);
 // sent.
 // `loadRequest` counts requests for a task list or the list of repositories, so only the latest one shows its reply or
 // its error.
+// `offered` is the statuses of the repository on screen, from its counts; null until they arrive.
 // `preview` is the retire preview on screen: the task it is for and the token that retires that task.
 // `detailRequest` counts detail requests and closes, so only the reply to the latest request is shown, and a retire
 // preview only when no detail request or close came after it was asked for.
-const state = { repo: null, repos: null, loadRequest: 0, selected: null, detail: null, preview: null, detailRequest: 0, searchTimer: 0, statuses: new Set() };
+const state = { repo: null, repos: null, loadRequest: 0, selected: null, detail: null, preview: null, detailRequest: 0, searchTimer: 0, offered: null };
 
 class KeyError extends Error {}
 
@@ -219,19 +220,30 @@ function cell(text, className) {
   return td;
 }
 
-/** Returns true when a checked status no longer exists, so the list was filtered by a status the page no longer shows. */
-function fillStatuses(statuses) {
-  const checked = state.statuses.size;
-  for (const status of state.statuses) if (!statuses.includes(status)) state.statuses.delete(status);
-  $('status-options').replaceChildren(...statuses.map(status => {
-    const box = Object.assign(document.createElement('input'), { type: 'checkbox', value: status, checked: state.statuses.has(status) });
+const addressStatuses = () => new URLSearchParams(location.search).getAll('status');
+
+// The address keeps a status this repository lacks for the next one, but a filter by it here would hide every task
+// behind a box the page does not show.
+const appliedStatuses = () => addressStatuses().filter(status => state.offered === null || state.offered.includes(status));
+
+// Built from the path alone, so the address never takes the key back.
+function address(repo, statuses = addressStatuses()) {
+  const query = new URLSearchParams();
+  if (repo !== null) query.set('repo', repo);
+  for (const status of statuses) query.append('status', status);
+  const search = query.toString();
+  return location.pathname + (search && `?${search}`);
+}
+
+function fillStatuses(applied) {
+  $('status-options').replaceChildren(...state.offered.map(status => {
+    const box = Object.assign(document.createElement('input'), { type: 'checkbox', value: status, checked: applied.includes(status) });
     const name = Object.assign(document.createElement('span'), { className: 'status', textContent: status });
     name.dataset.status = status;
     const label = document.createElement('label');
     label.append(box, name);
     return label;
   }));
-  return state.statuses.size < checked;
 }
 
 const isSelected = id => id === state.selected;
@@ -264,8 +276,12 @@ function slugCell(row) {
 }
 
 // The counts come from the repository's entry in /api/repos, because the total in /api/ledgers is of every repository.
-function render({ ledgers }, { total, counts }) {
-  if (fillStatuses(Object.keys(counts))) return load();
+// A list asked for before these counts arrived can be filtered by other statuses than these allow; it is asked for again.
+function render({ ledgers }, { total, counts }, asked) {
+  state.offered = Object.keys(counts);
+  const applied = appliedStatuses();
+  if (applied.join('\n') !== asked.join('\n')) return load();
+  fillStatuses(applied);
   $('count').textContent = ledgers.length === total
     ? `${tasks(total)}, ${counts.active ?? 0} active`
     : `${ledgers.length} of ${tasks(total)}`;
@@ -348,12 +364,13 @@ function askRepos() {
 async function load({ withCounts = false } = {}) {
   const { repo } = state;
   const query = new URLSearchParams({ repo });
-  for (const status of state.statuses) query.append('status', status);
+  const statuses = appliedStatuses();
+  for (const status of statuses) query.append('status', status);
   if ($('q').value.trim() !== '') query.set('q', $('q').value.trim());
   const replies = await latest(Promise.all([api(`/api/ledgers?${query}`), withCounts ? askRepos() : state.repos]));
   if (replies === null) return;
   const [listed, summaries] = replies.map(checked);
-  return render(listed.data, summaries.data.repos.find(summary => summary.repo === repo) ?? NO_TASKS);
+  return render(listed.data, summaries.data.repos.find(summary => summary.repo === repo) ?? NO_TASKS, statuses);
 }
 
 async function loadRepos(focused) {
@@ -369,7 +386,7 @@ function showView(focused) {
   const repo = new URLSearchParams(location.search).get('repo') || null;
   clearTimeout(state.searchTimer);
   if (repo !== state.repo) {
-    state.statuses.clear();
+    state.offered = null;
     $('status-options').replaceChildren();
     $('q').value = '';
     closeDetail();
@@ -387,9 +404,8 @@ function showView(focused) {
   return load({ withCounts: true });
 }
 
-// Built from the path alone, so the address never takes the key back.
 function openRepo(name) {
-  history.pushState(null, '', location.pathname + '?repo=' + encodeURIComponent(name));
+  history.pushState(null, '', address(name));
   const loading = showView().catch(report);
   $('repo-name').focus();
   return loading;
@@ -497,8 +513,8 @@ async function act(path, body, button) {
 const task = () => ({ id: state.detail.id });
 
 $('status').addEventListener('change', ({ target }) => {
-  if (target.checked) state.statuses.add(target.value);
-  else state.statuses.delete(target.value);
+  const others = addressStatuses().filter(status => status !== target.value);
+  history.replaceState(null, '', address(state.repo, target.checked ? [...others, target.value] : others));
   return load().catch(report);
 });
 $('q').addEventListener('input', () => {
@@ -523,7 +539,7 @@ $('rescan').addEventListener('click', async event => {
 
 $('all-repos').addEventListener('click', () => {
   const left = state.repo;
-  history.pushState(null, '', location.pathname);
+  history.pushState(null, '', address(null));
   return showView(left).catch(report);
 });
 window.addEventListener('popstate', () => showView(state.repo).catch(report));

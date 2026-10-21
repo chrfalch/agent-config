@@ -1368,13 +1368,15 @@ function openPage(answer: (pathname: string, body: Body) => object | Promise<obj
   };
   const windowListeners = new Map<string, (() => unknown)[]>();
   // The browser's back button: the address changes, then popstate fires. With `steps`, it is an earlier entry picked
-  // from the back button's menu, which fires popstate once.
+  // from the back button's menu, which fires popstate once. Negative steps go forward.
   const back = async (steps = 1): Promise<void> => {
     assert.ok(current - steps >= 0, 'the history holds no entry that far back');
+    assert.ok(current - steps < entries.length, 'the history holds no entry that far forward');
     current -= steps;
     show(entries[current] ?? '');
     await Promise.all((windowListeners.get('popstate') ?? []).map(listener => listener()));
   };
+  const forward = (steps = 1): Promise<void> => back(-steps);
   vm.runInNewContext(script, {
     URLSearchParams,
     setTimeout,
@@ -1399,7 +1401,7 @@ function openPage(answer: (pathname: string, body: Body) => object | Promise<obj
         : { status: 200, ok: true, json: async () => value };
     },
   });
-  return { byId, sent, history: () => entries.slice(0, current + 1), back, focused: () => document.activeElement };
+  return { byId, sent, history: () => entries.slice(0, current + 1), back, forward, focused: () => document.activeElement };
 }
 
 const settle = (): Promise<void> => new Promise(resolve => setImmediate(resolve));
@@ -1944,6 +1946,114 @@ test('the page lists every task of the repository again when a rescan no longer 
   assert.deepEqual(statusBoxes(page).map(({ value, checked }) => ({ value, checked })), [{ value: 'active', checked: false }]);
   assert.deepEqual(listedSlugs(page), ['a', 'b', 'c']);
   assert.equal(page.byId('count').textContent, '3 tasks, 3 active');
+});
+
+const lastList = (page: ReturnType<typeof openPage>): string | undefined =>
+  page.sent.map(({ pathname }) => pathname).filter(pathname => pathname.startsWith('/api/ledgers?')).at(-1);
+
+const checkedStatuses = (page: ReturnType<typeof openPage>): string[] => statusBoxes(page).filter(box => box.checked).map(box => box.value);
+
+// Both repositories have active tasks, so an active filter applies in each.
+function openSharedStatusPage(search: string) {
+  const rows = [...PAGE_ROWS, { id: '/repos/a&b/.claude/worktrees/fix/.claude/ledger.md', repo: 'a&b', slug: 'fix', status: 'active', updated: '', next: '', branch: 'me/fix' }];
+  const repos = [{ repo: 'a&b', total: 2, counts: { active: 1, backlog: 1 } }, PAGE_REPOS[1]];
+  return openPage((pathname, body) => (pathname === '/api/repos' ? { repos } : pageAnswer(pathname, body, rows)), search);
+}
+
+test('the page keeps the checked statuses in its address, in the order they were checked, and adds no history entry for them', async () => {
+  const page = openPage(pageAnswer);
+  await settle();
+
+  await toggleStatus(page, 'parked');
+  await toggleStatus(page, 'active');
+  assert.deepEqual(page.history(), ['/?repo=app&status=parked&status=active']);
+  await toggleStatus(page, 'parked');
+  assert.deepEqual(page.history(), ['/?repo=app&status=active']);
+  await toggleStatus(page, 'active');
+  assert.deepEqual(page.history(), ['/?repo=app']);
+});
+
+test('the page checks the statuses its address names on load, and asks for them', async () => {
+  const page = openPage(pageAnswer, '?repo=app&status=active');
+  await settle();
+  assert.deepEqual(checkedStatuses(page), ['active']);
+  assert.equal(lastList(page), '/api/ledgers?repo=app&status=active');
+  assert.deepEqual(listedSlugs(page), ['a', 'b']);
+});
+
+test('the page keeps the status filter from one repository, through the list of repositories, to the next', async () => {
+  const page = openSharedStatusPage('?repo=app');
+  await settle();
+  await toggleStatus(page, 'active');
+
+  await page.byId('all-repos').click();
+  const [ab] = repoButtons(page);
+  assert.ok(ab);
+  await ab.click();
+  assert.deepEqual(page.history(), ['/?repo=app&status=active', '/?status=active', '/?repo=a%26b&status=active']);
+  assert.deepEqual(checkedStatuses(page), ['active']);
+  assert.equal(lastList(page), '/api/ledgers?repo=a%26b&status=active');
+  assert.deepEqual(listedSlugs(page), ['fix']);
+});
+
+test('the back and forward buttons restore the status filter of each address', async () => {
+  const page = openSharedStatusPage('?repo=app');
+  await settle();
+  await toggleStatus(page, 'active');
+  await page.byId('all-repos').click();
+  const [ab] = repoButtons(page);
+  assert.ok(ab);
+  await ab.click();
+  await toggleStatus(page, 'backlog');
+
+  await page.back(2);
+  assert.equal(page.byId('repo-name').textContent, 'app');
+  assert.deepEqual(checkedStatuses(page), ['active']);
+  assert.equal(lastList(page), '/api/ledgers?repo=app&status=active');
+
+  await page.forward(2);
+  assert.equal(page.byId('repo-name').textContent, 'a&b');
+  assert.deepEqual(checkedStatuses(page), ['active', 'backlog']);
+  assert.equal(lastList(page), '/api/ledgers?repo=a%26b&status=active&status=backlog');
+  assert.deepEqual(listedSlugs(page), ['idea', 'fix']);
+});
+
+test('the page keeps a status the repository lacks in its address without applying it, and applies it in a repository that has it', async () => {
+  const page = openPage(pageAnswer, '?repo=app&status=backlog&status=bogus');
+  await settle();
+  assert.deepEqual(statusBoxes(page).map(({ value, checked }) => ({ value, checked })), [
+    { value: 'active', checked: false },
+    { value: 'parked', checked: false },
+  ]);
+  assert.equal(lastList(page), '/api/ledgers?repo=app');
+  assert.deepEqual(listedSlugs(page), ['a', 'b', 'c']);
+  assert.deepEqual(page.history(), ['/?repo=app&status=backlog&status=bogus']);
+
+  await toggleStatus(page, 'parked');
+  assert.deepEqual(page.history(), ['/?repo=app&status=backlog&status=bogus&status=parked']);
+  assert.equal(lastList(page), '/api/ledgers?repo=app&status=parked');
+
+  await page.byId('all-repos').click();
+  const [ab] = repoButtons(page);
+  assert.ok(ab);
+  await ab.click();
+  assert.deepEqual(page.history().at(-1), '/?repo=a%26b&status=backlog&status=bogus&status=parked');
+  assert.deepEqual(checkedStatuses(page), ['backlog']);
+  assert.equal(lastList(page), '/api/ledgers?repo=a%26b&status=backlog');
+  assert.deepEqual(listedSlugs(page), ['idea']);
+});
+
+test('the page never puts the key back in an address that carries a status filter', async () => {
+  const page = openPage(pageAnswer, '?repo=app&status=active');
+  await settle();
+  await toggleStatus(page, 'parked');
+  await page.byId('all-repos').click();
+  const [ab] = repoButtons(page);
+  assert.ok(ab);
+  await ab.click();
+  await page.back();
+  await page.forward();
+  assert.deepEqual(page.history(), ['/?repo=app&status=active&status=parked', '/?status=active&status=parked', '/?repo=a%26b&status=active&status=parked']);
 });
 
 test('the page asks for the task list with the search alone when the search changes, and lists only the tasks that match', async () => {

@@ -499,3 +499,36 @@ ledger, runs `bin/cc-task-new --promote <slug>`, and moves the session into
 the new worktree with `EnterWorktree`. The work still continues in the same
 session when no task is open, and the script keeps one way to make a
 worktree.
+
+## 2026-10-21 — Backlog parents in `/ledger`, retiring a backlog task, and deeper trees
+
+**`/ledger` shows the backlog parents of the tasks it lists.** A parent task
+often stays in the backlog: its work happens in its child tasks. Before, a
+child task in a worktree showed only `- **Parent:** <parent>`, and the parent
+was hidden. Now `/ledger` follows each `parent` line upward. When the parent
+is not listed, it looks for a backlog ledger of this repo with that name and
+lists it as `<parent> (backlog)`, with its child tasks under it. It stops at a
+name with no ledger, or at a name it has seen, so a cycle cannot hang it.
+Other backlog tasks stay hidden. `/ledger <name>` can match a backlog parent.
+The lookup is a new `backlog` mode of `hooks/ledger-list.sh`, the same rule the
+SessionStart hook uses, so the two cannot disagree.
+
+**`/ledger:retire` retires a backlog task of this repo.** A parent task whose
+work shipped in its child tasks never gets a worktree, so it could not be
+retired before. Now `bin/cc-worktree-retire` also takes a backlog ledger. It
+archives the ledger the same way, checks the copy, deletes the backlog file and
+marks the registry entry archived. A parent task with child tasks that are not
+retired still needs `--force`. A backlog task of another repo is not found.
+
+**A retired child task's parent can be in the backlog.** Before, the script
+looked for the parent ledger only in the worktrees, and printed a warning when
+the parent was in the backlog. Now it looks in this repo's backlog too, marks
+the child task retired there, and prints the line that names the parent task to
+retire.
+
+**A tree can be deeper than one level.** `cc-ledger-parent add` no longer
+refuses a parent task that has a parent, or a child task that has children. It
+refuses a cycle: a task that is already the parent of `<parent>`, or of one of
+its parents, cannot become its child. A child task still has one parent at
+most. `/ledger` and `/ledger:all` indent each level. `/ledger:parent`,
+`--force` and the `parent of <n>` count still look at direct child tasks only.

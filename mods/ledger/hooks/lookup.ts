@@ -1,6 +1,6 @@
 import type { EngineInterface, ProcessRunResult } from 'claude-code'
 
-import { activeLedger, folderSlug, ledgerPaths, summarize, type ActiveLedger, type BranchState } from './ledger'
+import { activeLedger, folderSlug, ledgerPaths, summarize, type ActiveLedger, type BranchState, type LedgerSummary } from './ledger'
 import { defaultBranchOf, dirname, isInside, parseCount, stateFailedMessage } from './retire'
 import { basename, parseWorktrees, type Worktree } from './worktrees'
 import { lookUpPrs } from './worktrees-command'
@@ -45,22 +45,53 @@ export async function sessionFolder($: EngineInterface): Promise<SessionFolder> 
 export const sessionLedger = (found: Found[], folder: SessionFolder): ActiveLedger =>
   folder.removed === undefined ? activeLedger(found.map(({ path }) => path), folder.path) : { kind: 'none' }
 
-// The SessionStart hook's own lookup, so /ledger and the hook always agree on which ledgers exist.
-export async function findLedgers($: EngineInterface): Promise<Found[] | { error: string }> {
+async function listLedgers($: EngineInterface, mode: 'paths' | 'backlog', slugOf: (path: string) => string): Promise<Found[] | { error: string }> {
   const script = `${$.plugin.root}/../../hooks/ledger-list.sh`
   const { path: cwd } = await sessionFolder($)
   let result: ProcessRunResult
   try {
-    result = await $.process.run(['bash', script, 'paths'], { cwd })
+    result = await $.process.run(['bash', script, mode], { cwd })
   } catch (error) {
     return { error: `${script} did not run: ${message(error)}` }
   }
   const { exitCode, stdout, stderr } = result
   if (exitCode !== 0) return { error: `${script} failed (exit ${exitCode}): ${stderr.trim()}` }
-  const found = await Promise.all(
-    ledgerPaths(stdout).map(async path => ({ path, slug: folderSlug(path), mtimeMs: (await $.fs.stat(path)).mtimeMs })),
-  )
+  const found = await Promise.all(ledgerPaths(stdout).map(async path => ({ path, slug: slugOf(path), mtimeMs: (await $.fs.stat(path)).mtimeMs })))
   return found.sort((a, b) => b.mtimeMs - a.mtimeMs)
+}
+
+// The SessionStart hook's own lookup, so /ledger and the hook always agree on which ledgers exist.
+export function findLedgers($: EngineInterface): Promise<Found[] | { error: string }> {
+  return listLedgers($, 'paths', folderSlug)
+}
+
+/** The backlog ledgers of the repository the session is in, matched on its main checkout as cc-task-new and cc-ledger-parent do. */
+export function findBacklogLedgers($: EngineInterface): Promise<Found[] | { error: string }> {
+  return listLedgers($, 'backlog', path => basename(path).replace(/\.md$/, ''))
+}
+
+/**
+ * The backlog ledgers that are the parent of a listed task, the parent of that parent, and so on, marked as backlog.
+ * Each walk up stops at a parent that is listed or seen before, or that has no backlog ledger.
+ */
+export async function backlogAncestors($: EngineInterface, listed: LedgerSummary[]): Promise<LedgerSummary[] | { error: string }> {
+  const seen = new Set(listed.map(({ slug }) => slug))
+  if (listed.every(({ parent }) => parent === undefined || seen.has(parent))) return []
+  const found = await findBacklogLedgers($)
+  if ('error' in found) return found
+  const summaries = await Promise.all(found.map(async ({ path, slug, mtimeMs }) => summarize(await $.fs.read(path), slug, mtimeMs)))
+  const backlog = new Map<string, LedgerSummary>()
+  for (const summary of summaries) if (!backlog.has(summary.slug)) backlog.set(summary.slug, { ...summary, isBacklog: true })
+  const ancestors: LedgerSummary[] = []
+  for (const ledger of listed) {
+    for (let parent = ledger.parent; parent !== undefined && !seen.has(parent); ) {
+      seen.add(parent)
+      const ancestor = backlog.get(parent)
+      if (ancestor) ancestors.push(ancestor)
+      parent = ancestor?.parent
+    }
+  }
+  return ancestors
 }
 
 /** The linked worktrees other than the one holding `cwd`; none from the main checkout, and when git cannot list them. */

@@ -164,6 +164,18 @@ function register(ledger, ...flags) {
   if (result.status !== 0) console.error('warning: registry not updated');
 }
 
+// The parent of `task`, its parent, and so on, up to a slug with no ledger or a slug seen before.
+function ancestors(found, task) {
+  const seen = [];
+  let slug = parentBullet(task.lines)?.value;
+  while (slug !== undefined && !seen.includes(slug)) {
+    seen.push(slug);
+    const ledger = lookup(found, slug);
+    slug = ledger && parentBullet(ledger.lines)?.value;
+  }
+  return seen;
+}
+
 function add(parentSlug, childSlug) {
   if (parentSlug === childSlug) fail(`${childSlug} cannot be its own parent`);
   const found = ledgersBySlug();
@@ -176,10 +188,9 @@ function add(parentSlug, childSlug) {
   if (current !== undefined && current !== parent.slug) {
     fail(`${child.slug} already has the parent ${current}; first run cc-ledger-parent remove ${current} ${child.slug}`);
   }
-  const grandparent = parentBullet(parent.lines)?.value;
-  if (grandparent !== undefined) fail(`${parent.slug} has the parent ${grandparent}, so it cannot be a parent`);
-  const grandchildren = children(child.lines).map(({ slug }) => slug);
-  if (grandchildren.length > 0) fail(`${child.slug} has the children ${grandchildren.join(', ')}, so it cannot be a child`);
+  if (ancestors(found, parent).includes(child.slug)) {
+    fail(`${child.slug} is already the parent of ${parent.slug} or of one of its parents, so making it a child of ${parent.slug} would make a cycle`);
+  }
   const childLocation = location(child);
   const parentLocation = location(parent);
 

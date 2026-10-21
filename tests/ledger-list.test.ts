@@ -359,6 +359,28 @@ test('session-start in a parent task names a backlog child as backlog, but not o
   );
 });
 
+test('backlog prints this repository\'s backlog ledgers from the main checkout and from a linked worktree, and not another repository\'s', (t) => {
+  const root = scratch(t);
+  const main = repository(root, 'main');
+  const child = worktree(root, main, path.join(root, 'child'));
+  ledgerIn(child, familyLedger('child', ['- parent: epic']));
+  const epic = backlogLedger(root, 'main', 'epic', main);
+  const idea = backlogLedger(root, 'main', 'idea', main);
+  backlogLedger(root, 'main', 'foreign', path.join(root, 'elsewhere/main'));
+
+  for (const cwd of [main, child]) assert.deepEqual(printedPaths(ledgerList(root, cwd, 'backlog')), [epic, idea]);
+});
+
+test('backlog prints nothing when the repository has no backlog, and outside a git repository', (t) => {
+  const root = scratch(t);
+  const main = repository(root, 'main');
+  const outside = path.join(root, 'outside');
+  mkdirSync(outside);
+
+  assert.equal(ledgerList(root, main, 'backlog'), '');
+  assert.equal(ledgerList(root, outside, 'backlog'), '');
+});
+
 test('session-start reads only the Location parent bullet and the section headed exactly Children', (t) => {
   const root = scratch(t);
   const main = repository(root, 'main');

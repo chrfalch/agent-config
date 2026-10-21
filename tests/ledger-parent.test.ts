@@ -151,8 +151,7 @@ const refusals: [string, string[], RegExp][] = [
   ['a child from another repository', ['add', 'epic', 'elsewhere'], /elsewhere/],
   ['a task as its own parent', ['add', 'epic', 'epic'], /epic/],
   ['a child that has a different parent', ['add', 'other', 'child-a'], /child-a.*epic/],
-  ['a parent that has a parent', ['add', 'child-a', 'child-b'], /child-a.*epic/],
-  ['a child that has children', ['add', 'other', 'epic'], /epic.*child-a/],
+  ['a cycle: the child is the parent of its new parent', ['add', 'child-a', 'epic'], /epic.*child-a.*cycle/],
   ['remove of a child that is not attached', ['remove', 'epic', 'child-b'], /child-b.*epic/],
   ['remove from the wrong parent', ['remove', 'other', 'child-a'], /child-a.*other/],
 ];
@@ -179,6 +178,47 @@ for (const [name, args, message] of refusals) {
     assert.equal(read(path.join(home, '.claude/ledgers.json')), registryBefore);
   });
 }
+
+test('add makes a child task the parent of another, and a task with children the child of another', (t) => {
+  const { home, main, ledgers } = repository(t, 'epic', 'child-a', 'grandchild', 'program');
+
+  ok(home, main, 'add', 'epic', 'child-a');
+  ok(home, main, 'add', 'child-a', 'grandchild');
+  ok(home, main, 'add', 'program', 'epic');
+
+  assert.match(read(ledgers.grandchild ?? ''), /^- parent: child-a$/m);
+  assert.match(read(ledgers['child-a'] ?? ''), /^- parent: epic$/m);
+  assert.match(read(ledgers['child-a'] ?? ''), /^## Children\n- grandchild$/m);
+  assert.match(read(ledgers.epic ?? ''), /^- parent: program$/m);
+  assert.match(read(ledgers.epic ?? ''), /^## Children\n- child-a$/m);
+  assert.equal(registered(home, 'grandchild')?.parent, 'child-a');
+  assert.equal(registered(home, 'epic')?.parent, 'program');
+});
+
+test('add refuses a cycle through a grandparent with one line and changes nothing', (t) => {
+  const { home, main, ledgers } = repository(t, 'epic', 'child-a', 'grandchild');
+  ok(home, main, 'add', 'epic', 'child-a');
+  ok(home, main, 'add', 'child-a', 'grandchild');
+  const before = Object.values(ledgers).map(read);
+
+  const result = parent(home, main, 'add', 'grandchild', 'epic');
+
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /^[^\n]*epic[^\n]*grandchild[^\n]*cycle[^\n]*\n$/);
+  assert.deepEqual(Object.values(ledgers).map(read), before);
+});
+
+test('add stops at a cycle already in the ledgers instead of walking it forever', (t) => {
+  const { home, main, ledgers } = repository(t, 'x', 'y', 'child-a');
+  for (const [slug, other] of [['x', 'y'], ['y', 'x']] as const) {
+    const file = ledgers[slug] ?? '';
+    writeFileSync(file, read(file).replace('- base: main @ abc1234\n', `- base: main @ abc1234\n- parent: ${other}\n`));
+  }
+
+  ok(home, main, 'add', 'x', 'child-a');
+
+  assert.match(read(ledgers['child-a'] ?? ''), /^- parent: x$/m);
+});
 
 test('add refuses a slug that two ledgers in the repository share, naming both', (t) => {
   const { home, main, ledgers } = repository(t, 'epic', 'child-a');

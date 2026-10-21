@@ -1,6 +1,6 @@
 import type { EngineInterface, ProcessRunResult } from 'claude-code'
 
-import { formatTime, groupByParent, summarize } from './ledger'
+import { formatTime, groupByParent, summarize, type Grouped } from './ledger'
 import { message } from './lookup'
 import { type Entry, parseEntries, scriptPath } from './registry'
 
@@ -23,15 +23,23 @@ export async function statusAndNext($: EngineInterface, entry: Entry): Promise<[
 
 const taskKey = (repo: string, slug: string): string => `${repo}\0${slug}`
 
+// A table cell drops leading spaces, but keeps no-break spaces.
+const INDENT = '  '
+
 function familyOrder(newestFirst: Entry[]): { entry: Entry; name: string }[] {
   const groups = groupByParent(
     newestFirst,
     entry => taskKey(entry.repo, entry.slug),
     entry => (entry.parent === undefined ? undefined : taskKey(entry.repo, entry.parent)),
   )
+  const descendants = (children: Grouped<Entry>[], depth: number): { entry: Entry; name: string }[] =>
+    children.flatMap(({ item, children: grandchildren }) => [
+      { entry: item, name: `${INDENT.repeat(depth)}↳ ${item.slug}` },
+      ...descendants(grandchildren, depth + 1),
+    ])
   return groups.flatMap(({ item, children }) => [
     { entry: item, name: item.parent ? `${item.slug} (parent: ${item.parent})` : item.slug },
-    ...children.map(child => ({ entry: child, name: `↳ ${child.slug}` })),
+    ...descendants(children, 0),
   ])
 }
 

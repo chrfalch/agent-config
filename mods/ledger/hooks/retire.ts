@@ -110,10 +110,11 @@ export function retireBlockers(state: WorktreeState): string[] {
   ].filter(reason => reason !== '')
 }
 
+const archiveCopy = (repo: string, slug: string, today: Date): string => `~/.claude/ledger-archive/${repo}/${isoDate(today)}-${slug}.md`
+
 /** Where cc-worktree-retire copies the ledger, named the way the script names it. */
 export function archivePath({ path, mainCheckout, branch }: WorktreeState, today: Date): string {
-  const slug = branch.split('/').at(-1) || basename(path)
-  return `~/.claude/ledger-archive/${basename(mainCheckout)}/${isoDate(today)}-${slug}.md`
+  return archiveCopy(basename(mainCheckout), branch.split('/').at(-1) || basename(path), today)
 }
 
 function prLabel(mergedPr: MergedPr): string {
@@ -148,6 +149,18 @@ export function formatPlan(slug: string, state: WorktreeState, today: Date, { fo
     "- then: git worktree remove, and the worktree's cc-dd-path build folders are deleted",
     ...(state.branch ? [`- local branch: ${state.branch} is ${isBranchMerged(state) ? 'deleted, because it is merged' : `kept, because ${keptBranchReason(state)}`}`] : []),
     ...(footer ? ['', planFooter(slug, retireBlockers(state))] : []),
+  ].join('\n')
+}
+
+/** `ledgerPath` is ~/.claude/ledger-backlog/<repo>/<slug>.md; cc-worktree-retire names the copy after that folder and file. */
+export function formatBacklogPlan(slug: string, ledgerPath: string, today: Date): string {
+  return [
+    `**Retire ${slug}** — nothing done yet`,
+    `- backlog ledger: ${ledgerPath}`,
+    `- archive: ${archiveCopy(basename(dirname(ledgerPath)), basename(ledgerPath).replace(/\.md$/, ''), today)}`,
+    '- then: the backlog ledger is deleted. A backlog task has no worktree or branch to remove.',
+    '',
+    planFooter(slug, []),
   ].join('\n')
 }
 

@@ -226,9 +226,10 @@ function archive(args) {
   if (args.length !== 2) fail(usage);
   const [ledger, copy] = args.map((arg) => path.resolve(arg));
   if (!fs.statSync(copy, { throwIfNoEntry: false })?.isFile()) fail(`no archive copy at ${copy}`);
-  // cc-worktree-retire archives after it removes the worktree, so the active entry's ledger is already gone.
-  const { entries } = readRegistry({ strict: true, keep: isActive(ledger) });
-  const active = entries.find(isActive(ledger));
+  // cc-worktree-retire archives after it removes the worktree or the backlog ledger, so the entry's ledger is already gone.
+  const isRetired = (e) => isActive(ledger)(e) || isBacklog(ledger)(e);
+  const { entries } = readRegistry({ strict: true, keep: isRetired });
+  const active = entries.find(isRetired);
   const archived = entries.find(isArchived(copy));
   const base = archived ?? active ?? archivedEntry(copy, ledger);
   const updated = new Date().toISOString();

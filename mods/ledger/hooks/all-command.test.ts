@@ -191,6 +191,26 @@ test('/ledger:all shows a child under its parent in the same repo, and any other
   )
 })
 
+test('/ledger:all indents a grandchild one step further than its parent', async ($, on) => {
+  const grandchild = entry('grandchild', '2026-10-05T09:30:00.000Z', { parent: 'child' })
+  const child = entry('child', '2026-10-04T09:30:00.000Z', { parent: 'epic' })
+  const epic = entry('epic', '2026-10-03T09:30:00.000Z')
+  const all = [grandchild, child, epic]
+  world(
+    on,
+    { 'bin/cc-ledgers list --json': exit(0, JSON.stringify(all)) },
+    Object.fromEntries(all.map(({ path }) => [path, ledgerText('Ship it.')])),
+  )
+
+  const { text } = await $.command.run({ command: 'ledger:all' })
+
+  expect(text.split('\n').slice(4)).toEqual([
+    `| app | epic | active | ${local(epic.updated)} | Ship it. |`,
+    `| app | ↳ child | active | ${local(child.updated)} | Ship it. |`,
+    `| app |   ↳ grandchild | active | ${local(grandchild.updated)} | Ship it. |`,
+  ])
+})
+
 const BACKLOG_HEADER = '| repo | slug | updated | goal |\n| --- | --- | --- | --- |'
 
 const backlogEntry = (slug: string, updated: string): Entry & { main: string } => ({

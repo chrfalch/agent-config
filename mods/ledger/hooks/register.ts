@@ -30,7 +30,17 @@ import {
 } from './ledger'
 import { archiveCommand } from './archive-command'
 import { dashboardCommand } from './dashboard-command'
-import { findLedgers, lookUpBranch, lookUpOtherWorktrees, message, sessionFolder, sessionLedger, titleSlug, type Found } from './lookup'
+import {
+  backlogAncestors,
+  findLedgers,
+  lookUpBranch,
+  lookUpOtherWorktrees,
+  message,
+  sessionFolder,
+  sessionLedger,
+  titleSlug,
+  type Found,
+} from './lookup'
 import { familyOf, parentCommand } from './parent-command'
 import { mainCheckout, otherRepositoryTask, promoteBacklogTask, registeredTasks } from './registry'
 import { worktreeOf } from './retire'
@@ -62,15 +72,19 @@ export const register: Register = on => {
   on('command.run', { command: 'ledger' }, async ($, e) => {
     const found = await findLedgers($)
     if ('error' in found) return { text: `Could not list task ledgers. ${found.error}` }
+    const summaries = await Promise.all(found.map(async ledger => summarize(await $.fs.read(ledger.path), ledger.slug, ledger.mtimeMs)))
+    const ancestors = await backlogAncestors($, summaries)
     const filter = e.args.trim().toLowerCase()
-    const ledgers = found.filter(ledger => ledger.slug.toLowerCase().includes(filter))
+    const matches = (name: string) => name.toLowerCase().includes(filter)
+    const ledgers = [
+      ...summaries.filter((_, index) => matches(found[index]?.slug ?? '')),
+      ...('error' in ancestors ? [] : ancestors.filter(({ slug }) => matches(slug))),
+    ].sort((a, b) => b.editedMs - a.editedMs)
+    const backlogNote = 'error' in ancestors ? [`Parent tasks in the backlog are not shown. ${ancestors.error}`] : []
     if (ledgers.length === 0) {
-      return { text: filter ? `No ledger matches "${filter}".` : 'No task ledgers found.' }
+      return { text: [filter ? `No ledger matches "${filter}".` : 'No task ledgers found.', ...backlogNote].join('\n\n') }
     }
-    const summaries = await Promise.all(
-      ledgers.map(async ledger => summarize(await $.fs.read(ledger.path), ledger.slug, ledger.mtimeMs)),
-    )
-    return { text: formatAll(summaries) }
+    return { text: [formatAll(ledgers), ...backlogNote].join('\n\n') }
   })
 
   // The markdown command writes to the ledger, so it must not run unless exactly one ledger is active. The exception is

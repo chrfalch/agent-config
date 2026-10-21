@@ -227,6 +227,7 @@ test('an /api request without the key, or with a wrong one, gets 401', async t =
   const { home, stubBin, fixLogin } = fixture(t);
   const server = await startForeground(t, home, stubBin);
   assert.equal((await request(server, 'GET', '/api/ledgers', { key: null })).status, 401);
+  assert.equal((await request(server, 'GET', '/api/repos', { key: null })).status, 401);
   assert.equal((await request(server, 'GET', '/api/ledgers', { key: 'x'.repeat(server.key.length) })).status, 401);
   assert.equal((await request(server, 'GET', '/api/health', { key: 'short' })).status, 401);
   assert.equal((await request(server, 'POST', '/api/park', { key: null, body: { id: ledgerOf(fixLogin), reason: 'x' } })).status, 401);
@@ -238,6 +239,7 @@ test('a request with a foreign Host header gets 403, even with the key', async t
   const server = await startForeground(t, home, stubBin);
   for (const host of ['evil.example', `evil.example:${server.port}`, `127.0.0.1:${server.port + 1}`, '127.0.0.1']) {
     assert.equal((await request(server, 'GET', '/api/ledgers', { host })).status, 403, host);
+    assert.equal((await request(server, 'GET', '/api/repos', { host })).status, 403, host);
     assert.equal((await request(server, 'GET', '/', { host })).status, 403, host);
   }
   assert.equal((await request(server, 'GET', '/api/health', { host: `localhost:${server.port}` })).status, 200);
@@ -365,6 +367,56 @@ test('the page offers the statuses as a group of checkboxes, not a single select
   const page = (await request(server, 'GET', '/', { key: null })).text;
   assert.doesNotMatch(page, /<select[^>]*id="status"/);
   assert.match(page, /<fieldset[^>]*id="status"[^>]*>\s*<legend>Status<\/legend>/);
+});
+
+type RepoSummary = { repo: string; total: number; counts: Record<string, number> };
+
+async function repoList(server: Server): Promise<RepoSummary[]> {
+  const { status, value } = await json<{ repos: RepoSummary[] }>(server, 'GET', '/api/repos');
+  assert.equal(status, 200, JSON.stringify(value));
+  return value.repos;
+}
+
+function backlogLedger(home: string, repo: string, slug: string, main: string): void {
+  const file = path.join(home, '.claude/ledger-backlog', repo, `${slug}.md`);
+  mkdirSync(path.dirname(file), { recursive: true });
+  writeFileSync(file, `# Task ledger — ${slug}\n\n## Location\n- main: ${main}\n- worktree: <path>\n- branch: me/${slug}\n- base: main\n`);
+}
+
+test('the repository list counts the tasks of each repo by status, active, backlog and archived alike, in order of name', async t => {
+  const { home, app, stubBin } = fixture(t);
+  backlogLedger(home, 'app', 'idea', app);
+  backlogLedger(home, 'admin', 'audit', path.join(home, 'repos/admin'));
+  const scanned = run(home, [CC_LEDGERS], 'scan');
+  assert.equal(scanned.status, 0, scanned.stderr);
+  const server = await startForeground(t, home, stubBin);
+  const repos = await repoList(server);
+  assert.deepEqual(repos.map(({ repo }) => repo), ['admin', 'app', 'web']);
+  assert.deepEqual(repos, [
+    { repo: 'admin', total: 1, counts: { backlog: 1 } },
+    { repo: 'app', total: 4, counts: { active: 1, archived: 1, backlog: 1, parked: 1 } },
+    { repo: 'web', total: 1, counts: { active: 1 } },
+  ]);
+});
+
+test('the repository list counts every task that shares a repo and a status', async t => {
+  const { home, stubBin } = fixture(t);
+  const admin = path.join(home, 'repos/admin');
+  backlogLedger(home, 'admin', 'audit', admin);
+  backlogLedger(home, 'admin', 'cleanup', admin);
+  const scanned = run(home, [CC_LEDGERS], 'scan');
+  assert.equal(scanned.status, 0, scanned.stderr);
+  const server = await startForeground(t, home, stubBin);
+  assert.deepEqual((await repoList(server)).find(({ repo }) => repo === 'admin'), { repo: 'admin', total: 2, counts: { backlog: 2 } });
+});
+
+test('the repository list counts a status the dashboard has never seen', async t => {
+  const { home, stubBin, webFixLogin } = fixture(t);
+  const registry = path.join(home, '.claude/ledgers.json');
+  const entries: { path: string; status: string }[] = JSON.parse(readFileSync(registry, 'utf8'));
+  writeFileSync(registry, JSON.stringify(entries.map(entry => (entry.path === ledgerOf(webFixLogin) ? { ...entry, status: 'on-hold' } : entry))));
+  const server = await startForeground(t, home, stubBin);
+  assert.deepEqual((await repoList(server)).find(({ repo }) => repo === 'web'), { repo: 'web', total: 1, counts: { 'on-hold': 1 } });
 });
 
 test('the detail renders the ledger as escaped Markdown with its worktree, branch, PRs and go command', async t => {
@@ -1093,6 +1145,8 @@ function runPage(hash: string, stored: Map<string, string> | null): string[] {
     location: { hash, pathname: '/', search: '' },
     history: { replaceState() {} },
     sessionStorage,
+    clearTimeout,
+    window: { addEventListener() {} },
     document: { getElementById: element, createElement: element, addEventListener() {} },
     fetch: (_path: string, init: { headers: Record<string, string> }) => {
       sentKeys.push(init.headers['X-Ledger-Key'] ?? '');
@@ -1116,8 +1170,12 @@ test('the page still uses the key in its address when session storage throws', (
   assert.deepEqual(runPage('', null), []);
 });
 
+type FakeDocument = { activeElement: FakeElement | null };
+
 class FakeElement {
+  constructor(private readonly document: FakeDocument) {}
   value = '';
+  checked = false;
   hidden = false;
   disabled = false;
   textContent = '';
@@ -1127,9 +1185,9 @@ class FakeElement {
   dataset: Record<string, string> = {};
   children: FakeElement[] = [];
   classList = { toggle() {}, add() {}, remove() {} };
-  private listeners = new Map<string, (event: object) => unknown>();
+  private listeners = new Map<string, ((event: object) => unknown)[]>();
   addEventListener(type: string, listener: (event: object) => unknown): void {
-    this.listeners.set(type, listener);
+    this.listeners.set(type, [...(this.listeners.get(type) ?? []), listener]);
   }
   replaceChildren(...children: FakeElement[]): void {
     this.children = children;
@@ -1139,11 +1197,18 @@ class FakeElement {
   }
   setAttribute(): void {}
   querySelector(): FakeElement {
-    return new FakeElement();
+    return new FakeElement(this.document);
   }
-  focus(): void {}
-  async click(): Promise<void> {
-    await this.listeners.get('click')?.({ currentTarget: this });
+  focus(): void {
+    this.document.activeElement = this;
+  }
+  /** With a `target`, the event comes from that element inside this one, as an event that bubbles up to this one does. */
+  async dispatch(type: string, target: FakeElement = this): Promise<void> {
+    const event = { currentTarget: this, target, preventDefault() {} };
+    await Promise.all((this.listeners.get(type) ?? []).map(listener => listener(event)));
+  }
+  click(): Promise<void> {
+    return this.dispatch('click');
   }
 }
 
@@ -1157,17 +1222,49 @@ class Failure {
   ) {}
 }
 
-// Runs the page's script against a stub DOM whose fetch `answer` serves, and records each request.
-function openPage(answer: (pathname: string, body: Body) => object | Promise<object>) {
+// Runs the page's script against a stub DOM whose fetch `answer` serves, and records each request and each address
+// the page puts in the history. `search` is the address's query when the page loads.
+function openPage(answer: (pathname: string, body: Body) => object | Promise<object>, search = '?repo=app') {
   const html = readFileSync(path.join(REPO, 'tools/ledger-dashboard/page.html'), 'utf8');
   const script = /<script nonce="\{\{nonce\}\}">([\s\S]*?)<\/script>/.exec(html)?.[1] ?? '';
-  const elements = new Map<string, FakeElement>();
+  const document: FakeDocument = { activeElement: null };
+  const markup = html.slice(0, html.indexOf('<script'));
+  const elements = new Map([...markup.matchAll(/\sid="([^"]+)"/g)].map(([, id]) => [id, new FakeElement(document)] as const));
+  // Throws, unlike the browser's null, so a page that names an id its markup lacks fails here and not later.
   const byId = (id: string): FakeElement => {
-    const found = elements.get(id) ?? new FakeElement();
-    elements.set(id, found);
+    const found = elements.get(id);
+    if (found === undefined) throw new Error(`page.html has no element with id "${id}"`);
     return found;
   };
   const sent: { pathname: string; body: Body }[] = [];
+  const location = { hash: '#key=k', pathname: '/', search };
+  // pushState drops the entries after the current one and adds one; replaceState overwrites the current one.
+  const entries = [location.pathname + location.search + location.hash];
+  let current = 0;
+  const show = (address: string): void => {
+    const url = new URL(address, 'http://127.0.0.1');
+    location.hash = url.hash;
+    location.search = url.search;
+  };
+  const history = {
+    pushState: (_: unknown, __: string, address: string): void => {
+      entries.splice(++current, Infinity, address);
+      show(address);
+    },
+    replaceState: (_: unknown, __: string, address: string): void => {
+      entries[current] = address;
+      show(address);
+    },
+  };
+  const windowListeners = new Map<string, (() => unknown)[]>();
+  // The browser's back button: the address changes, then popstate fires. With `steps`, it is an earlier entry picked
+  // from the back button's menu, which fires popstate once.
+  const back = async (steps = 1): Promise<void> => {
+    assert.ok(current - steps >= 0, 'the history holds no entry that far back');
+    current -= steps;
+    show(entries[current] ?? '');
+    await Promise.all((windowListeners.get('popstate') ?? []).map(listener => listener()));
+  };
   vm.runInNewContext(script, {
     URLSearchParams,
     setTimeout,
@@ -1178,10 +1275,11 @@ function openPage(answer: (pathname: string, body: Body) => object | Promise<obj
         readonly value: string,
       ) {}
     },
-    location: { hash: '#key=k', pathname: '/', search: '' },
-    history: { replaceState() {} },
+    location,
+    history,
     sessionStorage: { getItem: () => null, setItem() {} },
-    document: { getElementById: byId, createElement: () => new FakeElement(), addEventListener() {} },
+    window: { addEventListener: (type: string, listener: () => unknown) => void windowListeners.set(type, [...(windowListeners.get(type) ?? []), listener]) },
+    document: { getElementById: byId, createElement: () => new FakeElement(document), addEventListener() {} },
     fetch: async (pathname: string, init: { body?: string }) => {
       const body: Body = init.body === undefined ? undefined : JSON.parse(init.body);
       sent.push({ pathname, body });
@@ -1191,12 +1289,35 @@ function openPage(answer: (pathname: string, body: Body) => object | Promise<obj
         : { status: 200, ok: true, json: async () => value };
     },
   });
-  return { byId, sent };
+  return { byId, sent, history: () => entries.slice(0, current + 1), back, focused: () => document.activeElement };
 }
 
 const settle = (): Promise<void> => new Promise(resolve => setImmediate(resolve));
 
-const PAGE_ROWS = ['a', 'b'].map(slug => ({ id: `/repos/app/.claude/worktrees/${slug}/.claude/ledger.md`, repo: 'app', slug, status: 'active', updated: '', next: '', branch: `me/${slug}` }));
+const PAGE_ROWS = [
+  ['app', 'a', 'active'],
+  ['app', 'b', 'active'],
+  ['app', 'c', 'parked'],
+  ['a&b', 'idea', 'backlog'],
+].map(([repo, slug, status]) => ({ id: `/repos/${repo}/.claude/worktrees/${slug}/.claude/ledger.md`, repo, slug, status, updated: '', next: '', branch: `me/${slug}` }));
+
+const PAGE_REPOS = [{ repo: 'a&b', total: 1, counts: { backlog: 1 } }, { repo: 'app', total: 3, counts: { active: 2, parked: 1 } }];
+
+const repoButtons = (page: ReturnType<typeof openPage>): FakeElement[] => page.byId('repo-list').children.flatMap(item => item.children);
+
+const listedSlugs = (page: ReturnType<typeof openPage>): string[] => page.byId('rows').children.map(row => row.children[0]?.textContent ?? '');
+
+const statusBoxes = (page: ReturnType<typeof openPage>): FakeElement[] => page.byId('status-options').children.flatMap(label => label.children.slice(0, 1));
+
+// A click on a status checkbox: the box toggles, and its change event bubbles up to the fieldset, where the page listens.
+function toggleStatus(page: ReturnType<typeof openPage>, status: string): Promise<void> {
+  const box = statusBoxes(page).find(child => child.value === status);
+  assert.ok(box, `the page offers no checkbox for ${status}`);
+  box.checked = !box.checked;
+  return page.byId('status').dispatch('change', box);
+}
+
+const textOf = (element: FakeElement): string => [element.textContent, ...element.children.map(textOf)].filter(Boolean).join(' ');
 
 function pageRow(query: URLSearchParams | Body): (typeof PAGE_ROWS)[number] {
   const field = (name: string): unknown => (query instanceof URLSearchParams ? query.get(name) : query?.[name]);
@@ -1205,12 +1326,25 @@ function pageRow(query: URLSearchParams | Body): (typeof PAGE_ROWS)[number] {
   return row;
 }
 
-function pageAnswer(pathname: string, body: Body): object {
+function pageAnswer(pathname: string, body: Body, rows = PAGE_ROWS): object {
   const [route, query] = pathname.split('?');
-  if (route === '/api/ledgers') return { ledgers: PAGE_ROWS, total: PAGE_ROWS.length, repos: ['app'], statuses: ['active'] };
+  if (route === '/api/ledgers') {
+    const filter = new URLSearchParams(query);
+    // The server searches the ledger file; the fake searches the row, which stands in for it.
+    const needle = (filter.get('q') ?? '').trim().toLowerCase();
+    const repo = filter.get('repo') ?? '';
+    const statuses = filter.getAll('status').filter(Boolean);
+    const matches = (row: (typeof PAGE_ROWS)[number]): boolean =>
+      (repo === '' || row.repo === repo) &&
+      (statuses.length === 0 || statuses.includes(row.status)) &&
+      JSON.stringify(row).toLowerCase().includes(needle);
+    const unique = (values: string[]): string[] => [...new Set(values)].sort();
+    return { ledgers: rows.filter(matches), total: rows.length, repos: unique(rows.map(row => row.repo)), statuses: unique(rows.map(row => row.status)) };
+  }
+  if (route === '/api/repos') return { repos: PAGE_REPOS };
   if (route === '/api/ledger') {
     const row = pageRow(new URLSearchParams(query));
-    return { ...row, html: '', path: row.id, worktree: '', worktreeExists: true, prs: [], go: `go ${row.slug}`, parked: false };
+    return { ...row, html: '', path: row.id, worktree: '', worktreeExists: true, prs: [], go: `go ${row.slug}`, parked: row.status === 'parked' };
   }
   if (route === '/api/retire/preview') {
     const { slug } = pageRow(body);
@@ -1389,6 +1523,380 @@ test('the page hides the retire preview as soon as another task is selected, and
     assert.deepEqual(retires(page.sent), [], previewOfA);
     releaseB();
     await openingB;
+  }
+});
+
+test('the page starts on the list of repositories, and opens one with ?repo= in the address and never the key', async () => {
+  const page = openPage(pageAnswer, '');
+  await settle();
+  assert.deepEqual(page.sent.map(({ pathname }) => pathname), ['/api/repos']);
+  assert.equal(page.byId('repos-view').hidden, false);
+  assert.equal(page.byId('repo-view').hidden, true);
+  assert.equal(page.byId('no-repos').hidden, true);
+  const [ab, app] = repoButtons(page);
+  assert.ok(ab && app);
+  assert.deepEqual([ab, app].map(textOf), ['a&b 1 task 1 backlog', 'app 3 tasks 2 active 1 parked']);
+
+  await ab.click();
+  assert.equal(page.byId('repos-view').hidden, true);
+  assert.equal(page.byId('repo-view').hidden, false);
+  assert.equal(page.byId('repo-name').textContent, 'a&b');
+  assert.ok(page.sent.some(({ pathname }) => pathname === '/api/ledgers?repo=a%26b'));
+  assert.deepEqual(listedSlugs(page), ['idea']);
+
+  await page.byId('all-repos').click();
+  assert.equal(page.byId('repos-view').hidden, false);
+  assert.equal(page.byId('repo-view').hidden, true);
+  assert.deepEqual(page.history(), ['/', '/?repo=a%26b', '/']);
+});
+
+test('the page opens a repository in a new history entry, so Back returns to the list of repositories', async () => {
+  const page = openPage(pageAnswer, '');
+  await settle();
+  const [, app] = repoButtons(page);
+  assert.ok(app);
+
+  await app.click();
+  assert.deepEqual(page.history(), ['/', '/?repo=app']);
+  await page.back();
+  assert.equal(page.byId('repos-view').hidden, false);
+  assert.equal(page.byId('repo-view').hidden, true);
+});
+
+test('the page opens the repository its address names on load, and the back button restores the view of each address', async () => {
+  const page = openPage(pageAnswer, '?repo=app');
+  await settle();
+  assert.equal(page.byId('repo-view').hidden, false);
+  assert.equal(page.byId('repo-name').textContent, 'app');
+  assert.ok(page.sent.some(({ pathname }) => pathname === '/api/ledgers?repo=app'));
+  await page.byId('all-repos').click();
+  const [ab] = repoButtons(page);
+  assert.ok(ab);
+  await ab.click();
+  assert.deepEqual(page.history(), ['/?repo=app', '/', '/?repo=a%26b']);
+
+  await page.back();
+  assert.equal(page.byId('repos-view').hidden, false);
+  assert.equal(page.byId('repo-view').hidden, true);
+  await page.back();
+  assert.equal(page.byId('repo-view').hidden, false);
+  assert.equal(page.byId('repo-name').textContent, 'app');
+});
+
+test('the page says there are no ledgers when the registry is empty', async () => {
+  const page = openPage((pathname, body) => (pathname === '/api/repos' ? { repos: [] } : pageAnswer(pathname, body)), '');
+  await settle();
+  assert.deepEqual(page.sent.map(({ pathname }) => pathname), ['/api/repos']);
+  assert.equal(page.byId('no-repos').hidden, false);
+  assert.deepEqual(repoButtons(page), []);
+});
+
+test('the page drops the task list of a repository it has left', async () => {
+  let release = (): void => {};
+  const held = new Promise<void>(resolve => (release = resolve));
+  const page = openPage(async (pathname, body) => {
+    if (pathname.startsWith('/api/ledgers')) await held;
+    return pageAnswer(pathname, body);
+  }, '');
+  await settle();
+  const [, app] = repoButtons(page);
+  assert.ok(app);
+
+  const opening = app.click();
+  await page.byId('all-repos').click();
+  release();
+  await opening;
+  assert.equal(page.byId('repo-view').hidden, true);
+  assert.deepEqual(page.byId('rows').children, []);
+  assert.equal(page.byId('count').textContent, '2 repositories, 4 tasks');
+});
+
+// Holds each request to `route` until the test replies to it, so the test sets the order the replies arrive in.
+// A reply without an outcome answers as pageAnswer does; an Error outcome rejects the request, as a network failure does.
+function holdRequests(route: string) {
+  const held: { pathname: string; resolve(outcome?: object): void }[] = [];
+  const answer = async (pathname: string, body: Body): Promise<object> => {
+    if (pathname.split('?')[0] !== route) return pageAnswer(pathname, body);
+    const outcome = await new Promise<object | undefined>(resolve => held.push({ pathname, resolve }));
+    if (outcome instanceof Error) throw outcome;
+    return outcome ?? pageAnswer(pathname, body);
+  };
+  const reply = (index: number, outcome?: object): void => {
+    const request = held[index];
+    assert.ok(request, `the page sent no request ${index} to ${route}`);
+    request.resolve(outcome);
+  };
+  return { answer, reply, pathnames: () => held.map(({ pathname }) => pathname) };
+}
+
+test('the page shows the newer task list when it leaves a repository and comes back before the older reply arrives', async () => {
+  const lists = holdRequests('/api/ledgers');
+  const page = openPage(lists.answer, '?repo=app');
+  await page.byId('all-repos').click();
+  const [, app] = repoButtons(page);
+  assert.ok(app);
+  const returning = app.click();
+  assert.deepEqual(lists.pathnames(), ['/api/ledgers?repo=app', '/api/ledgers?repo=app']);
+
+  lists.reply(1);
+  await returning;
+  lists.reply(0, { ledgers: [], total: 0, repos: [], statuses: [] });
+  await settle();
+  assert.deepEqual(listedSlugs(page), ['a', 'b', 'c']);
+  assert.equal(page.byId('count').textContent, '3 tasks, 2 active');
+});
+
+test('the page shows the list for the newer status filter when the older reply arrives last', async () => {
+  const lists = holdRequests('/api/ledgers');
+  const page = openPage(lists.answer);
+  lists.reply(0);
+  await settle();
+  const checking = toggleStatus(page, 'active');
+  lists.reply(1);
+  await checking;
+
+  const older = toggleStatus(page, 'parked');
+  const newer = toggleStatus(page, 'active');
+  lists.reply(3);
+  await newer;
+  lists.reply(2);
+  await older;
+  assert.deepEqual(listedSlugs(page), ['c']);
+  assert.equal(page.byId('count').textContent, '1 of 3 tasks');
+});
+
+test('the page shows no error for a request it has dropped, whether the request failed or was rejected', async () => {
+  const outcomes = [new Failure(500, 'The registry is unreadable.'), new Error('The network is down.')];
+  for (const outcome of outcomes) {
+    const label = outcome instanceof Error ? 'rejected' : 'error reply';
+
+    const leaving = holdRequests('/api/ledgers');
+    const left = openPage(leaving.answer, '');
+    await settle();
+    const [, app] = repoButtons(left);
+    assert.ok(app);
+    const opening = app.click();
+    await left.byId('all-repos').click();
+    leaving.reply(0, outcome);
+    await opening;
+    assert.equal(left.byId('repos-view').hidden, false, `left the repository, ${label}`);
+    assert.equal(left.byId('notice').textContent, '', `left the repository, ${label}`);
+
+    const filtering = holdRequests('/api/ledgers');
+    const filtered = openPage(filtering.answer);
+    filtering.reply(0);
+    await settle();
+    const checking = toggleStatus(filtered, 'active');
+    filtering.reply(1);
+    await checking;
+    const older = toggleStatus(filtered, 'parked');
+    const newer = toggleStatus(filtered, 'active');
+    filtering.reply(3);
+    await newer;
+    filtering.reply(2, outcome);
+    await older;
+    assert.equal(filtered.byId('notice').textContent, '', `changed the status, ${label}`);
+    assert.deepEqual(listedSlugs(filtered), ['c'], `changed the status, ${label}`);
+
+    const summaries = holdRequests('/api/repos');
+    const opened = openPage(summaries.answer, '?repo=app');
+    summaries.reply(0);
+    await settle();
+    const listing = opened.byId('all-repos').click();
+    const showing = opened.back();
+    summaries.reply(2);
+    await showing;
+    summaries.reply(1, outcome);
+    await listing;
+    assert.equal(opened.byId('notice').textContent, '', `opened a repository before the list arrived, ${label}`);
+    assert.deepEqual(listedSlugs(opened), ['a', 'b', 'c'], `opened a repository before the list arrived, ${label}`);
+  }
+});
+
+test('the page clears the task list of the repository it leaves before the next one arrives', async () => {
+  for (const via of ['back button', 'repository list'] as const) {
+    const lists = holdRequests('/api/ledgers');
+    const page = openPage(lists.answer, '?repo=a%26b');
+    lists.reply(0);
+    await settle();
+    await page.byId('all-repos').click();
+    const [, app] = repoButtons(page);
+    assert.ok(app);
+    const showingApp = app.click();
+    lists.reply(1);
+    await showingApp;
+    assert.deepEqual(listedSlugs(page), ['a', 'b', 'c'], via);
+
+    let opening: Promise<void>;
+    if (via === 'back button') {
+      opening = page.back(2);
+    } else {
+      await page.byId('all-repos').click();
+      const [ab] = repoButtons(page);
+      assert.ok(ab);
+      opening = ab.click();
+    }
+    assert.deepEqual(listedSlugs(page), [], via);
+    assert.equal(page.byId('count').textContent, '', via);
+
+    lists.reply(2);
+    await opening;
+    assert.deepEqual(listedSlugs(page), ['idea'], via);
+  }
+});
+
+test('the page asks for the task list alone when the status filter changes', async () => {
+  const page = openPage(pageAnswer);
+  await settle();
+  const before = page.sent.length;
+
+  await toggleStatus(page, 'parked');
+  assert.deepEqual(page.sent.slice(before).map(({ pathname }) => pathname), ['/api/ledgers?repo=app&status=parked']);
+  assert.deepEqual(listedSlugs(page), ['c']);
+  assert.equal(page.byId('count').textContent, '1 of 3 tasks');
+});
+
+test('the page asks for every checked status and lists the tasks of any of them', async () => {
+  const rows = [...PAGE_ROWS, { id: '/repos/app/.claude/worktrees/d/.claude/ledger.md', repo: 'app', slug: 'd', status: 'backlog', updated: '', next: '', branch: 'me/d' }];
+  const repos = [{ repo: 'a&b', total: 1, counts: { backlog: 1 } }, { repo: 'app', total: 4, counts: { active: 2, backlog: 1, parked: 1 } }];
+  const page = openPage((pathname, body) => (pathname === '/api/repos' ? { repos } : pageAnswer(pathname, body, rows)));
+  await settle();
+  assert.deepEqual(listedSlugs(page), ['a', 'b', 'c', 'd']);
+  const before = page.sent.length;
+
+  await toggleStatus(page, 'active');
+  await toggleStatus(page, 'parked');
+  assert.deepEqual(page.sent.slice(before).map(({ pathname }) => pathname), [
+    '/api/ledgers?repo=app&status=active',
+    '/api/ledgers?repo=app&status=active&status=parked',
+  ]);
+  assert.deepEqual(listedSlugs(page), ['a', 'b', 'c']);
+  assert.equal(page.byId('count').textContent, '3 of 4 tasks');
+  assert.deepEqual(statusBoxes(page).map(({ value, checked }) => ({ value, checked })), [
+    { value: 'active', checked: true },
+    { value: 'backlog', checked: false },
+    { value: 'parked', checked: true },
+  ]);
+});
+
+test('the page lists every task of the repository again when a rescan no longer finds the checked status', async () => {
+  let rescanned = false;
+  const unparked = PAGE_ROWS.map(row => (row.slug === 'c' ? { ...row, status: 'active' } : row));
+  const page = openPage((pathname, body) => {
+    if (!rescanned) return pageAnswer(pathname, body);
+    if (pathname === '/api/repos') return { repos: [{ repo: 'a&b', total: 1, counts: { backlog: 1 } }, { repo: 'app', total: 3, counts: { active: 3 } }] };
+    return pageAnswer(pathname, body, unparked);
+  });
+  await settle();
+  await toggleStatus(page, 'parked');
+  assert.deepEqual(listedSlugs(page), ['c']);
+
+  rescanned = true;
+  const before = page.sent.length;
+  await page.byId('rescan').click();
+  assert.deepEqual(page.sent.slice(before).map(({ pathname }) => pathname), [
+    '/api/rescan',
+    '/api/ledgers?repo=app&status=parked',
+    '/api/repos',
+    '/api/ledgers?repo=app',
+  ]);
+  assert.deepEqual(statusBoxes(page).map(({ value, checked }) => ({ value, checked })), [{ value: 'active', checked: false }]);
+  assert.deepEqual(listedSlugs(page), ['a', 'b', 'c']);
+  assert.equal(page.byId('count').textContent, '3 tasks, 3 active');
+});
+
+test('the page asks for the task list with the search alone when the search changes, and lists only the tasks that match', async () => {
+  const page = openPage(pageAnswer);
+  await settle();
+  assert.deepEqual(listedSlugs(page), ['a', 'b', 'c']);
+  const before = page.sent.length;
+
+  page.byId('q').value = 'ME/B';
+  await page.byId('q').dispatch('input');
+  await new Promise(resolve => setTimeout(resolve, 300));
+  await settle();
+  assert.deepEqual(page.sent.slice(before).map(({ pathname }) => pathname), ['/api/ledgers?repo=app&q=ME%2FB']);
+  assert.deepEqual(listedSlugs(page), ['b']);
+  assert.equal(page.byId('count').textContent, '1 of 3 tasks');
+});
+
+test('the page waits for the repository counts it asked for when the status or the search changes, and asks for none again', async () => {
+  const summaries = holdRequests('/api/repos');
+  const page = openPage(summaries.answer);
+  summaries.reply(0);
+  await settle();
+  const rescanning = page.byId('rescan').click();
+  await settle();
+
+  const filtering = toggleStatus(page, 'parked');
+  page.byId('q').value = 'c';
+  await page.byId('q').dispatch('input');
+  await new Promise(resolve => setTimeout(resolve, 300));
+  assert.deepEqual(summaries.pathnames(), ['/api/repos', '/api/repos']);
+
+  summaries.reply(1);
+  await filtering;
+  await rescanning;
+  await settle();
+  assert.deepEqual(listedSlugs(page), ['c']);
+  assert.equal(page.byId('count').textContent, '1 of 3 tasks');
+});
+
+test('the page opens no detail and shows no error when an action replies after the task was left for the list of repositories', async () => {
+  for (const via of ['All repositories', 'back button'] as const) {
+    let release = (): void => {};
+    const held = new Promise<void>(resolve => (release = resolve));
+    const page = openPage(async (pathname, body) => {
+      if (pathname === '/api/park') await held;
+      return pageAnswer(pathname, body);
+    }, '');
+    await settle();
+    const [, app] = repoButtons(page);
+    assert.ok(app);
+    await app.click();
+    const [a] = page.byId('rows').children;
+    assert.ok(a);
+    await a.click();
+    page.byId('reason').value = 'Waiting for review.';
+    await page.byId('park-form').dispatch('submit');
+    assert.ok(page.sent.some(({ pathname }) => pathname === '/api/park'), via);
+
+    if (via === 'back button') await page.back();
+    else await page.byId('all-repos').click();
+    const before = page.sent.length;
+    release();
+    await settle();
+    assert.deepEqual(page.sent.slice(before).map(({ pathname }) => pathname).filter(pathname => pathname.startsWith('/api/ledger?')), [], via);
+    assert.equal(page.byId('notice').textContent, '', via);
+    assert.equal(page.byId('repos-view').hidden, false, via);
+  }
+});
+
+test('the page asks for the repository counts again after a rescan', async () => {
+  for (const search of ['', '?repo=app']) {
+    const page = openPage(pageAnswer, search);
+    await settle();
+    const before = page.sent.length;
+
+    await page.byId('rescan').click();
+    assert.ok(page.sent.slice(before).some(({ pathname }) => pathname === '/api/repos'), search);
+  }
+});
+
+test('the page puts the focus back on the repository it left, after the back button as after All repositories', async () => {
+  for (const via of ['back button', 'All repositories'] as const) {
+    const page = openPage(pageAnswer, '');
+    await settle();
+    const [, app] = repoButtons(page);
+    assert.ok(app);
+    await app.click();
+    assert.equal(page.focused(), page.byId('repo-name'), via);
+
+    if (via === 'back button') await page.back();
+    else await page.byId('all-repos').click();
+    const [, listed] = repoButtons(page);
+    assert.ok(listed);
+    assert.equal(page.focused(), listed, via);
   }
 });
 

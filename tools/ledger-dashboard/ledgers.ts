@@ -93,6 +93,8 @@ const isReply = <T extends object>(value: T | Reply): value is Reply => 'body' i
 
 export type Row = { id: string; repo: string; slug: string; status: string; updated: string; next: string; branch: string };
 export type Filter = { repo?: string; status?: string[]; q?: string };
+/** One repository by name: its number of tasks, and the number in each status that occurs in it. */
+export type RepoSummary = { repo: string; total: number; counts: Record<string, number> };
 
 /**
  * What a retire preview showed. A retire goes ahead only while its task still looks the same. The real paths count too,
@@ -177,6 +179,16 @@ function ledgersOf(mod: Mod) {
     return { ledgers, total: all.length, repos: unique(all.map(row => row.repo)), statuses: unique(all.map(row => row.status)) };
   }
 
+  async function summarized(entries: Entry[]): Promise<{ repos: RepoSummary[] }> {
+    const all = await rows(entries);
+    const repos = unique(all.map(row => row.repo)).map(repo => {
+      const statuses = all.filter(row => row.repo === repo).map(row => row.status);
+      const counts = Object.fromEntries(unique(statuses).map(status => [status, statuses.filter(each => each === status).length]));
+      return { repo, total: statuses.length, counts };
+    });
+    return { repos };
+  }
+
   // The page sends the id back, so it is only ever matched against the registry, never opened as a path.
   async function find(id: string): Promise<Entry | Reply> {
     const read = await registry('list');
@@ -244,6 +256,11 @@ function ledgersOf(mod: Mod) {
     async list(filter: Filter): Promise<Reply> {
       const read = await registry('list');
       return 'error' in read ? fail(500, read.error) : ok(await listed(read.entries, filter));
+    },
+
+    async repos(): Promise<Reply> {
+      const read = await registry('list');
+      return 'error' in read ? fail(500, read.error) : ok(await summarized(read.entries));
     },
 
     async rescan(): Promise<Reply> {

@@ -328,15 +328,18 @@ has active child tasks, add `--force`; without it the command refuses.
 ### The dashboard
 
 `/ledger:dashboard` starts a web page on this machine that shows every task
-ledger, the same list as `/ledger:all`. You can filter the list by repo and by
-status, and search the text of every ledger. You can select more than one
-status; the list then shows the tasks with any of them. With no status
-selected, it shows every task. Click a task to read its ledger,
-its worktree, its branch and its PRs. Its buttons copy `go <name>`, park a task
-with a reason, remove the parked mark, and retire a task. Retire first shows
-what it would do and waits for a second click. When the task has uncommitted
-changes or an unmerged branch, that click is **Retire anyway (--force)**. These
-are the same rules as `/ledger:retire`.
+ledger, the same list as `/ledger:all`. The page starts with a list of the
+repositories. Each one shows its number of tasks and how many have each status.
+Click a repository to see its tasks. You can filter them by status, and search
+the text of their ledgers. You can select more than one status; the list then
+shows the tasks with any of them. With no status selected, it shows every task.
+**All repositories** goes back to the list, and so does the browser's Back
+button. The address names the open repository, so a reload opens it again.
+Click a task to read its ledger, its worktree, its branch and its PRs. Its
+buttons copy `go <name>`, park a task with a reason, remove the parked mark,
+and retire a task. Retire first shows what it would do and waits for a second
+click. When the task has uncommitted changes or an unmerged branch, that click
+is **Retire anyway (--force)**. These are the same rules as `/ledger:retire`.
 The dashboard refuses to retire a task in the backlog, because it has no
 worktree yet.
 

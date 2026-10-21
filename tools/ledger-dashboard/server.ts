@@ -31,6 +31,7 @@ function routes(ledgers: Ledgers): Record<string, Route> {
       method: 'GET',
       run: async ({ query }) => ledgers.list({ repo: query.get('repo') ?? '', status: query.getAll('status').filter(Boolean), q: query.get('q') ?? '' }),
     },
+    '/api/repos': { method: 'GET', run: () => ledgers.repos() },
     '/api/ledger': { method: 'GET', run: async ({ query }) => forTask(query.get('id'), ledgers.detail) },
     '/api/rescan': { method: 'POST', run: () => ledgers.rescan() },
     '/api/retire/preview': { method: 'POST', run: async ({ body }) => forTask(body.id, ledgers.previewRetire) },

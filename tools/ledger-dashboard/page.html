@@ -28,6 +28,11 @@
   .top .spacer { flex: 1; }
   .filters { display: flex; gap: 12px; padding: 0 20px 12px; flex-wrap: wrap; align-items: center; }
   .filters label { color: var(--muted); display: flex; gap: 6px; align-items: center; }
+  .filters fieldset { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; border: 0; margin: 0; padding: 0; min-width: 0; }
+  /* A floated legend lays out as an ordinary flex item instead of sitting in the fieldset border. */
+  .filters legend { float: left; padding: 0; color: var(--muted); }
+  #status-options { display: flex; flex-wrap: wrap; gap: 4px 12px; }
+  .filters input[type=checkbox] { margin: 0; padding: 0; }
   select, input, button { font: inherit; color: inherit; }
   select, input { background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; }
   input[type=search] { min-width: 260px; flex: 1; max-width: 420px; }
@@ -91,7 +96,7 @@
 </div>
 <div class="filters">
   <label>Repo <select id="repo"><option value="">All repos</option></select></label>
-  <label>Status <select id="status"><option value="">All statuses</option></select></label>
+  <fieldset id="status"><legend>Status</legend><span id="status-options"></span></fieldset>
   <input type="search" id="q" placeholder="Search the text of every ledger" aria-label="Search the text of every ledger">
 </div>
 <p class="notice" id="notice" role="status" hidden></p>
@@ -152,7 +157,7 @@ const $ = id => document.getElementById(id);
 // `preview` is the retire preview on screen: the task it is for and the token that retires that task.
 // `detailRequest` counts detail requests and closes, so only the reply to the latest request is shown, and a retire
 // preview only when no detail request or close came after it was asked for.
-const state = { selected: null, detail: null, preview: null, detailRequest: 0, searchTimer: 0 };
+const state = { selected: null, detail: null, preview: null, detailRequest: 0, searchTimer: 0, statuses: new Set() };
 
 class KeyError extends Error {}
 
@@ -194,11 +199,26 @@ function fillSelect(select, values, everyLabel) {
   select.value = values.includes(current) ? current : '';
 }
 
+/** Returns true when a checked status no longer exists, so the list was filtered by a status the page no longer shows. */
+function fillStatuses(statuses) {
+  const checked = state.statuses.size;
+  for (const status of state.statuses) if (!statuses.includes(status)) state.statuses.delete(status);
+  $('status-options').replaceChildren(...statuses.map(status => {
+    const box = Object.assign(document.createElement('input'), { type: 'checkbox', value: status, checked: state.statuses.has(status) });
+    const name = Object.assign(document.createElement('span'), { className: 'status', textContent: status });
+    name.dataset.status = status;
+    const label = document.createElement('label');
+    label.append(box, name);
+    return label;
+  }));
+  return state.statuses.size < checked;
+}
+
 const isSelected = id => id === state.selected;
 
 function render({ ledgers, total, repos, statuses }) {
   fillSelect($('repo'), repos, 'All repos');
-  fillSelect($('status'), statuses, 'All statuses');
+  if (fillStatuses(statuses)) return load().catch(report);
   const active = ledgers.filter(row => row.status === 'active').length;
   $('count').textContent = ledgers.length === total
     ? `${total} ${total === 1 ? 'task' : 'tasks'}, ${active} active`
@@ -230,7 +250,8 @@ function markSelected() {
 
 async function load() {
   const query = new URLSearchParams();
-  for (const name of ['repo', 'status', 'q']) if ($(name).value.trim() !== '') query.set(name, $(name).value.trim());
+  for (const name of ['repo', 'q']) if ($(name).value.trim() !== '') query.set(name, $(name).value.trim());
+  for (const status of state.statuses) query.append('status', status);
   const { ok, data } = await api(`/api/ledgers?${query}`);
   if (!ok) throw new Error(data.error);
   render(data);
@@ -336,7 +357,11 @@ async function act(path, body, button) {
 const task = () => ({ id: state.detail.id });
 
 $('repo').addEventListener('change', () => load().catch(report));
-$('status').addEventListener('change', () => load().catch(report));
+$('status').addEventListener('change', ({ target }) => {
+  if (target.checked) state.statuses.add(target.value);
+  else state.statuses.delete(target.value);
+  load().catch(report);
+});
 $('q').addEventListener('input', () => {
   clearTimeout(state.searchTimer);
   state.searchTimer = setTimeout(() => load().catch(report), 250);

@@ -329,7 +329,9 @@ has active child tasks, add `--force`; without it the command refuses.
 
 `/ledger:dashboard` starts a web page on this machine that shows every task
 ledger, the same list as `/ledger:all`. You can filter the list by repo and by
-status, and search the text of every ledger. Click a task to read its ledger,
+status, and search the text of every ledger. You can select more than one
+status; the list then shows the tasks with any of them. With no status
+selected, it shows every task. Click a task to read its ledger,
 its worktree, its branch and its PRs. Its buttons copy `go <name>`, park a task
 with a reason, remove the parked mark, and retire a task. Retire first shows
 what it would do and waits for a second click. When the task has uncommitted

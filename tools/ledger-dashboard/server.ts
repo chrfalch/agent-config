@@ -29,7 +29,7 @@ function routes(ledgers: Ledgers): Record<string, Route> {
     '/api/health': { method: 'GET', run: async () => ({ status: 200, body: { ok: true, pid: process.pid } }) },
     '/api/ledgers': {
       method: 'GET',
-      run: async ({ query }) => ledgers.list({ repo: query.get('repo') ?? '', status: query.get('status') ?? '', q: query.get('q') ?? '' }),
+      run: async ({ query }) => ledgers.list({ repo: query.get('repo') ?? '', status: query.getAll('status').filter(Boolean), q: query.get('q') ?? '' }),
     },
     '/api/ledger': { method: 'GET', run: async ({ query }) => forTask(query.get('id'), ledgers.detail) },
     '/api/rescan': { method: 'POST', run: () => ledgers.rescan() },

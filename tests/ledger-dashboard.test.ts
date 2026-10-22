@@ -556,6 +556,14 @@ test('each child row follows its parent row, and the groups and the children ins
   assert.equal(rows.length, Object.keys(FAMILY).length);
 });
 
+test('an active child row comes before a newer backlog child row', async t => {
+  const { home, stubBin } = family(t);
+  editRegistry(home, entry => (entry.slug === 'child-a' ? { ...entry, status: 'active' } : entry));
+  const server = await startForeground(t, home, stubBin);
+  const rows = (await list(server, '?repo=app')).ledgers;
+  assert.deepEqual(shape(rows), ['fix-login', 'epic', '↳ child-a', '↳ child-b', 'waiting', 'old-task']);
+});
+
 test('a grandchild row follows its parent row, which follows the grandparent row', async t => {
   const { home, stubBin, epic } = family(t);
   editRegistry(home, entry => (entry.slug === 'child-b' ? { ...entry, parent: 'child-a' } : entry));

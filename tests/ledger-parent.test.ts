@@ -331,6 +331,20 @@ test('show --json prints the same as an object', (t) => {
   });
 });
 
+test('show lists the active children first, then the others in the order of the Children section', (t) => {
+  const { home, main, ledgers } = repository(t, 'epic', 'waiting', 'busy');
+  for (const child of ['waiting', 'busy']) ok(home, main, 'add', 'epic', child);
+  const waiting = ledgers.waiting ?? '';
+  writeFileSync(waiting, read(waiting).replace('## Next step\n', '## Next step\nParked: 2026-10-01 — waiting on the API review\n'));
+  const epic = ledgers.epic ?? '';
+  writeFileSync(epic, read(epic).replace('- busy\n', '- gone (retired 2026-10-02)\n- busy\n'));
+
+  assert.deepEqual(
+    ok(home, main, 'show', 'epic').stdout.split('\n').map((line) => line.split('\t')[0]),
+    ['epic', 'busy', 'waiting', 'gone', ''],
+  );
+});
+
 test('show of a task without children prints only the parent line', (t) => {
   const { home, main } = repository(t, 'epic');
 

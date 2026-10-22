@@ -88,10 +88,16 @@ export function summarize(text: string, fallbackSlug: string, editedMs: number):
 export type Grouped<T> = { item: T; children: Grouped<T>[] }
 
 /**
- * Puts each item under the first listed item its parent key names, at any depth, keeping the order at each level.
+ * Puts each item under the first listed item its parent key names, at any depth. The top level keeps the order of `items`,
+ * and so do the children of each item, unless `compareChildren` sorts them.
  * An item whose parent is not listed stays at the top, and so does each item of a cycle, with its other children under it.
  */
-export function groupByParent<T>(items: T[], key: (item: T) => string, parentKey: (item: T) => string | undefined): Grouped<T>[] {
+export function groupByParent<T>(
+  items: T[],
+  key: (item: T) => string,
+  parentKey: (item: T) => string | undefined,
+  compareChildren: (a: T, b: T) => number = () => 0,
+): Grouped<T>[] {
   const first = new Map<string, T>()
   for (const item of items) if (!first.has(key(item))) first.set(key(item), item)
   const listedParent = (item: T) => {
@@ -111,10 +117,16 @@ export function groupByParent<T>(items: T[], key: (item: T) => string, parentKey
   const isTop = (item: T) => listedParent(item) === undefined || isInCycle(item)
   const group = (item: T): Grouped<T> => ({
     item,
-    children: first.get(key(item)) === item ? items.filter(child => !isTop(child) && listedParent(child) === key(item)).map(group) : [],
+    children: first.get(key(item)) === item ? items.filter(child => !isTop(child) && listedParent(child) === key(item)).sort(compareChildren).map(group) : [],
   })
   return items.filter(isTop).map(group)
 }
+
+/** The order of a parent's child tasks: the active ones first, then the others, each newest first. */
+export const childOrder =
+  <T>(isActive: (item: T) => boolean, time: (item: T) => number) =>
+  (a: T, b: T): number =>
+    Number(isActive(b)) - Number(isActive(a)) || time(b) - time(a)
 
 export const isoDate = (date: Date): string =>
   [date.getFullYear(), date.getMonth() + 1, date.getDate()].map(part => String(part).padStart(2, '0')).join('-')
@@ -190,7 +202,12 @@ export function format(ledger: LedgerSummary, children: Grouped<LedgerSummary>[]
 }
 
 export function formatAll(ledgers: LedgerSummary[]): string {
-  const groups = groupByParent(ledgers, ledger => ledger.slug, ledger => ledger.parent)
+  const groups = groupByParent(
+    ledgers,
+    ledger => ledger.slug,
+    ledger => ledger.parent,
+    childOrder(ledger => !ledger.isBacklog && !ledger.parked, ledger => ledger.editedMs),
+  )
   const order = groups.some(({ children }) => children.length > 0) ? 'newest first, children under their parent' : 'newest first'
   const count = ledgers.length === 1 ? '1 ledger' : `${ledgers.length} ledgers, ${order}`
   return [`**Task ledgers** · ${count}`, ...groups.map(({ item, children }) => format(item, children))].join('\n\n')

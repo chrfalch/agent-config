@@ -479,14 +479,14 @@ test('/ledger walks up a chain of backlog parents and nests each level under the
 
 const porcelainZ = (...worktrees: string[]): string => worktrees.map(path => `worktree ${path}\0HEAD abc\0\0`).join('')
 
-test('/ledger in a linked worktree walks up through a parent active in another worktree to a backlog grandparent', async ($, on) => {
+test('/ledger in a linked worktree walks up through a parent active in another worktree to a backlog grandparent, and shows no other worktree task', async ($, on) => {
   world(
     on,
     `${WORKTREES}/child-a`,
     { [pathOf('child-a')]: ledgerText('child-a', { parent: 'mid' }) },
-    { 'git worktree list --porcelain -z': exit(0, porcelainZ('/repo', `${WORKTREES}/child-a`, `${WORKTREES}/mid`)) },
+    { 'git worktree list --porcelain -z': exit(0, porcelainZ('/repo', `${WORKTREES}/child-a`, `${WORKTREES}/mid`, `${WORKTREES}/stray`)) },
     { [backlogPathOf('top')]: ledgerText('top', { children: ['- mid'] }) },
-    { [pathOf('mid')]: ledgerText('mid', { parent: 'top', children: ['- child-a'] }) },
+    { [pathOf('mid')]: ledgerText('mid', { parent: 'top', children: ['- child-a'] }), [pathOf('stray')]: ledgerText('stray') },
   )
 
   const { text } = await $.command.run({ command: 'ledger', args: '' })
@@ -495,19 +495,55 @@ test('/ledger in a linked worktree walks up through a parent active in another w
     [
       '**Task ledgers** · 3 ledgers, newest first, children under their parent',
       '',
-      `#### top (backlog) · edited ${at(2000)}`,
+      `#### top (backlog) · edited ${at(3000)}`,
       '- **Goal:** Goal of top.',
       '- **Next:** Next of top.',
       '- **Children:**',
-      `  - **mid** · edited ${at(1000)}`,
+      `  - **mid** · edited ${at(2000)}`,
       '    - **Goal:** Goal of mid.',
       '    - **Next:** Next of mid.',
       '    - **Children:**',
-      `      - **child-a** · edited ${at(3000)}`,
+      `      - **child-a** · edited ${at(4000)}`,
       '        - **Goal:** Goal of child-a.',
       '        - **Next:** Next of child-a.',
     ].join('\n'),
   )
+})
+
+test('/ledger skips another worktree whose ledger cannot be read, and still shows the parent found in the others', async ($, on) => {
+  world(
+    on,
+    `${WORKTREES}/child-a`,
+    { [pathOf('child-a')]: ledgerText('child-a', { parent: 'mid' }) },
+    { 'git worktree list --porcelain -z': exit(0, porcelainZ('/repo', `${WORKTREES}/child-a`, `${WORKTREES}/gone`, `${WORKTREES}/mid`)) },
+    {},
+    { [pathOf('mid')]: ledgerText('mid', { children: ['- child-a'] }) },
+  )
+
+  const { text } = await $.command.run({ command: 'ledger', args: '' })
+
+  expect(text.split('\n').filter(line => / · edited /.test(line))).toEqual([`#### mid · edited ${at(1000)}`, `  - **child-a** · edited ${at(2000)}`])
+})
+
+const parkedText = (slug: string, options: { parent?: string } = {}): string =>
+  ledgerText(slug, options).replace('## Next step\n', '## Next step\nParked: 2026-10-01 — Waiting for the API.\n')
+
+test('/ledger lists the active children first, then the parked ones, each newest first', async ($, on) => {
+  world(on, '/repo', {
+    [pathOf('child-parked')]: parkedText('child-parked', { parent: 'epic' }),
+    [pathOf('child-new')]: ledgerText('child-new', { parent: 'epic' }),
+    [pathOf('child-old')]: ledgerText('child-old', { parent: 'epic' }),
+    [pathOf('epic')]: ledgerText('epic', { children: ['- child-parked', '- child-new', '- child-old'] }),
+  })
+
+  const { text } = await $.command.run({ command: 'ledger', args: '' })
+
+  expect(text.split('\n').filter(line => / · edited /.test(line))).toEqual([
+    `#### epic · edited ${at(1000)}`,
+    `  - **child-new** · edited ${at(3000)}`,
+    `  - **child-old** · edited ${at(2000)}`,
+    `  - **child-parked** · edited ${at(4000)}`,
+  ])
 })
 
 test('/ledger stops at a cycle among backlog parents and shows each task once', async ($, on) => {

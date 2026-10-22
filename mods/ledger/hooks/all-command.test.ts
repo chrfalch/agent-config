@@ -211,7 +211,34 @@ test('/ledger:all indents a grandchild one step further than its parent', async 
   ])
 })
 
-const BACKLOG_HEADER = '| repo | slug | updated | goal |\n| --- | --- | --- | --- |'
+test('/ledger:all lists the active children first, then the parked and archived ones, each newest first', async ($, on) => {
+  const parked = entry('c-parked', '2026-10-06T09:30:00.000Z', { parent: 'epic' })
+  const archived = entry('c-gone', '2026-10-05T09:30:00.000Z', { parent: 'epic', status: 'archived', archivePath: '/home/.claude/ledger-archive/app/2026-10-05-c-gone.md' })
+  const newer = entry('c-new', '2026-10-04T09:30:00.000Z', { parent: 'epic' })
+  const older = entry('c-old', '2026-10-03T09:30:00.000Z', { parent: 'epic' })
+  const epic = entry('epic', '2026-10-01T09:30:00.000Z')
+  world(
+    on,
+    { 'bin/cc-ledgers list --json': exit(0, JSON.stringify([older, parked, epic, archived, newer])) },
+    {
+      ...Object.fromEntries([newer, older, epic].map(({ path }) => [path, ledgerText('Ship it.')])),
+      [parked.path]: ledgerText('Parked: 2026-10-06 — waiting for the API.\nShip it.'),
+      [archived.archivePath ?? '']: ledgerText('Ship it.'),
+    },
+  )
+
+  const { text } = await $.command.run({ command: 'ledger:all' })
+
+  expect(text.split('\n').slice(4)).toEqual([
+    `| app | epic | active | ${local(epic.updated)} | Ship it. |`,
+    `| app | ↳ c-new | active | ${local(newer.updated)} | Ship it. |`,
+    `| app | ↳ c-old | active | ${local(older.updated)} | Ship it. |`,
+    `| app | ↳ c-parked | parked | ${local(parked.updated)} | Ship it. |`,
+    `| app | ↳ c-gone | archived | ${local(archived.updated)} | Ship it. |`,
+  ])
+})
+
+const BACKLOG_HEADER ='| repo | slug | updated | goal |\n| --- | --- | --- | --- |'
 
 const backlogEntry = (slug: string, updated: string): Entry & { main: string } => ({
   ...entry(slug, updated, { status: 'backlog', path: `/home/.claude/ledger-backlog/app/${slug}.md`, branch: '' }),

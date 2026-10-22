@@ -77,8 +77,13 @@ function summarizeAll($: EngineInterface, found: Found[]): Promise<LedgerSummary
 async function otherWorktreeLedgers($: EngineInterface): Promise<Map<string, LedgerSummary>> {
   const { path: cwd } = await sessionFolder($)
   const found = await Promise.all((await otherWorktrees($, cwd)).map(({ path }) => ledgerIn($, path)))
-  const summaries = await summarizeAll($, found.filter(ledger => ledger !== undefined))
-  return new Map(summaries.map(summary => [summary.slug, summary]))
+  // Another session can remove a worktree between the stat and the read; its ledger is then skipped, not an error.
+  const summaries = await Promise.all(
+    found
+      .filter(ledger => ledger !== undefined)
+      .map(({ path, slug, mtimeMs }) => $.fs.read(path).then(text => summarize(text, slug, mtimeMs), () => undefined)),
+  )
+  return new Map(summaries.filter(summary => summary !== undefined).map(summary => [summary.slug, summary]))
 }
 
 /**

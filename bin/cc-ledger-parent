@@ -240,13 +240,16 @@ function childStatus(found, { slug, retired }) {
   };
 }
 
+// Active children first, as /ledger lists them. The Children section holds no dates, so the others keep its order.
+const activeFirst = (shown) => [...shown.filter(({ status }) => status === 'active'), ...shown.filter(({ status }) => status !== 'active')];
+
 function show(parentSlug, json) {
   const found = ledgersBySlug();
   const parent = resolve(found, parentSlug);
   const shown = {
     parent: parent.slug,
     goal: firstText(body(parent.lines, 'Goal')),
-    children: children(parent.lines).map((listed) => childStatus(found, listed)),
+    children: activeFirst(children(parent.lines).map((listed) => childStatus(found, listed))),
   };
   if (json) {
     console.log(JSON.stringify(shown, null, 2));

@@ -1,6 +1,6 @@
 import type { EngineInterface, ProcessRunResult } from 'claude-code'
 
-import { formatTime, groupByParent, summarize, type Grouped } from './ledger'
+import { childOrder, formatTime, groupByParent, summarize, type Grouped } from './ledger'
 import { message } from './lookup'
 import { type Entry, parseEntries, scriptPath } from './registry'
 
@@ -26,19 +26,22 @@ const taskKey = (repo: string, slug: string): string => `${repo}\0${slug}`
 // A table cell drops leading spaces, but keeps no-break spaces.
 const INDENT = '  '
 
-function familyOrder(newestFirst: Entry[]): { entry: Entry; name: string }[] {
+type Task = { entry: Entry; status: string }
+
+function familyOrder<T extends Task>(newestFirst: T[]): (T & { name: string })[] {
   const groups = groupByParent(
     newestFirst,
-    entry => taskKey(entry.repo, entry.slug),
-    entry => (entry.parent === undefined ? undefined : taskKey(entry.repo, entry.parent)),
+    ({ entry }) => taskKey(entry.repo, entry.slug),
+    ({ entry }) => (entry.parent === undefined ? undefined : taskKey(entry.repo, entry.parent)),
+    childOrder(({ status }) => status === 'active', ({ entry }) => Date.parse(entry.updated)),
   )
-  const descendants = (children: Grouped<Entry>[], depth: number): { entry: Entry; name: string }[] =>
+  const descendants = (children: Grouped<T>[], depth: number): (T & { name: string })[] =>
     children.flatMap(({ item, children: grandchildren }) => [
-      { entry: item, name: `${INDENT.repeat(depth)}↳ ${item.slug}` },
+      { ...item, name: `${INDENT.repeat(depth)}↳ ${item.entry.slug}` },
       ...descendants(grandchildren, depth + 1),
     ])
   return groups.flatMap(({ item, children }) => [
-    { entry: item, name: item.parent ? `${item.slug} (parent: ${item.parent})` : item.slug },
+    { ...item, name: item.entry.parent ? `${item.entry.slug} (parent: ${item.entry.parent})` : item.entry.slug },
     ...descendants(children, 0),
   ])
 }
@@ -57,13 +60,12 @@ const table = (header: string[], rows: string[][]): string[] =>
   [header, header.map(() => '---'), ...rows].map(row => `| ${row.join(' | ')} |`)
 
 async function tables($: EngineInterface, entries: Entry[]): Promise<string> {
-  const backlog = newestFirst(entries.filter(entry => entry.status === 'backlog'))
-  const tasks = newestFirst(entries.filter(entry => entry.status !== 'backlog'))
-  const [taskRows, backlogRows] = await Promise.all([
+  const backlog = newestFirst(entries.filter(entry => entry.status === 'backlog')).map(entry => ({ entry, status: entry.status }))
+  const [tasks, backlogRows] = await Promise.all([
     Promise.all(
-      familyOrder(tasks).map(async ({ entry, name }) => {
+      newestFirst(entries.filter(entry => entry.status !== 'backlog')).map(async entry => {
         const [status, next] = await statusAndNext($, entry)
-        return [entry.repo, name, status, formatTime(Date.parse(entry.updated)), truncate(next)].map(cell)
+        return { entry, status, next }
       }),
     ),
     Promise.all(
@@ -72,6 +74,9 @@ async function tables($: EngineInterface, entries: Entry[]): Promise<string> {
       ),
     ),
   ])
+  const taskRows = familyOrder(tasks).map(({ entry, name, status, next }) =>
+    [entry.repo, name, status, formatTime(Date.parse(entry.updated)), truncate(next)].map(cell),
+  )
   const active = taskRows.filter(row => row[2] === 'active').length
   const counts = [`${entries.length} ${entries.length === 1 ? 'task' : 'tasks'}`, `${active} active`]
   if (backlog.length > 0) counts.push(`${backlog.length} backlog`)

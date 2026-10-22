@@ -3,7 +3,7 @@ export type Row = { number: string; step: string; status: string }
 export type Parked = { date: string; reason: string }
 
 /** A line of a parent's Children section, as bin/cc-ledger-parent writes it. */
-export type ChildLine = { slug: string; retired?: string }
+export type ChildLine = { slug: string; retired?: string; started?: string }
 
 export type LedgerSummary = {
   slug: string
@@ -58,12 +58,13 @@ function parentOf(text: string): string | undefined {
     .find(value => value !== undefined && !value.startsWith('<'))
 }
 
-const CHILD = /^- ([A-Za-z0-9._-]+)(?: \(retired (\d{4}-\d\d-\d\d)\))?$/
+const CHILD = /^- ([A-Za-z0-9._-]+)(?: \((retired|started) (\d{4}-\d\d-\d\d)\))?$/
 
 function childrenOf(text: string): ChildLine[] {
   return section(text, 'Children', true).flatMap(line => {
-    const [, slug, retired] = line.trim().match(CHILD) ?? []
-    return slug ? [{ slug, ...(retired && { retired }) }] : []
+    const [, slug, mark, date = ''] = line.trim().match(CHILD) ?? []
+    if (!slug) return []
+    return [{ slug, ...(mark === 'retired' && { retired: date }), ...(mark === 'started' && { started: date }) }]
   })
 }
 
@@ -261,19 +262,33 @@ export type ChildStatus = { slug: string; status: string; next: string }
 
 export type Family = { parent?: string; children?: ChildStatus[] }
 
+const statusList = (children: ChildStatus[]): string => children.map(({ slug, status }) => `${slug} (${status})`).join(', ')
+
+export type GoFields = {
+  parked?: Parked | null
+  family?: Family
+  promotedWorktree?: string
+  /** The slugs from the parent task the operator named down to the child task /ledger:go picked. */
+  picked?: string[]
+  /** The ledger in which /ledger:go marked the task started. */
+  marked?: string
+  warnings?: string[]
+}
+
 // One field per line, because a slug and a path can both hold spaces. go.md reads this format.
 export function goArgs(
   target: string,
   ledgerPath: string | undefined,
-  parked: Parked | null = null,
-  family: Family = {},
-  promotedWorktree?: string,
+  { parked, family = {}, promotedWorktree, picked, marked, warnings = [] }: GoFields = {},
 ): string {
   const fields = [`task: ${target}`, `ledger: ${ledgerPath ?? 'none'}`]
   if (parked) fields.push(`parked: ${parked.date} — ${parked.reason}`)
   if (family.parent) fields.push(`parent: ${family.parent}`)
-  if (family.children?.length) fields.push(`children: ${family.children.map(({ slug, status }) => `${slug} (${status})`).join(', ')}`)
+  if (family.children?.length) fields.push(`children: ${statusList(family.children)}`)
   if (promotedWorktree) fields.push(`promoted: ${promotedWorktree}`)
+  if (picked) fields.push(`picked: ${picked.join(' > ')}`)
+  if (marked) fields.push(`marked: ${marked}`)
+  for (const warning of warnings) fields.push(`warning: ${warning}`)
   return fields.join('\n')
 }
 
@@ -314,6 +329,21 @@ export function promotedThenFailedMessage(target: string, worktree: string, erro
   return `Promoted backlog task ${target}: its branch, worktree and ledger are at ${worktree}. Then this failed: ${sentence(error)} The session was not cleared.`
 }
 
+export function noChildToStartMessage(target: string, children: ChildStatus[] | { error: string }): string {
+  const listed = 'error' in children ? `Its child tasks could not be listed: ${sentence(children.error)}` : `Child tasks: ${statusList(children)}.`
+  return `Backlog task ${target} has no child task left to start. ${listed} ${UNCHANGED} A parent task in the backlog stays there: continue in a child task with /ledger:go <child>, or add one with /ledger:parent ${target} add <child>.`
+}
+
+export function pickFailedMessage(target: string, error: string): string {
+  return `Could not pick a child task of backlog task ${target} to start: ${sentence(error)} ${UNCHANGED}`
+}
+
+export const pickFailedWarning = (target: string, error: string): string =>
+  `Could not pick a child task of ${target} to start, so this continues in ${target}: ${sentence(error)}`
+
+export const markFailedWarning = (child: string, parent: string, error: string): string =>
+  `Could not mark ${child} started in its parent ${parent}: ${sentence(error)}`
+
 export function otherRepositoryMessage(target: string, repo: string, main: string): string {
   return `Backlog task ${target} belongs to the ${repo} repository, with its main checkout at ${main}. ${UNCHANGED} Run /ledger:go ${target} from a session in that repository.`
 }
@@ -350,7 +380,7 @@ export const HELP = [
   "- `/ledger:update` — Write the latest results to this task's ledger. Without one, it points to `/ledger:task`.",
   "- `/ledger:next` — Write this task's ledger, clear the session, and continue from the next step. When every step is done, it first says how to retire the task.",
   "- `/ledger:close` — Write this task's ledger, then clear the session.",
-  "- `/ledger:go <slug>` — Write this task's ledger, clear the session, and continue in the task named <slug>. A backlog task first gets its branch and worktree, which works only from a session in its repository. When every step of this task is done, it first says how to retire it.",
+  "- `/ledger:go <slug>` — Write this task's ledger, clear the session, and continue in the task named <slug>. A backlog task first gets its branch and worktree, which works only from a session in its repository. A child task is marked started in its parent ledger. A parent task starts its first child task not yet started instead; a parent task in the backlog with none left stays there. When every step of this task is done, it first says how to retire it.",
   "- `/ledger:park [<slug>] <reason>` — Mark a task parked. Without a slug it writes this task's ledger, parks it, then clears the session.",
   "- `/ledger:parent [<slug>]` — Show a parent task and each child's status and next step; without a slug, this task or its parent. `<slug> add <child>` and `<slug> remove <child>` change its children.",
   "- `/ledger:worktrees` — Show each linked git worktree's size, last commit, dirty files, ledger and PR.",

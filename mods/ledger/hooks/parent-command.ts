@@ -41,6 +41,22 @@ export async function showParent($: EngineInterface, parent: string, cwd: string
   return parseShown(stdout) ?? { error: 'cc-ledger-parent printed something that is not a parent and its children.' }
 }
 
+/** The slugs from `parent` down to the child task that /ledger:go <parent> starts; empty when no child is left to start. */
+export async function childToStart($: EngineInterface, parent: string, cwd: string): Promise<string[] | { error: string }> {
+  const { stdout, error } = await script($, ['next', parent], cwd)
+  if (error !== undefined) return { error }
+  const slugs = stdout.split(/\s+/).filter(slug => slug !== '')
+  return slugs.length > 1 ? slugs : []
+}
+
+/** Marks `child` started in its parent's Children section. `marked` is the ledger changed, absent when the line already had a mark. */
+export async function markStarted($: EngineInterface, parent: string, child: string, cwd: string): Promise<{ marked?: string } | { error: string }> {
+  const { stdout, error } = await script($, ['start', parent, child], cwd)
+  if (error !== undefined) return { error }
+  const marked = stdout.match(/^started \S+ in (.+)$/m)?.[1]
+  return marked ? { marked } : {}
+}
+
 /** What /ledger:go tells the next session about a task's parent or children. Best effort: a failed lookup must not stop the switch. */
 export async function familyOf($: EngineInterface, task: LedgerSummary, cwd: string): Promise<Family> {
   if (task.parent) return { parent: task.parent }

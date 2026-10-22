@@ -177,6 +177,7 @@ test('/ledger:go to a backlog child names its parent once it is promoted', async
       [REGISTRY]: registry(backlogEntry('new-idea', { parent: 'epic' })),
       [COMMON_DIR]: exit(0, '/repo/.git\n'),
       [PROMOTE('new-idea')]: exit(0, PROMOTE_OUTPUT),
+      ['bin/cc-ledger-parent start epic new-idea']: exit(0, ''),
     },
     { promotedLedger: familyText('- parent: epic\n') },
   )

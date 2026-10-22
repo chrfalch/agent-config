@@ -1,9 +1,9 @@
 ---
-description: Write the latest results to this task's ledger, clear the session, and continue in the task named <slug>. A backlog task of this repository first gets its own git worktree and branch.
+description: Write the latest results to this task's ledger, clear the session, and continue in the task named <slug>. A backlog task of this repository first gets its own git worktree and branch. A parent task continues in its first child task not yet started.
 argument-hint: <slug>
 ---
 
-The ledger hook replaces the operator's argument with two to six lines:
+The ledger hook replaces the operator's argument with two or more lines:
 
 ```
 $ARGUMENTS
@@ -19,12 +19,19 @@ $ARGUMENTS
   status.
 - `promoted:`, when present, is the absolute path of the worktree the hook
   just made for a backlog task. That task's ledger is already in it.
+- `picked:`, when present, means the operator named a parent task. The hook
+  picked its first child task not yet started; the line runs from that parent
+  task down to the `task:` value.
+- `marked:`, when present, is the ledger in which the hook just marked the task
+  started under `## Children`.
+- Each `warning:` line says what the hook could not do.
 
 If `ledger:` is `none`, this session has no task ledger. Write nothing, do not
 create one, and only do step 4. Otherwise, update the file at that exact path,
 even when it is not in the current working directory:
 
-1. Use Edit. Never rewrite the whole file.
+1. Use Edit. Never rewrite the whole file. If `marked:` is the same path as
+   `ledger:`, read the file again first: the hook changed it.
 2. Write facts, not narrative:
    - the status of each plan step;
    - each subagent's structured report, not its transcript;
@@ -42,4 +49,7 @@ even when it is not in the current working directory:
    names the parent task. If there is a `children:` line, add one line before
    it that lists the child tasks with their status, as given. If there is a
    `promoted:` line, add one line before the final line: the backlog task was
-   promoted, and its worktree is at that path.
+   promoted, and its worktree is at that path. If there is a `picked:` line,
+   add one line before the final line that names the picked task and the
+   parent task the operator named. Add each `warning:` line before the final
+   line, as given.

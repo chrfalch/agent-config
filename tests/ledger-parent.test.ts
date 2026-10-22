@@ -670,3 +670,171 @@ test('add refuses a slug that a worktree ledger and a backlog ledger share, nami
   assert.ok(result.stderr.includes(ledgers.epic ?? '') && result.stderr.includes(twin), result.stderr);
   assert.deepEqual(files.map(read), before);
 });
+
+const today = () => {
+  const now = new Date();
+  return [now.getFullYear(), now.getMonth() + 1, now.getDate()].map((part) => String(part).padStart(2, '0')).join('-');
+};
+
+function setChildren(ledger: string, lines: string) {
+  writeFileSync(ledger, read(ledger).replace('## Plan', `## Children\n${lines}\n## Plan`));
+}
+
+test('show keeps a child whose line is marked started, with its own status', (t) => {
+  const { home, main, ledgers } = repository(t, 'epic', 'busy');
+  addBacklogTask(home, main, 'idea');
+  setChildren(ledgers.epic ?? '', '- busy (started 2026-10-20)\n- idea (started 2026-10-21)\n');
+
+  assert.deepEqual(
+    (JSON.parse(ok(home, main, 'show', 'epic', '--json').stdout) as Shown).children.map(({ slug, status }) => ({ slug, status })),
+    [
+      { slug: 'busy', status: 'active' },
+      { slug: 'idea', status: 'backlog' },
+    ],
+  );
+});
+
+test('start marks the child line in a worktree parent with today, and prints the ledger it changed', (t) => {
+  const { home, main, ledgers } = repository(t, 'epic', 'child-a', 'child-b');
+  ok(home, main, 'add', 'epic', 'child-a');
+  ok(home, main, 'add', 'epic', 'child-b');
+  const epic = ledgers.epic ?? '';
+  const before = read(epic);
+
+  const result = ok(home, main, 'start', 'epic', 'child-a');
+
+  assert.equal(read(epic), before.replace('- child-a\n', `- child-a (started ${today()})\n`));
+  assert.equal(result.stdout, `started child-a in ${epic}\n`);
+  assert.equal(result.stderr, '');
+});
+
+test('start marks the child line in a backlog parent, run from the child worktree', (t) => {
+  const { home, main, ledgers } = repository(t, 'child-a');
+  const epic = addBacklogTask(home, main, 'epic');
+  ok(home, main, 'add', 'epic', 'child-a');
+  const before = read(epic);
+
+  const result = ok(home, path.dirname(path.dirname(ledgers['child-a'] ?? '')), 'start', 'epic', 'child-a');
+
+  assert.equal(read(epic), before.replace('- child-a\n', `- child-a (started ${today()})\n`));
+  assert.equal(result.stdout, `started child-a in ${epic}\n`);
+});
+
+for (const mark of ['started 2026-10-01', 'retired 2026-10-01']) {
+  test(`start leaves a child line marked ${mark.split(' ')[0]} as it is and prints nothing`, (t) => {
+    const { home, main, ledgers } = repository(t, 'epic', 'child-a');
+    const epic = ledgers.epic ?? '';
+    setChildren(epic, `- child-a (${mark})\n`);
+    const before = read(epic);
+
+    const result = ok(home, main, 'start', 'epic', 'child-a');
+
+    assert.equal(read(epic), before);
+    assert.equal(result.stdout, '');
+  });
+}
+
+test('start a second time changes nothing', (t) => {
+  const { home, main, ledgers } = repository(t, 'epic', 'child-a');
+  ok(home, main, 'add', 'epic', 'child-a');
+  ok(home, main, 'start', 'epic', 'child-a');
+  const after = read(ledgers.epic ?? '');
+
+  assert.equal(ok(home, main, 'start', 'epic', 'child-a').stdout, '');
+  assert.equal(read(ledgers.epic ?? ''), after);
+});
+
+test('start keeps CRLF line endings', (t) => {
+  const { home, main, ledgers } = repository(t, 'epic', 'child-a');
+  ok(home, main, 'add', 'epic', 'child-a');
+  const epic = ledgers.epic ?? '';
+  writeFileSync(epic, crlf(read(epic)));
+  const before = read(epic);
+
+  ok(home, main, 'start', 'epic', 'child-a');
+
+  assert.equal(read(epic), before.replace('- child-a\r\n', `- child-a (started ${today()})\r\n`));
+});
+
+test('start of a slug that is not under the parent Children fails with one line and changes nothing', (t) => {
+  const { home, main, ledgers } = repository(t, 'epic', 'child-a', 'other');
+  ok(home, main, 'add', 'epic', 'child-a');
+  const before = read(ledgers.epic ?? '');
+
+  const result = parent(home, main, 'start', 'epic', 'other');
+
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /^[^\n]*other[^\n]*epic[^\n]*\n$/);
+  assert.equal(read(ledgers.epic ?? ''), before);
+});
+
+for (const args of [['start', 'epic'], ['start', 'epic', 'a', 'b'], ['start', 'epic', 'a', '--json'], ['next'], ['next', 'epic', 'a']]) {
+  test(`${args.join(' ')} is a usage error`, (t) => {
+    const { home, main } = repository(t, 'epic');
+
+    const result = parent(home, main, ...args);
+
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /^usage: cc-ledger-parent /);
+  });
+}
+
+test('next prints the parent and the first child in Children line order that is unmarked and in the backlog', (t) => {
+  const { home, main, ledgers } = repository(t, 'epic', 'busy');
+  const backlog = Object.fromEntries(['begun', 'old-idea', 'new-idea'].map((slug) => [slug, addBacklogTask(home, main, slug)]));
+  setChildren(ledgers.epic ?? '', '- busy\n- gone (retired 2026-10-01)\n- begun (started 2026-10-02)\n- old-idea\n- new-idea\n');
+  utimesSync(backlog.begun ?? '', new Date(2026, 9, 2), new Date(2026, 9, 2));
+  utimesSync(backlog['old-idea'] ?? '', new Date(2026, 9, 1), new Date(2026, 9, 1));
+  utimesSync(backlog['new-idea'] ?? '', new Date(2026, 9, 9), new Date(2026, 9, 9));
+  const shown = JSON.parse(ok(home, main, 'show', 'epic', '--json').stdout) as Shown;
+  assert.equal(shown.children.find(({ status }) => status === 'backlog')?.slug, 'new-idea');
+
+  assert.equal(ok(home, main, 'next', 'epic').stdout, 'epic old-idea\n');
+});
+
+test('next walks into a picked child that has children of its own, and prints the whole path', (t) => {
+  const { home, main, ledgers } = repository(t, 'epic');
+  const phase = addBacklogTask(home, main, 'phase');
+  addBacklogTask(home, main, 'leaf');
+  addBacklogTask(home, main, 'later');
+  setChildren(ledgers.epic ?? '', '- phase\n- later\n');
+  setChildren(phase, '- leaf\n');
+
+  assert.equal(ok(home, main, 'next', 'epic').stdout, 'epic phase leaf\n');
+});
+
+test('next passes over a backlog child whose own children leave nothing to start', (t) => {
+  const { home, main, ledgers } = repository(t, 'epic');
+  const phase = addBacklogTask(home, main, 'phase');
+  addBacklogTask(home, main, 'leaf');
+  addBacklogTask(home, main, 'later');
+  setChildren(ledgers.epic ?? '', '- phase\n- later\n');
+  setChildren(phase, '- leaf (started 2026-10-01)\n- done (retired 2026-10-01)\n');
+
+  assert.equal(ok(home, main, 'next', 'epic').stdout, 'epic later\n');
+});
+
+test('next stops at a cycle among the children and still finds the next child', (t) => {
+  const { home, main } = repository(t);
+  const epic = addBacklogTask(home, main, 'epic');
+  const loop = addBacklogTask(home, main, 'loop');
+  addBacklogTask(home, main, 'last');
+  setChildren(epic, '- loop\n- last\n');
+  setChildren(loop, '- epic\n');
+
+  const result = parent(home, main, 'next', 'epic');
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, 'epic last\n');
+});
+
+test('next prints nothing when no child is left to start', (t) => {
+  const { home, main, ledgers } = repository(t, 'epic', 'busy');
+  addBacklogTask(home, main, 'begun');
+  setChildren(ledgers.epic ?? '', '- busy\n- gone (retired 2026-10-01)\n- begun (started 2026-10-02)\n- lost\n');
+
+  const result = ok(home, main, 'next', 'epic');
+
+  assert.equal(result.stdout, '');
+  assert.equal(result.stderr, '');
+});

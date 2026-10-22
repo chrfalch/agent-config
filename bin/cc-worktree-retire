@@ -54,9 +54,9 @@ section() {
   awk -v heading="## $2" '/^## / { title = $0; sub(/[ \t\r]+$/, "", title); inside = title == heading; next } inside' "$1"
 }
 
-# The format cc-ledger-parent writes: `- <slug>`, or `- <slug> (retired YYYY-MM-DD)`.
+# The format cc-ledger-parent writes: `- <slug>`, `- <slug> (started YYYY-MM-DD)`, or `- <slug> (retired YYYY-MM-DD)`.
 active_children() {
-  section "$1" Children | sed -n -E '/^- [A-Za-z0-9._-]+ \(retired [0-9]{4}-[0-9]{2}-[0-9]{2}\)[[:space:]]*$/d; s/^- ([A-Za-z0-9._-]+)[[:space:]]*$/\1/p'
+  section "$1" Children | sed -n -E 's/^- ([A-Za-z0-9._-]+)( \(started [0-9]{4}-[0-9]{2}-[0-9]{2}\))?[[:space:]]*$/\1/p'
 }
 
 # The ledger titled $1 in a worktree of this repository, or in its backlog.
@@ -186,6 +186,7 @@ if [ -n "$parent_ledger" ]; then
       line = $0
       cr = sub(/\r$/, "", line) ? "\r" : ""
       sub(/[ \t]+$/, "", line)
+      sub(/ \(started [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]\)$/, "", line)
       if (line == "- " ENVIRON["TASK_CHILD"]) $0 = line " (retired " ENVIRON["TASK_TODAY"] ")" cr
     }
     { print }

@@ -204,8 +204,19 @@ function ledgersOf(mod: Mod) {
     const all = await rows(entries);
     const needle = q?.trim().toLowerCase() ?? '';
     const found = needle === '' ? entries.map(() => true) : await Promise.all(entries.map(entry => contains(entry, needle)));
-    const shown = all.filter((row, index) => (!repo || row.repo === repo) && (!status?.length || status.includes(row.status)) && found[index]);
-    const ledgers = familyOrder(shown);
+    const candidates = all.filter((row, index) => (!repo || row.repo === repo) && found[index]);
+    const matched = candidates.filter(row => !status?.length || status.includes(row.status));
+    // A status filter keeps the ancestors of a row it shows, so the row stays in its tree. A search does not.
+    const byId = new Map(candidates.map(row => [row.id, row]));
+    const kept = new Set<Row>();
+    for (const row of matched) {
+      let next: Row | undefined = row;
+      while (next !== undefined && !kept.has(next)) {
+        kept.add(next);
+        next = next.parentId === undefined ? undefined : byId.get(next.parentId);
+      }
+    }
+    const ledgers = familyOrder(candidates.filter(row => kept.has(row)));
     return { ledgers, total: all.length, repos: unique(all.map(row => row.repo)), statuses: unique(all.map(row => row.status)) };
   }
 

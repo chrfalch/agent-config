@@ -240,9 +240,7 @@ function childStatus(found, { slug, retired }) {
   };
 }
 
-// The order of childOrder() in mods/ledger/hooks/ledger.ts: active first, then the others, each newest first by the time
-// of the child's ledger, or its retire date once retired. A retired slug can belong to a new task, so its ledger is not
-// the child's. A child with neither counts as oldest, and the stable sort keeps their Children order.
+// A retired slug can belong to a new task, so its ledger is not the child's.
 function childTime(found, { slug, retired }) {
   if (retired) {
     const [year, month, day] = retired.split('-').map(Number);
@@ -252,6 +250,9 @@ function childTime(found, { slug, retired }) {
   return file ? fs.statSync(file).mtimeMs : 0;
 }
 
+// The order of childOrder() in mods/ledger/hooks/ledger.ts: active first, then the others, each newest first by the time
+// of the child's ledger, or its retire date once retired. A child with neither counts as oldest, and the stable sort keeps
+// their Children order.
 function ordered(found, listed) {
   const dated = listed.map((child) => ({ shown: childStatus(found, child), time: childTime(found, child) }));
   const active = ({ shown }) => shown.status === 'active';

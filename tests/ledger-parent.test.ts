@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { chmodSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import test, { type TestContext } from 'node:test';
 import { freshHome, REPO, run } from './helpers.js';
@@ -331,18 +331,25 @@ test('show --json prints the same as an object', (t) => {
   });
 });
 
-test('show lists the active children first, then the others in the order of the Children section', (t) => {
-  const { home, main, ledgers } = repository(t, 'epic', 'waiting', 'busy');
-  for (const child of ['waiting', 'busy']) ok(home, main, 'add', 'epic', child);
+test('show lists the active children first, then the others, each newest first by ledger time, children without a ledger last', (t) => {
+  const { home, main, ledgers } = repository(t, 'epic', 'lost', 'waiting', 'busy-old', 'busy-new');
+  ledgers.idea = addBacklogTask(home, main, 'idea');
+  for (const child of ['lost', 'waiting', 'busy-old', 'idea', 'busy-new']) ok(home, main, 'add', 'epic', child);
   const waiting = ledgers.waiting ?? '';
   writeFileSync(waiting, read(waiting).replace('## Next step\n', '## Next step\nParked: 2026-10-01 — waiting on the API review\n'));
   const epic = ledgers.epic ?? '';
-  writeFileSync(epic, read(epic).replace('- busy\n', '- gone (retired 2026-10-02)\n- busy\n'));
+  writeFileSync(epic, read(epic).replace('- lost\n', '- gone (retired 2026-10-02)\n- lost\n'));
+  rmSync(ledgers.lost ?? '');
+  const days = { waiting: 1, 'busy-old': 2, idea: 3, 'busy-new': 4 };
+  for (const [slug, day] of Object.entries(days)) utimesSync(ledgers[slug] ?? '', new Date(2026, 9, day), new Date(2026, 9, day));
 
+  const order = ['busy-new', 'busy-old', 'idea', 'waiting', 'gone', 'lost'];
   assert.deepEqual(
     ok(home, main, 'show', 'epic').stdout.split('\n').map((line) => line.split('\t')[0]),
-    ['epic', 'busy', 'waiting', 'gone', ''],
+    ['epic', ...order, ''],
   );
+  const shown = JSON.parse(ok(home, main, 'show', 'epic', '--json').stdout) as Shown;
+  assert.deepEqual(shown.children.map(({ slug }) => slug), order);
 });
 
 test('show of a task without children prints only the parent line', (t) => {

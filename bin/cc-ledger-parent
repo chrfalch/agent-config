@@ -240,8 +240,16 @@ function childStatus(found, { slug, retired }) {
   };
 }
 
-// Active children first, as /ledger lists them. The Children section holds no dates, so the others keep its order.
-const activeFirst = (shown) => [...shown.filter(({ status }) => status === 'active'), ...shown.filter(({ status }) => status !== 'active')];
+// The order of childOrder() in mods/ledger/hooks/ledger.ts: active first, then the others, each newest first by the time
+// of the child's ledger. A child without a ledger counts as oldest, and the stable sort keeps their Children order.
+function ordered(found, listed) {
+  const dated = listed.map((child) => {
+    const file = found.get(child.slug)?.[0];
+    return { shown: childStatus(found, child), time: file ? fs.statSync(file).mtimeMs : 0 };
+  });
+  const active = ({ shown }) => shown.status === 'active';
+  return dated.sort((a, b) => Number(active(b)) - Number(active(a)) || b.time - a.time).map(({ shown }) => shown);
+}
 
 function show(parentSlug, json) {
   const found = ledgersBySlug();
@@ -249,7 +257,7 @@ function show(parentSlug, json) {
   const shown = {
     parent: parent.slug,
     goal: firstText(body(parent.lines, 'Goal')),
-    children: activeFirst(children(parent.lines).map((listed) => childStatus(found, listed))),
+    children: ordered(found, children(parent.lines)),
   };
   if (json) {
     console.log(JSON.stringify(shown, null, 2));

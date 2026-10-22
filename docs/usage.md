@@ -315,7 +315,7 @@ The other commands show the relation too:
 
 | Where | A parent task | A child task |
 |---|---|---|
-| `/ledger` | `- **Children:**`, then each child task with its goal, step and next step. A parent task in the backlog of this repo is listed too, as `<parent> (backlog)`, and so is its own parent task in the backlog | Under its parent task, one indent deeper for each level; shows `- **Parent:** <parent>` when the parent is not listed |
+| `/ledger` | `- **Children:**`, then each child task with its goal, step and next step. A parent task in the backlog of this repo is listed too, as `<parent> (backlog)`, and so is a parent task active in another worktree of this repo; the same holds for the parent of that parent, and so on | Under its parent task, one indent deeper for each level; shows `- **Parent:** <parent>` when the parent is not listed |
 | `/ledger:all` | Its child tasks follow it as `↳ <child>`, one indent deeper for each level | `<child> (parent: <parent>)` when the parent is not listed |
 | `/ledger:go` with an unknown name | `<parent> (children: <a>, <b> (children: <c>))` | `<child> (parent: <parent>)` when the parent is not listed |
 | `/ledger:go <name>` | A line that lists its child tasks with their status | A line that names its parent task |

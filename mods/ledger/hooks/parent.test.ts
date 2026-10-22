@@ -44,9 +44,9 @@ const BACKLOG = '/home/.claude/ledger-backlog/repo'
 const backlogPathOf = (slug: string): string => `${BACKLOG}/${slug}.md`
 
 /**
- * `ledgers` maps a worktree ledger's path to its text, then `backlog` a backlog ledger's, newest first: the first is
- * edited at n × 1000 ms for n ledgers in all, the next 1000 ms earlier, and so on. `backlog` of a string is the error
- * of a backlog lookup that fails.
+ * `ledgers` maps a worktree ledger's path to its text, then `backlog` a backlog ledger's, then `unlisted` the ledger of
+ * another worktree that ledger-list.sh paths does not print, newest first: the first is edited at n × 1000 ms for n
+ * ledgers in all, the next 1000 ms earlier, and so on. `backlog` of a string is the error of a backlog lookup that fails.
  */
 function world(
   on: On,
@@ -54,11 +54,12 @@ function world(
   ledgers: Record<string, string>,
   replies: Record<string, Reply> = {},
   backlog: Record<string, string> | string = {},
+  unlisted: Record<string, string> = {},
 ): World {
   const calls: string[] = []
   let markdownArgs: string | undefined
   const backlogLedgers = typeof backlog === 'string' ? {} : backlog
-  const files = { ...ledgers, ...backlogLedgers }
+  const files = { ...ledgers, ...backlogLedgers, ...unlisted }
   const all = Object.keys(files)
   const removed: string[] = []
   on('session.cwd', async () => ({ value: cwd }))
@@ -466,6 +467,39 @@ test('/ledger walks up a chain of backlog parents and nests each level under the
       '- **Next:** Next of top.',
       '- **Children:**',
       `  - **mid (backlog)** · edited ${at(2000)}`,
+      '    - **Goal:** Goal of mid.',
+      '    - **Next:** Next of mid.',
+      '    - **Children:**',
+      `      - **child-a** · edited ${at(3000)}`,
+      '        - **Goal:** Goal of child-a.',
+      '        - **Next:** Next of child-a.',
+    ].join('\n'),
+  )
+})
+
+const porcelainZ = (...worktrees: string[]): string => worktrees.map(path => `worktree ${path}\0HEAD abc\0\0`).join('')
+
+test('/ledger in a linked worktree walks up through a parent active in another worktree to a backlog grandparent', async ($, on) => {
+  world(
+    on,
+    `${WORKTREES}/child-a`,
+    { [pathOf('child-a')]: ledgerText('child-a', { parent: 'mid' }) },
+    { 'git worktree list --porcelain -z': exit(0, porcelainZ('/repo', `${WORKTREES}/child-a`, `${WORKTREES}/mid`)) },
+    { [backlogPathOf('top')]: ledgerText('top', { children: ['- mid'] }) },
+    { [pathOf('mid')]: ledgerText('mid', { parent: 'top', children: ['- child-a'] }) },
+  )
+
+  const { text } = await $.command.run({ command: 'ledger', args: '' })
+
+  expect(text).toBe(
+    [
+      '**Task ledgers** · 3 ledgers, newest first, children under their parent',
+      '',
+      `#### top (backlog) · edited ${at(2000)}`,
+      '- **Goal:** Goal of top.',
+      '- **Next:** Next of top.',
+      '- **Children:**',
+      `  - **mid** · edited ${at(1000)}`,
       '    - **Goal:** Goal of mid.',
       '    - **Next:** Next of mid.',
       '    - **Children:**',

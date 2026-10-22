@@ -31,7 +31,6 @@ import {
 import { archiveCommand } from './archive-command'
 import { dashboardCommand } from './dashboard-command'
 import {
-  backlogAncestors,
   findLedgers,
   lookUpBranch,
   lookUpOtherWorktrees,
@@ -39,6 +38,7 @@ import {
   sessionFolder,
   sessionLedger,
   titleSlug,
+  unlistedAncestors,
   type Found,
 } from './lookup'
 import { familyOf, parentCommand } from './parent-command'
@@ -73,7 +73,7 @@ export const register: Register = on => {
     const found = await findLedgers($)
     if ('error' in found) return { text: `Could not list task ledgers. ${found.error}` }
     const summaries = await Promise.all(found.map(async ledger => summarize(await $.fs.read(ledger.path), ledger.slug, ledger.mtimeMs)))
-    const ancestors = await backlogAncestors($, summaries)
+    const ancestors = await unlistedAncestors($, summaries)
     const filter = e.args.trim().toLowerCase()
     const matches = (name: string) => name.toLowerCase().includes(filter)
     const ledgers = [

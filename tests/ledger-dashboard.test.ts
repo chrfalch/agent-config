@@ -556,6 +556,16 @@ test('each child row follows its parent row, and the groups and the children ins
   assert.equal(rows.length, Object.keys(FAMILY).length);
 });
 
+test('a grandchild row follows its parent row, which follows the grandparent row', async t => {
+  const { home, stubBin, epic } = family(t);
+  editRegistry(home, entry => (entry.slug === 'child-b' ? { ...entry, parent: 'child-a' } : entry));
+  const server = await startForeground(t, home, stubBin);
+  const rows = (await list(server, '?repo=app')).ledgers;
+  assert.deepEqual(shape(rows), ['fix-login', 'epic', '↳ child-a', '↳ child-b', 'waiting', 'old-task']);
+  assert.equal(rows.find(row => row.slug === 'child-a')?.parentId, epic);
+  assert.equal(rows.find(row => row.slug === 'child-b')?.parentId, path.join(home, '.claude/ledger-backlog/app/child-a.md'));
+});
+
 test('a child whose parent the filter hides stays a normal row that names its parent, and the parent stays out of the list', async t => {
   const { home, stubBin, epic } = family(t);
   const server = await startForeground(t, home, stubBin);

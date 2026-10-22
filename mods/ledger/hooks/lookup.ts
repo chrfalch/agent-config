@@ -70,23 +70,35 @@ export function findBacklogLedgers($: EngineInterface): Promise<Found[] | { erro
   return listLedgers($, 'backlog', path => basename(path).replace(/\.md$/, ''))
 }
 
+function summarizeAll($: EngineInterface, found: Found[]): Promise<LedgerSummary[]> {
+  return Promise.all(found.map(async ({ path, slug, mtimeMs }) => summarize(await $.fs.read(path), slug, mtimeMs)))
+}
+
+async function otherWorktreeLedgers($: EngineInterface): Promise<Map<string, LedgerSummary>> {
+  const { path: cwd } = await sessionFolder($)
+  const found = await Promise.all((await otherWorktrees($, cwd)).map(({ path }) => ledgerIn($, path)))
+  const summaries = await summarizeAll($, found.filter(ledger => ledger !== undefined))
+  return new Map(summaries.map(summary => [summary.slug, summary]))
+}
+
 /**
- * The backlog ledgers that are the parent of a listed task, the parent of that parent, and so on, marked as backlog.
- * Each walk up stops at a parent that is listed or seen before, or that has no backlog ledger.
+ * The unlisted ledgers that are the parent of a listed task, the parent of that parent, and so on. A parent is looked up
+ * in the backlog, marked as backlog, then in the other worktrees, whose ledgers findLedgers does not list from a linked
+ * worktree. Each walk up stops at a parent that is listed or seen before, or that has no ledger in either place.
  */
-export async function backlogAncestors($: EngineInterface, listed: LedgerSummary[]): Promise<LedgerSummary[] | { error: string }> {
+export async function unlistedAncestors($: EngineInterface, listed: LedgerSummary[]): Promise<LedgerSummary[] | { error: string }> {
   const seen = new Set(listed.map(({ slug }) => slug))
   if (listed.every(({ parent }) => parent === undefined || seen.has(parent))) return []
   const found = await findBacklogLedgers($)
   if ('error' in found) return found
-  const summaries = await Promise.all(found.map(async ({ path, slug, mtimeMs }) => summarize(await $.fs.read(path), slug, mtimeMs)))
   const backlog = new Map<string, LedgerSummary>()
-  for (const summary of summaries) if (!backlog.has(summary.slug)) backlog.set(summary.slug, { ...summary, isBacklog: true })
+  for (const summary of await summarizeAll($, found)) if (!backlog.has(summary.slug)) backlog.set(summary.slug, { ...summary, isBacklog: true })
+  let active: Map<string, LedgerSummary> | undefined
   const ancestors: LedgerSummary[] = []
   for (const ledger of listed) {
     for (let parent = ledger.parent; parent !== undefined && !seen.has(parent); ) {
       seen.add(parent)
-      const ancestor = backlog.get(parent)
+      const ancestor = backlog.get(parent) ?? (active ??= await otherWorktreeLedgers($)).get(parent)
       if (ancestor) ancestors.push(ancestor)
       parent = ancestor?.parent
     }

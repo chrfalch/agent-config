@@ -300,6 +300,19 @@ test('session-start in a parent task names each child and its status', (t) => {
   );
 });
 
+test('session-start in a parent task names a child marked started with its status', (t) => {
+  const root = scratch(t);
+  const main = repository(root, 'main');
+  const epic = worktree(root, main, path.join(root, 'epic'));
+  const ledger = ledgerIn(epic, familyLedger('epic', [], '## Children\n- child-a (started 2026-10-20)\n- lost (started 2026-10-21)\n\n## Next step\nA step.\n'));
+  ledgerIn(worktree(root, main, path.join(root, 'child-a')), familyLedger('child-a', ['- parent: epic']));
+
+  assert.equal(
+    sessionStart(root, epic).additionalContext,
+    relationText(ledger, 'Child task: child-a (active).', 'Child task: lost (missing).'),
+  );
+});
+
 test('session-start in a main checkout names the parent or children under each ledger summary', (t) => {
   const root = scratch(t);
   const main = repository(root, 'main');

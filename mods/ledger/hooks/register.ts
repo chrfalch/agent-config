@@ -9,12 +9,16 @@ import {
   goArgs,
   HELP,
   lookupFailedMessage,
+  markFailedWarning,
+  noChildToStartMessage,
   noLedgerMessage,
   otherRepositoryMessage,
   PARK_USAGE,
   park,
   parkArgs,
   parkMarker,
+  pickFailedMessage,
+  pickFailedWarning,
   promotedThenFailedMessage,
   promoteFailedMessage,
   removedFolderMessage,
@@ -27,6 +31,7 @@ import {
   unparkFailedMessage,
   worktreeTaskMessage,
   worktreeWithoutLedgerMessage,
+  type LedgerSummary,
 } from './ledger'
 import { archiveCommand } from './archive-command'
 import { dashboardCommand } from './dashboard-command'
@@ -41,8 +46,8 @@ import {
   unlistedAncestors,
   type Found,
 } from './lookup'
-import { familyOf, parentCommand } from './parent-command'
-import { mainCheckout, otherRepositoryTask, promoteBacklogTask, registeredTasks } from './registry'
+import { childToStart, familyOf, markStarted, parentCommand, showParent } from './parent-command'
+import { backlogLedgerPath, mainCheckout, otherRepositoryTask, promoteBacklogTask, registeredTasks, type Entry } from './registry'
 import { worktreeOf } from './retire'
 import { retireCommand } from './retire-command'
 import { basename } from './worktrees'
@@ -51,6 +56,41 @@ import { worktreesCommand } from './worktrees-command'
 const armed = { plugin: 'ledger', key: 'armed' } as const
 
 const uniqueByPath = (ledgers: Found[]): Found[] => ledgers.filter((ledger, index) => ledgers.findIndex(({ path }) => path === ledger.path) === index)
+
+/** A task's ledger in a worktree, or the registry's backlog entries for it, none when the registry missed it. */
+type Place = { ledger: string } | { backlog: Entry[]; isUnregistered: boolean }
+
+/** Where the task `target` is. The text says why it cannot be started: no ledger, or several, has that slug. */
+async function placeOf($: EngineInterface, target: string, found: Found[], tasks: LedgerSummary[], cwd: string): Promise<Place | { text: string }> {
+  const local = found.filter((_, index) => tasks[index]?.slug === target)
+  const matches = uniqueByPath([...local, ...(await lookUpOtherWorktrees($, target, cwd)).ledgers])
+  const [match] = matches
+  const registered = match === undefined ? await registeredTasks($, target) : []
+  if ('error' in registered) return { text: backlogUncheckedMessage(target, tasks, registered.error) }
+  const backlog = registered.filter(entry => entry.status === 'backlog')
+  // The registry write at backlog time is best effort, so an unregistered slug may still have a backlog ledger.
+  const isUnregistered = match === undefined && registered.length === 0
+  if (match === undefined && backlog.length === 0 && !isUnregistered) return { text: unknownTaskMessage(target, tasks) }
+  if (matches.length > 1) return { text: sharedSlugMessage(target, matches.map(ledger => ledger.path)) }
+  return match ? { ledger: match.path } : { backlog, isUnregistered }
+}
+
+/**
+ * Whether the task's ledger lists child tasks. A backlog ledger is read before its promotion, because a parent task in the
+ * backlog is not promoted: where the registry says it is, or where cc-task-new writes it when the registry missed it. One
+ * that cannot be found or read counts as having none.
+ */
+async function hasChildren($: EngineInterface, slug: string, place: Place, main: string | null | undefined): Promise<boolean> {
+  const path =
+    'ledger' in place
+      ? place.ledger
+      : place.isUnregistered
+        ? main && (await backlogLedgerPath($, main, slug).catch(() => null))
+        : place.backlog.find(entry => entry.main === undefined || !main || entry.main === main)?.path
+  if (!path) return false
+  const text = await $.fs.read(path).catch(() => '')
+  return summarize(text, '', 0).children !== undefined
+}
 
 // Read at the turn's end, because the model may have just finished the last step. The line is only advice, so a failure skips it.
 async function showRetireHint($: EngineInterface, ledger: string): Promise<void> {
@@ -117,40 +157,61 @@ export const register: Register = on => {
   // A command.run hook cannot clear the session, and an answer of { text } ends no turn, so go.md runs a
   // model turn even when there is no ledger to write: its turn.complete is what clears.
   // Set once this run's promotion succeeds, so the .catch below does not say that nothing was written.
-  let promotedByGo: string | undefined
+  let promotedByGo: { slug: string; worktree: string } | undefined
   on('command.run', { command: 'ledger:go' }, async ($, e, next) => {
     promotedByGo = undefined
-    const target = (e.args ?? '').trim()
+    let target = (e.args ?? '').trim()
     if (target === '') return { text: GO_USAGE }
     const found = await findLedgers($)
     if ('error' in found) return { text: lookupFailedMessage(found.error) }
     const tasks = await Promise.all(found.map(async ledger => summarize(await $.fs.read(ledger.path), folderSlug(ledger.path), 0)))
     const folder = await sessionFolder($)
     const cwd = folder.path
-    const local = found.filter((_, index) => tasks[index]?.slug === target)
-    const matches = uniqueByPath([...local, ...(await lookUpOtherWorktrees($, target, cwd)).ledgers])
-    const [match] = matches
-    const registered = match === undefined ? await registeredTasks($, target) : []
-    if ('error' in registered) return { text: backlogUncheckedMessage(target, tasks, registered.error) }
-    const backlog = registered.filter(entry => entry.status === 'backlog')
-    // The registry write at backlog time is best effort, so an unregistered slug may still have a backlog ledger.
-    const isUnregistered = match === undefined && registered.length === 0
-    if (match === undefined && backlog.length === 0 && !isUnregistered) return { text: unknownTaskMessage(target, tasks) }
-    if (matches.length > 1) return { text: sharedSlugMessage(target, matches.map(ledger => ledger.path)) }
+    let place = await placeOf($, target, found, tasks, cwd)
+    if ('text' in place) return place
     const active = sessionLedger(found, folder)
     if (active.kind === 'several') return { text: severalLedgersMessage(cwd, active.paths.map(folderSlug)) }
-    let ledger = match?.path
+    let main: string | null | undefined
+    const otherRepository = async (slug: string, at: Place): Promise<{ text: string } | undefined> => {
+      if ('ledger' in at) return undefined
+      if (main === undefined) main = await mainCheckout($, cwd)
+      const elsewhere = otherRepositoryTask(at.backlog, main)
+      return elsewhere ? { text: otherRepositoryMessage(slug, elsewhere.repo, elsewhere.main) } : undefined
+    }
+    const refused = await otherRepository(target, place)
+    if (refused) return refused
+
+    const warnings: string[] = []
+    let picked: string[] | undefined
+    if (await hasChildren($, target, place, main)) {
+      const chain = await childToStart($, target, cwd)
+      if ('error' in chain) {
+        if (!('ledger' in place)) return { text: pickFailedMessage(target, chain.error) }
+        warnings.push(pickFailedWarning(target, chain.error))
+      } else if (chain.length > 0) {
+        picked = chain
+        target = chain.at(-1) ?? target
+        place = await placeOf($, target, found, tasks, cwd)
+        if ('text' in place) return place
+        const refusedChild = await otherRepository(target, place)
+        if (refusedChild) return refusedChild
+      } else if (!('ledger' in place)) {
+        const shown = await showParent($, target, cwd)
+        return { text: noChildToStartMessage(target, 'error' in shown ? shown : shown.children) }
+      }
+    }
+
+    let ledger: string
     let promotedWorktree: string | undefined
-    if (ledger === undefined) {
-      const elsewhere = otherRepositoryTask(backlog, await mainCheckout($, cwd))
-      if (elsewhere) return { text: otherRepositoryMessage(target, elsewhere.repo, elsewhere.main) }
+    if ('ledger' in place) ledger = place.ledger
+    else {
       const promoted = await promoteBacklogTask($, target, cwd)
       if ('error' in promoted) {
-        return { text: isUnregistered && promoted.isMissing ? unknownTaskMessage(target, tasks) : promoteFailedMessage(target, promoted.error) }
+        return { text: place.isUnregistered && promoted.isMissing ? unknownTaskMessage(target, tasks) : promoteFailedMessage(target, promoted.error) }
       }
       ledger = promoted.ledger
       promotedWorktree = worktreeOf(ledger)
-      promotedByGo = promotedWorktree
+      promotedByGo = { slug: target, worktree: promotedWorktree }
     }
     const text = await $.fs.read(ledger)
     const { text: unparked, parked } = unpark(text)
@@ -164,15 +225,21 @@ export const register: Register = on => {
     }
     const current = active.kind === 'one' ? active.path : undefined
     const task = tasks.find(({ slug }) => slug === target) ?? summarize(text, target, 0)
+    let marked: string | undefined
+    if (task.parent) {
+      const mark = await markStarted($, task.parent, target, cwd)
+      if ('error' in mark) warnings.push(markFailedWarning(target, task.parent, mark.error))
+      else marked = mark.marked
+    }
     const family = await familyOf($, task, cwd)
     await $.state.set(armed, { mode: 'go', slug: target, ...(current && current !== ledger && { ledger: current }) })
-    return next({ ...e, args: goArgs(target, current, parked, family, promotedWorktree) })
+    return next({ ...e, args: goArgs(target, current, { parked, family, promotedWorktree, picked, marked, warnings }) })
   }).catch(async ($, e, next) => {
     await $.state.set(armed, null)
     if (next.called) return next(e)
     const error = next.error.message ?? next.error.kind
     if (promotedByGo === undefined) return { text: lookupFailedMessage(error) }
-    return { text: promotedThenFailedMessage((e.args ?? '').trim(), promotedByGo, error) }
+    return { text: promotedThenFailedMessage(promotedByGo.slug, promotedByGo.worktree, error) }
   })
 
   // The first word names a task only when a ledger has that slug; otherwise it is part of the reason.

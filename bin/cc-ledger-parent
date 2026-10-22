@@ -3,11 +3,14 @@
 // Usage: cc-ledger-parent add <parent> <child>
 //        cc-ledger-parent remove <parent> <child>
 //        cc-ledger-parent show <parent> [--json]
+//        cc-ledger-parent start <parent> <child>
+//        cc-ledger-parent next <parent>
 // A slug is a ledger's title slug, looked up in the ledgers of every worktree of the repository
 // that holds the current folder, and in the backlog ledgers that name its main checkout. The
 // child's `- parent: <slug>` bullet under ## Location is the source of truth. The parent's
 // ## Children section lists its children, so that a retired child, whose ledger is gone, keeps a
-// line there: `- <slug> (retired YYYY-MM-DD)`.
+// line there: `- <slug> (retired YYYY-MM-DD)`. /ledger:go marks a child it starts with
+// `- <slug> (started YYYY-MM-DD)` (start), and starts the child that next prints.
 'use strict';
 const { spawnSync } = require('node:child_process');
 const fs = require('node:fs');
@@ -18,13 +21,15 @@ const usage = [
   'usage: cc-ledger-parent add <parent> <child>',
   '       cc-ledger-parent remove <parent> <child>',
   '       cc-ledger-parent show <parent> [--json]',
+  '       cc-ledger-parent start <parent> <child>',
+  '       cc-ledger-parent next <parent>',
 ].join('\n');
 
 const backlogRoot = path.join(os.homedir(), '.claude', 'ledger-backlog');
 const inBacklog = (ledger) => path.dirname(path.dirname(ledger)) === backlogRoot;
 
 const SLUG = /^[A-Za-z0-9._-]+$/;
-const CHILD = /^- ([A-Za-z0-9._-]+)(?: \(retired (\d{4}-\d\d-\d\d)\))?$/;
+const CHILD = /^- ([A-Za-z0-9._-]+)(?: \((retired|started) (\d{4}-\d\d-\d\d)\))?$/;
 // Same marker as parkedOf() in mods/ledger/hooks/ledger.ts.
 const PARKED = /^Parked:[ \t]*\d{4}-\d{2}-\d{2}[ \t]*[—-]/;
 
@@ -136,8 +141,8 @@ function children(lines) {
   if (!found) return [];
   const listed = [];
   for (let index = found.start + 1; index < found.end; index++) {
-    const [, slug, retired] = lines[index].trim().match(CHILD) ?? [];
-    if (slug) listed.push({ index, slug, retired });
+    const [, slug, mark, date] = lines[index].trim().match(CHILD) ?? [];
+    if (slug) listed.push({ index, slug, ...(mark && { [mark]: date }) });
   }
   return listed;
 }
@@ -275,6 +280,42 @@ function show(parentSlug, json) {
   for (const { slug, status, next } of shown.children) console.log([slug, status, next].join('\t'));
 }
 
+// The local date, as `date +%F` in cc-worktree-retire writes it.
+function today() {
+  const now = new Date();
+  return [now.getFullYear(), now.getMonth() + 1, now.getDate()].map((part) => String(part).padStart(2, '0')).join('-');
+}
+
+function start(parentSlug, childSlug) {
+  const parent = resolve(ledgersBySlug(), parentSlug);
+  const line = children(parent.lines).find(({ slug }) => slug === childSlug) ?? fail(`${childSlug} is not listed under ## Children of ${parent.slug}; add it with /ledger:parent ${parent.slug} add ${childSlug}`);
+  if (line.retired || line.started) return;
+  const text = parent.lines[line.index];
+  parent.lines[line.index] = `${text.match(/^\s*/)[0]}- ${childSlug} (started ${today()})${text.endsWith('\r') ? '\r' : ''}`;
+  save(parent);
+  console.log(`started ${childSlug} in ${parent.file}`);
+}
+
+// A marked child, or one no longer in the backlog, has been started already. A child with children of its own is not
+// started itself, its children are; once none of them is left, its later siblings still get their turn.
+// A slug already on `path` is a cycle, which would otherwise recurse forever.
+function firstToStart(found, task, path) {
+  for (const { slug, retired, started } of children(task.lines)) {
+    if (retired || started || path.includes(slug)) continue;
+    const child = lookup(found, slug);
+    if (!child || !inBacklog(child.file)) continue;
+    const picked = children(child.lines).length === 0 ? [...path, slug] : firstToStart(found, child, [...path, slug]);
+    if (picked) return picked;
+  }
+  return undefined;
+}
+
+function next(parentSlug) {
+  const found = ledgersBySlug();
+  const picked = firstToStart(found, resolve(found, parentSlug), [parentSlug]);
+  if (picked) console.log(picked.join(' '));
+}
+
 const [command, ...args] = process.argv.slice(2);
 const slugs = args.filter((arg) => arg !== '--json');
 const json = slugs.length < args.length;
@@ -286,8 +327,10 @@ function supported(...given) {
 }
 
 try {
-  if ((command === 'add' || command === 'remove') && args.length === 2 && !json) (command === 'add' ? add : remove)(...supported(...args));
+  const changes = { add, remove, start };
+  if (Object.hasOwn(changes, command) && args.length === 2 && !json) changes[command](...supported(...args));
   else if (command === 'show' && slugs.length === 1) show(...supported(slugs[0]), json);
+  else if (command === 'next' && args.length === 1 && !json) next(...supported(args[0]));
   else fail(usage);
 } catch (error) {
   fail(`cc-ledger-parent ${command}: ${error.message}`);

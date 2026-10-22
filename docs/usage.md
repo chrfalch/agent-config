@@ -306,6 +306,24 @@ a relation that breaks one of these rules:
 - A retired child task's name cannot be attached to the same parent task
   again.
 
+`/ledger:go <child>` marks the child task started: its line in the parent
+ledger becomes `- <child> (started YYYY-MM-DD)`. A line that already has a mark
+keeps it. When the mark cannot be written, the command says so and still
+continues in the child task.
+
+`/ledger:go <parent>` starts a child task instead of the parent task. It picks
+the first line under `## Children` that has no mark and whose task is in the
+backlog, in the order of the lines. When that child task has child tasks of its
+own, it picks one of those the same way. A child task with none left to start
+is passed over. The reply names the picked child task and the parent task.
+
+When no child task is left to start, the command continues in the parent task
+if the parent task has a worktree. A parent task in the backlog stays there:
+the command lists its child tasks with their status, and changes nothing.
+
+Both steps run `bin/cc-ledger-parent`: `start <parent> <child>` writes the
+mark, and `next <parent>` prints the child task to start.
+
 `/ledger:parent <parent>` prints the parent task, then one line per direct
 child task: its name, its status (`active`, `parked`, `retired` or `missing`)
 and its next step. Without a name, it shows the current task when it has child tasks, or
@@ -318,12 +336,14 @@ The other commands show the relation too:
 | `/ledger` | `- **Children:**`, then each child task with its goal, step and next step. A parent task in the backlog of this repo is listed too, as `<parent> (backlog)`, and so is a parent task active in another worktree of this repo; the same holds for the parent of that parent, and so on | Under its parent task, one indent deeper for each level; shows `- **Parent:** <parent>` when the parent is not listed |
 | `/ledger:all` | Its child tasks follow it as `↳ <child>`, one indent deeper for each level | `<child> (parent: <parent>)` when the parent is not listed |
 | `/ledger:go` with an unknown name | `<parent> (children: <a>, <b> (children: <c>))` | `<child> (parent: <parent>)` when the parent is not listed |
-| `/ledger:go <name>` | A line that lists its child tasks with their status | A line that names its parent task |
+| `/ledger:go <name>` | Starts its first child task not yet started, and names it. With none left, a line that lists its child tasks with their status | A line that names its parent task; marks the child task started |
 | `/ledger:worktrees`, ledger column | `parent of <n>`, where n counts the child tasks not retired | `child of <parent>` |
 | Session start | `Child task: <child> (<status>).` or `Child task: <child> (retired YYYY-MM-DD).`, one line per child task | `Parent task: <parent> (<status>).` |
 
 When a child task merges, retire it with `/ledger:retire <child>`. Its
-line in the parent ledger becomes `- <child> (retired YYYY-MM-DD)`. When no
+line in the parent ledger, with or without a started mark, becomes
+`- <child> (retired YYYY-MM-DD)`. A started child task still counts as
+active. When no
 active child task remains, the command prints:
 
 ```

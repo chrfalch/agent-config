@@ -1,6 +1,7 @@
 import type { EngineInterface, ProcessRunResult } from 'claude-code'
 
 import { message, run } from './lookup'
+import { basename } from './worktrees'
 
 /** One entry of ~/.claude/ledgers.json, as `cc-ledgers list --json` prints it. `parent` is the slug of its parent task. `main` is the main checkout of a backlog task. */
 export type Entry = { repo: string; slug: string; status: string; updated: string; path: string; archivePath?: string; parent?: string; main?: string }
@@ -25,6 +26,12 @@ export function parseEntries(stdout: string): Entry[] | null {
 
 export function scriptPath($: EngineInterface, name: string): string {
   return `${$.plugin.root}/../../bin/${name}`
+}
+
+/** Where cc-task-new keeps the backlog ledger of `slug` for the repository at `main`; null when HOME is not set. */
+export async function backlogLedgerPath($: EngineInterface, main: string, slug: string): Promise<string | null> {
+  const home = await $.env.get('HOME')
+  return home?.startsWith('/') ? `${home}/.claude/ledger-backlog/${basename(main)}/${slug}.md` : null
 }
 
 /** The tasks named `slug` that the registry lists, with any status, in any repository. */

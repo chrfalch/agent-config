@@ -349,6 +349,35 @@ test('retire -f retires a parent with active children, as --force does', (t) => 
   assert.equal(existsSync(parent.worktree), false);
 });
 
+test('retire of a child turns its started line into a retired line', (t) => {
+  const { home, worktree, parent } = family(t, '- wt-title (started 2026-10-01)\n- sibling\n');
+  const before = readFileSync(parent.ledger, 'utf8');
+
+  const result = run(home, retire, worktree);
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(readFileSync(parent.ledger, 'utf8'), before.replace('- wt-title (started 2026-10-01)\n', `- wt-title (retired ${today()})\n`));
+});
+
+test('retire of the last active child, marked started, names the parent to retire', (t) => {
+  const { home, worktree } = family(t, '- sibling (retired 2026-10-01)\n- wt-title (started 2026-10-01)\n');
+
+  const result = run(home, retire, worktree);
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(result.stdout.split('\n').filter((line) => line.startsWith('Parent ')), [HINT]);
+});
+
+test('retire refuses a parent whose children are marked started, and names them', (t) => {
+  const { home, parent } = family(t, '- wt-title (started 2026-10-01)\n- other\n');
+
+  const result = run(home, retire, parent.worktree);
+
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /^[^\n]*wt-title, other[^\n]*--force[^\n]*\n$/);
+  assert.ok(existsSync(parent.worktree));
+});
+
 test('retire of a child marks it retired in a CRLF parent ledger and keeps CRLF', (t) => {
   const { home, worktree, parent } = family(t, '- wt-title\n');
   const childLedger = path.join(worktree, '.claude/ledger.md');

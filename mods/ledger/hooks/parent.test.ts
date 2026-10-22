@@ -611,17 +611,21 @@ test('/ledger:go to an unknown slug lists the tasks grouped by parent', async ($
   expect(text).toContain('Task ledgers: epic (children: child-a), orphan (parent: gone).')
 })
 
+const START_CHILD_A = 'bin/cc-ledger-parent start epic child-a'
+const NEXT_EPIC = 'bin/cc-ledger-parent next epic'
+
 test('/ledger:go <child> names the parent to the command', async ($, on) => {
-  const { calls, markdownArgs } = world(on, '/repo', FAMILY_LEDGERS)
+  const { calls, markdownArgs } = world(on, '/repo', FAMILY_LEDGERS, { [START_CHILD_A]: exit(0, '') })
 
   await $.command.run({ command: 'ledger:go', args: 'child-a' })
 
   expect(markdownArgs()).toBe('task: child-a\nledger: none\nparent: epic')
-  expect(withoutWorktreeList(calls)).toEqual([])
+  expect(withoutWorktreeList(calls)).toEqual([START_CHILD_A])
 })
 
 test('/ledger:go <parent> lists the children with their status to the command', async ($, on) => {
   const { calls, markdownArgs } = world(on, '/repo', FAMILY_LEDGERS, {
+    [NEXT_EPIC]: exit(0, ''),
     [SHOW_EPIC]: shown([
       { slug: 'child-a', status: 'active', next: 'Run the tests.' },
       { slug: 'old', status: 'retired', next: '' },
@@ -631,11 +635,11 @@ test('/ledger:go <parent> lists the children with their status to the command', 
   await $.command.run({ command: 'ledger:go', args: 'epic' })
 
   expect(markdownArgs()).toBe('task: epic\nledger: none\nchildren: child-a (active), old (retired)')
-  expect(withoutWorktreeList(calls)).toEqual([SHOW_EPIC])
+  expect(withoutWorktreeList(calls)).toEqual([NEXT_EPIC, SHOW_EPIC])
 })
 
 test('/ledger:go <parent> still switches when the children cannot be listed, without a children line', async ($, on) => {
-  const { markdownArgs } = world(on, '/repo', FAMILY_LEDGERS, { [SHOW_EPIC]: exit(1, '', 'boom\n') })
+  const { markdownArgs } = world(on, '/repo', FAMILY_LEDGERS, { [NEXT_EPIC]: exit(0, ''), [SHOW_EPIC]: exit(1, '', 'boom\n') })
 
   await $.command.run({ command: 'ledger:go', args: 'epic' })
 

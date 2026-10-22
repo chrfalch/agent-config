@@ -331,25 +331,43 @@ test('show --json prints the same as an object', (t) => {
   });
 });
 
-test('show lists the active children first, then the others, each newest first by ledger time, children without a ledger last', (t) => {
+test('show lists the active children first, then the others, each newest first by ledger time or retire date, children without either last', (t) => {
   const { home, main, ledgers } = repository(t, 'epic', 'lost', 'waiting', 'busy-old', 'busy-new');
   ledgers.idea = addBacklogTask(home, main, 'idea');
   for (const child of ['lost', 'waiting', 'busy-old', 'idea', 'busy-new']) ok(home, main, 'add', 'epic', child);
   const waiting = ledgers.waiting ?? '';
   writeFileSync(waiting, read(waiting).replace('## Next step\n', '## Next step\nParked: 2026-10-01 — waiting on the API review\n'));
   const epic = ledgers.epic ?? '';
-  writeFileSync(epic, read(epic).replace('- lost\n', '- gone (retired 2026-10-02)\n- lost\n'));
+  writeFileSync(
+    epic,
+    read(epic).replace('- lost\n', '- ancient (retired 2026-09-28)\n- gone (retired 2026-10-02)\n- recent (retired 2026-10-05)\n- lost\n'),
+  );
   rmSync(ledgers.lost ?? '');
   const days = { waiting: 1, 'busy-old': 2, idea: 3, 'busy-new': 4 };
   for (const [slug, day] of Object.entries(days)) utimesSync(ledgers[slug] ?? '', new Date(2026, 9, day), new Date(2026, 9, day));
 
-  const order = ['busy-new', 'busy-old', 'idea', 'waiting', 'gone', 'lost'];
+  const order = ['busy-new', 'busy-old', 'recent', 'idea', 'gone', 'waiting', 'ancient', 'lost'];
   assert.deepEqual(
     ok(home, main, 'show', 'epic').stdout.split('\n').map((line) => line.split('\t')[0]),
     ['epic', ...order, ''],
   );
   const shown = JSON.parse(ok(home, main, 'show', 'epic', '--json').stdout) as Shown;
   assert.deepEqual(shown.children.map(({ slug }) => slug), order);
+});
+
+test('show orders a retired child by its retire date, not by a live ledger that reuses its slug', (t) => {
+  const { home, main, ledgers } = repository(t, 'epic', 'waiting', 'reused');
+  ok(home, main, 'add', 'epic', 'waiting');
+  const waiting = ledgers.waiting ?? '';
+  writeFileSync(waiting, read(waiting).replace('## Next step\n', '## Next step\nParked: 2026-10-01 — waiting on the API review\n'));
+  const epic = ledgers.epic ?? '';
+  writeFileSync(epic, read(epic).replace('- waiting\n', '- reused (retired 2026-09-01)\n- waiting\n'));
+  utimesSync(waiting, new Date(2026, 9, 1), new Date(2026, 9, 1));
+  utimesSync(ledgers.reused ?? '', new Date(2026, 9, 10), new Date(2026, 9, 10));
+
+  const shown = JSON.parse(ok(home, main, 'show', 'epic', '--json').stdout) as Shown;
+
+  assert.deepEqual(shown.children.map(({ slug }) => slug), ['waiting', 'reused']);
 });
 
 test('show of a task without children prints only the parent line', (t) => {

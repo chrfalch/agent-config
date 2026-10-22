@@ -1,5 +1,5 @@
 import type { EngineInterface, On } from 'claude-code'
-import { expect, test } from 'claude-code/testing'
+import { expect, mock, test } from 'claude-code/testing'
 
 import { summarize } from './ledger'
 
@@ -354,6 +354,55 @@ test('/ledger:go <backlog parent> refuses when no child can be picked', async ($
   const { text } = await $.command.run({ command: 'ledger:go', args: 'epic' })
 
   expect(text).toBe(`Could not pick a child task of backlog task epic to start: boom. ${UNCHANGED}`)
+  expect(keys(w.commands)).not.toContain(PROMOTE('epic'))
+  await expectNothingChanged($, w)
+})
+
+test('/ledger:go <backlog parent> the registry misses starts its first child and leaves the parent in the backlog', async ($, on) => {
+  const kid = ledgerText('kid', { parent: 'epic' })
+  mock.env(on, { HOME: '/home' })
+  const w = world(
+    on,
+    '/repo',
+    {},
+    {
+      [REGISTRY]: registry(backlogEntry('kid', { parent: 'epic' })),
+      [COMMON_DIR]: exit(0, '/repo/.git\n'),
+      [NEXT('epic')]: exit(0, 'epic kid\n'),
+      [PROMOTE('epic')]: promoted('epic'),
+      [PROMOTE('kid')]: promoted('kid'),
+      [START('epic', 'kid')]: exit(0, `started kid in ${backlogPathOf('epic')}\n`),
+    },
+    { [backlogPathOf('epic')]: ledgerText('epic', { children: '- kid' }), [backlogPathOf('kid')]: kid, [pathOf('kid')]: kid },
+  )
+
+  await $.command.run({ command: 'ledger:go', args: 'epic' })
+
+  expect(keys(w.commands)).not.toContain(PROMOTE('epic'))
+  expect(keys(w.commands).slice(-2)).toEqual([PROMOTE('kid'), START('epic', 'kid')])
+  expect(w.markdownArgs()).toBe(`task: kid\nledger: none\nparent: epic\npromoted: ${WORKTREES}/kid\npicked: epic > kid\nmarked: ${backlogPathOf('epic')}`)
+  await expectGoTo($, w, 'kid')
+})
+
+test('/ledger:go <backlog parent> the registry misses, with no child left to start, promotes nothing', async ($, on) => {
+  mock.env(on, { HOME: '/home' })
+  const w = world(
+    on,
+    '/repo',
+    {},
+    {
+      [REGISTRY]: registry(),
+      [COMMON_DIR]: exit(0, '/repo/.git\n'),
+      [NEXT('epic')]: exit(0, ''),
+      [SHOW('epic')]: shown('epic', [{ slug: 'busy', status: 'active' }, { slug: 'old', status: 'retired' }]),
+      [PROMOTE('epic')]: promoted('epic'),
+    },
+    BACKLOG_PARENT,
+  )
+
+  const { text } = await $.command.run({ command: 'ledger:go', args: 'epic' })
+
+  expect(text).toContain('Backlog task epic has no child task left to start.')
   expect(keys(w.commands)).not.toContain(PROMOTE('epic'))
   await expectNothingChanged($, w)
 })

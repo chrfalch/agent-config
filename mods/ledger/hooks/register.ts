@@ -47,7 +47,7 @@ import {
   type Found,
 } from './lookup'
 import { childToStart, familyOf, markStarted, parentCommand, showParent } from './parent-command'
-import { mainCheckout, otherRepositoryTask, promoteBacklogTask, registeredTasks, type Entry } from './registry'
+import { backlogLedgerPath, mainCheckout, otherRepositoryTask, promoteBacklogTask, registeredTasks, type Entry } from './registry'
 import { worktreeOf } from './retire'
 import { retireCommand } from './retire-command'
 import { basename } from './worktrees'
@@ -76,12 +76,18 @@ async function placeOf($: EngineInterface, target: string, found: Found[], tasks
 }
 
 /**
- * Whether the task's ledger lists child tasks. A backlog ledger is read where the registry says it is, before its promotion,
- * because a parent task in the backlog is not promoted; an unregistered or unreadable one counts as having none.
+ * Whether the task's ledger lists child tasks. A backlog ledger is read before its promotion, because a parent task in the
+ * backlog is not promoted: where the registry says it is, or where cc-task-new writes it when the registry missed it. One
+ * that cannot be found or read counts as having none.
  */
-async function hasChildren($: EngineInterface, place: Place, main: string | null | undefined): Promise<boolean> {
-  const path = 'ledger' in place ? place.ledger : place.backlog.find(entry => entry.main === undefined || !main || entry.main === main)?.path
-  if (path === undefined) return false
+async function hasChildren($: EngineInterface, slug: string, place: Place, main: string | null | undefined): Promise<boolean> {
+  const path =
+    'ledger' in place
+      ? place.ledger
+      : place.isUnregistered
+        ? main && (await backlogLedgerPath($, main, slug).catch(() => null))
+        : place.backlog.find(entry => entry.main === undefined || !main || entry.main === main)?.path
+  if (!path) return false
   const text = await $.fs.read(path).catch(() => '')
   return summarize(text, '', 0).children !== undefined
 }
@@ -177,7 +183,7 @@ export const register: Register = on => {
 
     const warnings: string[] = []
     let picked: string[] | undefined
-    if (await hasChildren($, place, main)) {
+    if (await hasChildren($, target, place, main)) {
       const chain = await childToStart($, target, cwd)
       if ('error' in chain) {
         if (!('ledger' in place)) return { text: pickFailedMessage(target, chain.error) }

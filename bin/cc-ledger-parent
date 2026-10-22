@@ -288,7 +288,7 @@ function today() {
 
 function start(parentSlug, childSlug) {
   const parent = resolve(ledgersBySlug(), parentSlug);
-  const line = children(parent.lines).find(({ slug }) => slug === childSlug) ?? fail(`${childSlug} is not listed under ## Children of ${parent.slug}`);
+  const line = children(parent.lines).find(({ slug }) => slug === childSlug) ?? fail(`${childSlug} is not listed under ## Children of ${parent.slug}; add it with /ledger:parent ${parent.slug} add ${childSlug}`);
   if (line.retired || line.started) return;
   const text = parent.lines[line.index];
   parent.lines[line.index] = `${text.match(/^\s*/)[0]}- ${childSlug} (started ${today()})${text.endsWith('\r') ? '\r' : ''}`;
@@ -296,9 +296,9 @@ function start(parentSlug, childSlug) {
   console.log(`started ${childSlug} in ${parent.file}`);
 }
 
-// The slugs from `path`'s last task down to its first child, in Children order, that is neither marked nor out of the
-// backlog. A child with children of its own is searched instead, and passed over when none of them is left to start, so
-// that one finished branch does not hide its later siblings. A slug already on `path` is a cycle, and is skipped.
+// A marked child, or one no longer in the backlog, has been started already. A child with children of its own is not
+// started itself, its children are; once none of them is left, its later siblings still get their turn.
+// A slug already on `path` is a cycle, which would otherwise recurse forever.
 function firstToStart(found, task, path) {
   for (const { slug, retired, started } of children(task.lines)) {
     if (retired || started || path.includes(slug)) continue;

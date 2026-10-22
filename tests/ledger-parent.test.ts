@@ -768,6 +768,14 @@ test('start of a slug that is not under the parent Children fails with one line 
   assert.equal(read(ledgers.epic ?? ''), before);
 });
 
+test('start of a slug that is not under the parent Children names the command that adds it', (t) => {
+  const { home, main } = repository(t, 'epic', 'other');
+
+  const result = parent(home, main, 'start', 'epic', 'other');
+
+  assert.match(result.stderr, /\/ledger:parent epic add other\b/);
+});
+
 for (const args of [['start', 'epic'], ['start', 'epic', 'a', 'b'], ['start', 'epic', 'a', '--json'], ['next'], ['next', 'epic', 'a']]) {
   test(`${args.join(' ')} is a usage error`, (t) => {
     const { home, main } = repository(t, 'epic');

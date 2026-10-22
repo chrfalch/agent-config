@@ -585,6 +585,24 @@ test('a child whose parent the filter hides stays a normal row that names its pa
   assert.equal(child?.parentId, epic);
 });
 
+test('a status filter keeps the parent and grandparent rows of a child it shows, though their status is another one', async t => {
+  const { home, stubBin } = family(t);
+  editRegistry(home, entry => (entry.slug === 'child-b' ? { ...entry, parent: 'child-a', status: 'active' } : entry));
+  const server = await startForeground(t, home, stubBin);
+  const rows = (await list(server, '?repo=app&status=active')).ledgers;
+  assert.deepEqual(shape(rows), ['fix-login', 'epic', '↳ child-a', '↳ child-b']);
+  assert.deepEqual(rows.map(row => row.status), ['active', 'backlog', 'backlog', 'active']);
+});
+
+test('a status filter answers when two tasks name each other as parent', async t => {
+  const { home, stubBin } = family(t);
+  const loop: Record<string, Partial<Registered>> = { 'child-a': { parent: 'child-b' }, 'child-b': { parent: 'child-a', status: 'active' } };
+  editRegistry(home, entry => ({ ...entry, ...loop[entry.slug] }));
+  const server = await startForeground(t, home, stubBin);
+  const rows = (await list(server, '?repo=app&status=active')).ledgers;
+  assert.ok(rows.some(row => row.slug === 'fix-login'));
+});
+
 test('a parent is looked up in the repo of its child only, though another repo has a task of that slug', async t => {
   const { home, stubBin, fixLogin } = family(t);
   backlogLedger(home, 'web', 'child-w', path.join(home, 'repos/web'));

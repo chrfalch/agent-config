@@ -1,9 +1,11 @@
 import type { EngineInterface } from 'claude-code'
 
-import { folderSlug, severalLedgersMessage, sharedSlugMessage, unknownTaskMessage } from './ledger'
-import { findLedgers, readBranch, run, sessionFolder, sessionLedger, titleSlug, type SessionFolder } from './lookup'
+import { backlogUncheckedMessage, folderSlug, severalLedgersMessage, sharedSlugMessage, summarize, unknownTaskMessage } from './ledger'
+import { findBacklogLedgers, findLedgers, readBranch, run, sessionFolder, sessionLedger, titleSlug, type SessionFolder } from './lookup'
+import { scriptPath } from './registry'
 import {
   dirname,
+  formatBacklogPlan,
   formatPlan,
   formatRetired,
   formatRetireFailed,
@@ -24,9 +26,21 @@ import {
   type WorktreeState,
 } from './retire'
 
-type Target = { slug: string; ledgerPath: string } | { text: string }
+type Target = { slug: string; ledgerPath: string; isBacklog?: true } | { text: string }
 
 const UNRETIRED = 'Nothing was retired.'
+
+async function findBacklogTarget($: EngineInterface, slug: string, activeSlugs: string[]): Promise<Target> {
+  const tasks = activeSlugs.map(name => ({ slug: name }))
+  const found = await findBacklogLedgers($)
+  if ('error' in found) return { text: backlogUncheckedMessage(slug, tasks, found.error, UNRETIRED) }
+  const slugs = await Promise.all(found.map(async ({ path, slug: fileSlug }) => summarize(await $.fs.read(path), fileSlug, 0).slug))
+  const matches = found.filter((_, index) => slugs[index] === slug).map(({ path }) => path)
+  const [match] = matches
+  if (match === undefined) return { text: unknownTaskMessage(slug, tasks, UNRETIRED) }
+  if (matches.length > 1) return { text: sharedSlugMessage(slug, matches, UNRETIRED) }
+  return { slug, ledgerPath: match, isBacklog: true }
+}
 
 async function findTarget($: EngineInterface, slug: string | null, folder: SessionFolder): Promise<Target> {
   const found = await findLedgers($)
@@ -41,7 +55,7 @@ async function findTarget($: EngineInterface, slug: string | null, folder: Sessi
   const slugs = await Promise.all(paths.map(path => titleSlug($, path)))
   const matches = paths.filter((_, index) => slugs[index] === slug)
   const [match] = matches
-  if (match === undefined) return { text: unknownTaskMessage(slug, slugs.map(name => ({ slug: name })), UNRETIRED) }
+  if (match === undefined) return findBacklogTarget($, slug, slugs)
   if (matches.length > 1) return { text: sharedSlugMessage(slug, matches, UNRETIRED) }
   return { slug, ledgerPath: match }
 }
@@ -83,9 +97,32 @@ export async function readState($: EngineInterface, path: string): Promise<Workt
 export async function retireCommand($: EngineInterface, args: string): Promise<string> {
   const command = parseRetireArgs(args)
   if (command.kind === 'usage') return RETIRE_USAGE
-  const target = await findTarget($, command.slug, await sessionFolder($))
+  const folder = await sessionFolder($)
+  const target = await findTarget($, command.slug, folder)
   if ('text' in target) return target.text
+  if (target.isBacklog) return retireBacklogLedger($, target.slug, target.ledgerPath, command, folder.path)
   return retireLedger($, target.slug, target.ledgerPath, command)
+}
+
+type RetireFlags = { dryRun: boolean; forced: boolean }
+
+// Only for the plan: an unreadable ledger shows no children, and cc-worktree-retire still refuses a parent with active ones.
+async function activeChildrenOf($: EngineInterface, ledgerPath: string): Promise<string[]> {
+  const text = await $.fs.read(ledgerPath).catch(() => '')
+  return (summarize(text, '', 0).children ?? []).filter(({ retired }) => retired === undefined).map(({ slug }) => slug)
+}
+
+/** Plans or retires the backlog task whose ledger is `ledgerPath`: it has no worktree or branch, only the ledger. */
+async function retireBacklogLedger(
+  $: EngineInterface,
+  slug: string,
+  ledgerPath: string,
+  { dryRun, forced }: RetireFlags,
+  cwd: string,
+): Promise<string> {
+  if (dryRun) return formatBacklogPlan(slug, ledgerPath, new Date(), await activeChildrenOf($, ledgerPath))
+  const { stdout, failure } = await run($, ['bash', scriptPath($, 'cc-worktree-retire'), ledgerPath, ...(forced ? ['--force'] : [])], cwd)
+  return failure === undefined ? formatRetired(slug, stdout, false) : formatRetireFailed(failure, stdout)
 }
 
 /** Plans or retires the worktree that holds `ledgerPath`, named `slug` in the text. */
@@ -93,19 +130,18 @@ export async function retireLedger(
   $: EngineInterface,
   slug: string,
   ledgerPath: string,
-  { dryRun, forced }: { dryRun: boolean; forced: boolean },
+  { dryRun, forced }: RetireFlags,
 ): Promise<string> {
   const state = await readState($, worktreeOf(ledgerPath))
   if ('error' in state) return state.error
-  if (dryRun) return formatPlan(slug, state, new Date())
+  if (dryRun) return formatPlan(slug, state, new Date(), { activeChildren: await activeChildrenOf($, ledgerPath) })
   const blockers = retireBlockers(state)
   if (blockers.length > 0 && !forced) return notRetiredMessage(blockers)
 
   // From the main checkout, because the worktree is gone once the script returns.
-  const script = `${$.plugin.root}/../../bin/cc-worktree-retire`
   const deletesBranch = isBranchMerged(state)
   const flags = [...(deletesBranch ? ['--delete-branch', state.head] : []), ...(forced ? ['--force'] : [])]
-  const { stdout, failure } = await run($, ['bash', script, state.path, ...flags], state.mainCheckout)
+  const { stdout, failure } = await run($, ['bash', scriptPath($, 'cc-worktree-retire'), state.path, ...flags], state.mainCheckout)
   if (failure !== undefined) return formatRetireFailed(failure, stdout)
   const kept = deletesBranch || state.branch === '' ? undefined : { branch: state.branch, reason: keptBranchReason(state) }
   // The session's own folder, not sessionFolder's fallback: the question is whether this retire removed it.

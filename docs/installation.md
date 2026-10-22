@@ -100,6 +100,9 @@ The ledger mod is a Claude Code plugin in `mods/ledger`. It adds fourteen
 commands:
 
 - `/ledger` prints each task ledger's goal, current step and next step.
+  The parent of a listed task, and the parent of that parent, is shown too
+  when it is in the backlog, marked `(backlog)`, or active in another
+  worktree.
 - `/ledger:task` writes a backlog ledger for a separate task, with no git
   worktree or branch yet. `/ledger:go <slug>` makes them and starts the task.
   When no task is open, `/ledger:task` makes them at once and continues in
@@ -134,6 +137,9 @@ commands:
   Uncommitted changes need `--force`, and so does a branch that has commits
   not in the default branch and no merged PR. `--dry-run` only shows what
   retiring would archive and remove.
+  A backlog task has no worktree or branch: retiring it archives its ledger
+  and removes it from the backlog. A parent task with active child tasks
+  needs `--force`.
 - `/ledger:archive [<term>]` lists this repo's archived ledgers in
   `~/.claude/ledger-archive/`, newest first. A term keeps the ledgers that
   contain it. `--all` lists the archive of every repo.

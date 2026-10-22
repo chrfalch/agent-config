@@ -255,6 +255,11 @@ merged PR. A branch with commits after its PR merged stays.
 `/ledger:archive <term>` finds the ledger of a task that was retired. Add
 `--all` to search the archive of every repo.
 
+A backlog task of this repo can be retired the same way, for example a parent
+task whose work all shipped in its child tasks. It has no worktree and no
+branch, so `/ledger:retire <name>` archives its ledger, then deletes the
+backlog file. A backlog task of another repo is not found.
+
 ### Parent tasks
 
 A parent task ties together two or more tasks that ship separately: one
@@ -293,24 +298,26 @@ ledger.
 a relation that breaks one of these rules:
 
 - The parent task and the child task are in the same repo.
-- There is one level only. A parent task cannot be a child task, and a child
-  task cannot be a parent task.
-- A child task has at most one parent task.
+- A task cannot be its own parent task, and the relation cannot make a cycle.
+  When a task is already the parent task of `<parent>`, or of one of its
+  parent tasks, the command refuses to make it a child task of `<parent>`.
+- A child task has at most one parent task. A child task can have child tasks
+  of its own, so a tree can be deeper than one level.
 - A retired child task's name cannot be attached to the same parent task
   again.
 
-`/ledger:parent <parent>` prints the parent task, then one line per child task:
-its name, its status (`active`, `parked`, `retired` or `missing`) and its next
-step. Without a name, it shows the current task when it has child tasks, or
+`/ledger:parent <parent>` prints the parent task, then one line per direct
+child task: its name, its status (`active`, `parked`, `retired` or `missing`)
+and its next step. Without a name, it shows the current task when it has child tasks, or
 else the current task's parent task.
 
 The other commands show the relation too:
 
 | Where | A parent task | A child task |
 |---|---|---|
-| `/ledger` | `- **Children:**`, then each child task with its goal, step and next step | Under its parent task; shows `- **Parent:** <parent>` when the parent is not listed |
-| `/ledger:all` | Its child tasks follow it as `↳ <child>` | `<child> (parent: <parent>)` when the parent is not listed |
-| `/ledger:go` with an unknown name | `<parent> (children: <a>, <b>)` | `<child> (parent: <parent>)` when the parent is not listed |
+| `/ledger` | `- **Children:**`, then each child task with its goal, step and next step. A parent task in the backlog of this repo is listed too, as `<parent> (backlog)`, and so is a parent task active in another worktree of this repo; the same holds for the parent of that parent, and so on | Under its parent task, one indent deeper for each level; shows `- **Parent:** <parent>` when the parent is not listed |
+| `/ledger:all` | Its child tasks follow it as `↳ <child>`, one indent deeper for each level | `<child> (parent: <parent>)` when the parent is not listed |
+| `/ledger:go` with an unknown name | `<parent> (children: <a>, <b> (children: <c>))` | `<child> (parent: <parent>)` when the parent is not listed |
 | `/ledger:go <name>` | A line that lists its child tasks with their status | A line that names its parent task |
 | `/ledger:worktrees`, ledger column | `parent of <n>`, where n counts the child tasks not retired | `child of <parent>` |
 | Session start | `Child task: <child> (<status>).` or `Child task: <child> (retired YYYY-MM-DD).`, one line per child task | `Parent task: <parent> (<status>).` |
@@ -325,6 +332,11 @@ Parent <parent> has no active children left. Retire it with /ledger:retire <pare
 
 It does not retire the parent task itself. To retire a parent task that still
 has active child tasks, add `--force`; without it the command refuses.
+`--dry-run` names those child tasks. Only direct child tasks count, here and
+in the `parent of <n>` count.
+
+The parent task can be in a worktree or in the backlog of this repo. Either
+way, its line for the child task is marked retired.
 
 ### The dashboard
 

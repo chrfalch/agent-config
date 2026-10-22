@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { chmodSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import test, { type TestContext } from 'node:test';
 import { freshHome, REPO, run } from './helpers.js';
@@ -151,8 +151,7 @@ const refusals: [string, string[], RegExp][] = [
   ['a child from another repository', ['add', 'epic', 'elsewhere'], /elsewhere/],
   ['a task as its own parent', ['add', 'epic', 'epic'], /epic/],
   ['a child that has a different parent', ['add', 'other', 'child-a'], /child-a.*epic/],
-  ['a parent that has a parent', ['add', 'child-a', 'child-b'], /child-a.*epic/],
-  ['a child that has children', ['add', 'other', 'epic'], /epic.*child-a/],
+  ['a cycle: the child is the parent of its new parent', ['add', 'child-a', 'epic'], /epic.*child-a.*cycle/],
   ['remove of a child that is not attached', ['remove', 'epic', 'child-b'], /child-b.*epic/],
   ['remove from the wrong parent', ['remove', 'other', 'child-a'], /child-a.*other/],
 ];
@@ -179,6 +178,47 @@ for (const [name, args, message] of refusals) {
     assert.equal(read(path.join(home, '.claude/ledgers.json')), registryBefore);
   });
 }
+
+test('add makes a child task the parent of another, and a task with children the child of another', (t) => {
+  const { home, main, ledgers } = repository(t, 'epic', 'child-a', 'grandchild', 'program');
+
+  ok(home, main, 'add', 'epic', 'child-a');
+  ok(home, main, 'add', 'child-a', 'grandchild');
+  ok(home, main, 'add', 'program', 'epic');
+
+  assert.match(read(ledgers.grandchild ?? ''), /^- parent: child-a$/m);
+  assert.match(read(ledgers['child-a'] ?? ''), /^- parent: epic$/m);
+  assert.match(read(ledgers['child-a'] ?? ''), /^## Children\n- grandchild$/m);
+  assert.match(read(ledgers.epic ?? ''), /^- parent: program$/m);
+  assert.match(read(ledgers.epic ?? ''), /^## Children\n- child-a$/m);
+  assert.equal(registered(home, 'grandchild')?.parent, 'child-a');
+  assert.equal(registered(home, 'epic')?.parent, 'program');
+});
+
+test('add refuses a cycle through a grandparent with one line and changes nothing', (t) => {
+  const { home, main, ledgers } = repository(t, 'epic', 'child-a', 'grandchild');
+  ok(home, main, 'add', 'epic', 'child-a');
+  ok(home, main, 'add', 'child-a', 'grandchild');
+  const before = Object.values(ledgers).map(read);
+
+  const result = parent(home, main, 'add', 'grandchild', 'epic');
+
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /^[^\n]*epic[^\n]*grandchild[^\n]*cycle[^\n]*\n$/);
+  assert.deepEqual(Object.values(ledgers).map(read), before);
+});
+
+test('add stops at a cycle already in the ledgers instead of walking it forever', (t) => {
+  const { home, main, ledgers } = repository(t, 'x', 'y', 'child-a');
+  for (const [slug, other] of [['x', 'y'], ['y', 'x']] as const) {
+    const file = ledgers[slug] ?? '';
+    writeFileSync(file, read(file).replace('- base: main @ abc1234\n', `- base: main @ abc1234\n- parent: ${other}\n`));
+  }
+
+  ok(home, main, 'add', 'x', 'child-a');
+
+  assert.match(read(ledgers['child-a'] ?? ''), /^- parent: x$/m);
+});
 
 test('add refuses a slug that two ledgers in the repository share, naming both', (t) => {
   const { home, main, ledgers } = repository(t, 'epic', 'child-a');
@@ -289,6 +329,45 @@ test('show --json prints the same as an object', (t) => {
       { slug: 'gone', status: 'retired', next: '' },
     ],
   });
+});
+
+test('show lists the active children first, then the others, each newest first by ledger time or retire date, children without either last', (t) => {
+  const { home, main, ledgers } = repository(t, 'epic', 'lost', 'waiting', 'busy-old', 'busy-new');
+  ledgers.idea = addBacklogTask(home, main, 'idea');
+  for (const child of ['lost', 'waiting', 'busy-old', 'idea', 'busy-new']) ok(home, main, 'add', 'epic', child);
+  const waiting = ledgers.waiting ?? '';
+  writeFileSync(waiting, read(waiting).replace('## Next step\n', '## Next step\nParked: 2026-10-01 — waiting on the API review\n'));
+  const epic = ledgers.epic ?? '';
+  writeFileSync(
+    epic,
+    read(epic).replace('- lost\n', '- ancient (retired 2026-09-28)\n- gone (retired 2026-10-02)\n- recent (retired 2026-10-05)\n- lost\n'),
+  );
+  rmSync(ledgers.lost ?? '');
+  const days = { waiting: 1, 'busy-old': 2, idea: 3, 'busy-new': 4 };
+  for (const [slug, day] of Object.entries(days)) utimesSync(ledgers[slug] ?? '', new Date(2026, 9, day), new Date(2026, 9, day));
+
+  const order = ['busy-new', 'busy-old', 'recent', 'idea', 'gone', 'waiting', 'ancient', 'lost'];
+  assert.deepEqual(
+    ok(home, main, 'show', 'epic').stdout.split('\n').map((line) => line.split('\t')[0]),
+    ['epic', ...order, ''],
+  );
+  const shown = JSON.parse(ok(home, main, 'show', 'epic', '--json').stdout) as Shown;
+  assert.deepEqual(shown.children.map(({ slug }) => slug), order);
+});
+
+test('show orders a retired child by its retire date, not by a live ledger that reuses its slug', (t) => {
+  const { home, main, ledgers } = repository(t, 'epic', 'waiting', 'reused');
+  ok(home, main, 'add', 'epic', 'waiting');
+  const waiting = ledgers.waiting ?? '';
+  writeFileSync(waiting, read(waiting).replace('## Next step\n', '## Next step\nParked: 2026-10-01 — waiting on the API review\n'));
+  const epic = ledgers.epic ?? '';
+  writeFileSync(epic, read(epic).replace('- waiting\n', '- reused (retired 2026-09-01)\n- waiting\n'));
+  utimesSync(waiting, new Date(2026, 9, 1), new Date(2026, 9, 1));
+  utimesSync(ledgers.reused ?? '', new Date(2026, 9, 10), new Date(2026, 9, 10));
+
+  const shown = JSON.parse(ok(home, main, 'show', 'epic', '--json').stdout) as Shown;
+
+  assert.deepEqual(shown.children.map(({ slug }) => slug), ['waiting', 'reused']);
 });
 
 test('show of a task without children prints only the parent line', (t) => {

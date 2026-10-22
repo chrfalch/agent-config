@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import test, { type TestContext } from 'node:test';
 import { freshHome, REPO, run } from './helpers.js';
@@ -467,4 +467,133 @@ test('retire finishes when the parent ledger cannot be written, and names the li
   assert.ok(lines[0]?.includes(parent.ledger), result.stderr);
   assert.ok(lines[0]?.includes(`- wt-title (retired ${today()})`), result.stderr);
   assert.doesNotMatch(result.stdout, /^Parent /m);
+});
+
+// A backlog task has no worktree: its ledger is ~/.claude/ledger-backlog/<main checkout folder>/<slug>.md, and names its
+// main checkout as git reports it, so through realpath.
+function backlogTask(home: string, slug: string, rest = '') {
+  const main = realpathSync(mainOf(home));
+  const ledger = path.join(home, '.claude/ledger-backlog', path.basename(main), `${slug}.md`);
+  mkdirSync(path.dirname(ledger), { recursive: true });
+  writeFileSync(ledger, `# Task ledger — ${slug}\n\n## Location\n- main: ${main}\n${rest}`);
+  return ledger;
+}
+
+const parentLines = (stdout: string) => stdout.split('\n').filter((line) => line.startsWith('Parent '));
+
+test('retire of a backlog ledger archives it, deletes it and marks its registry entry archived', (t) => {
+  const { home, worktree } = worktreeWithLedger(t);
+  const ledger = backlogTask(home, 'idea');
+  const text = readFileSync(ledger, 'utf8');
+  const upsert = run(home, [path.join(REPO, 'bin/cc-ledgers')], 'upsert', ledger);
+  assert.equal(upsert.status, 0, upsert.stderr);
+
+  const result = run(home, retire, ledger);
+
+  assert.equal(result.status, 0, result.stderr);
+  const archive = path.join(home, `.claude/ledger-archive/main/${today()}-idea.md`);
+  assert.equal(result.stdout, `archived ${archive}\nremoved  ${ledger}\n`);
+  assert.equal(readFileSync(archive, 'utf8'), text);
+  assert.equal(existsSync(ledger), false);
+  assert.ok(existsSync(worktree));
+  assert.deepEqual(registered(home), [{ repo: 'main', slug: 'idea', path: ledger, branch: '', status: 'archived', archivePath: archive }]);
+});
+
+test('retire refuses a backlog parent with active children and changes nothing, and --force retires it', (t) => {
+  const { home } = worktreeWithLedger(t);
+  const ledger = backlogTask(home, 'epic', '\n## Children\n- wt-title\n- old (retired 2026-10-01)\n');
+
+  const refused = run(home, retire, ledger);
+
+  assert.equal(refused.status, 1);
+  assert.match(refused.stderr, /^epic has active children: wt-title\. [^\n]*--force[^\n]*\n$/);
+  assert.equal(refused.stdout, '');
+  assert.ok(existsSync(ledger));
+  assert.equal(existsSync(path.join(home, '.claude/ledger-archive')), false);
+
+  const forced = run(home, retire, ledger, '--force');
+
+  assert.equal(forced.status, 0, forced.stderr);
+  assert.equal(existsSync(ledger), false);
+});
+
+test('retire of a worktree child marks it retired in a backlog parent and names the parent to retire', (t) => {
+  const { home, worktree, ledger } = worktreeWithLedger(t);
+  writeFileSync(ledger, `${readFileSync(ledger, 'utf8')}- parent: epic\n`);
+  const parent = backlogTask(home, 'epic', '\n## Children\n- wt-title\n');
+  const before = readFileSync(parent, 'utf8');
+
+  const result = run(home, retire, worktree);
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stderr, '');
+  assert.equal(readFileSync(parent, 'utf8'), before.replace('- wt-title\n', `- wt-title (retired ${today()})\n`));
+  assert.deepEqual(parentLines(result.stdout), [HINT]);
+});
+
+test('retire of a backlog child marks it retired in a worktree parent and names the parent to retire', (t) => {
+  const { home } = worktreeWithLedger(t);
+  const child = backlogTask(home, 'idea', '- parent: epic\n');
+  const parent = taskIn(home, 'wt-epic', 'epic', '\n## Children\n- idea\n');
+  const before = readFileSync(parent.ledger, 'utf8');
+
+  const result = run(home, retire, child);
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(readFileSync(parent.ledger, 'utf8'), before.replace('- idea\n', `- idea (retired ${today()})\n`));
+  assert.deepEqual(parentLines(result.stdout), [HINT]);
+});
+
+test('retire of a backlog child marks it retired in a backlog parent that keeps another active child', (t) => {
+  const { home } = worktreeWithLedger(t);
+  const child = backlogTask(home, 'idea', '- parent: epic\n');
+  const parent = backlogTask(home, 'epic', '\n## Children\n- idea\n- wt-title\n');
+
+  const result = run(home, retire, child);
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(readFileSync(parent, 'utf8'), new RegExp(`^- idea \\(retired ${today()}\\)\\n- wt-title\\n`, 'm'));
+  assert.deepEqual(parentLines(result.stdout), []);
+});
+
+test('retire --delete-branch with a backlog ledger is a usage error and changes nothing', (t) => {
+  const { home } = worktreeWithLedger(t);
+  const ledger = backlogTask(home, 'idea');
+
+  const result = run(home, retire, ledger, '--delete-branch', 'a'.repeat(40));
+
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /^usage: cc-worktree-retire /m);
+  assert.ok(existsSync(ledger));
+});
+
+for (const option of ['--dry-run', '--porcelain', 'extra']) {
+  test(`retire ${option} with a backlog ledger is a usage error and changes neither the ledger nor the registry`, (t) => {
+    const { home } = worktreeWithLedger(t);
+    const ledger = backlogTask(home, 'idea');
+    const text = readFileSync(ledger, 'utf8');
+    const upsert = run(home, [path.join(REPO, 'bin/cc-ledgers')], 'upsert', ledger);
+    assert.equal(upsert.status, 0, upsert.stderr);
+    const before = registered(home);
+
+    const result = run(home, retire, ledger, option);
+
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /^usage: cc-worktree-retire /m);
+    assert.equal(result.stdout, '');
+    assert.equal(readFileSync(ledger, 'utf8'), text);
+    assert.equal(existsSync(path.join(home, '.claude/ledger-archive')), false);
+    assert.deepEqual(registered(home), before);
+  });
+}
+
+test('retire of a file that is not a backlog ledger is refused and changes nothing', (t) => {
+  const { home, worktree, ledger } = worktreeWithLedger(t);
+
+  const result = run(home, retire, ledger);
+
+  assert.equal(result.status, 1);
+  assert.equal(result.stderr, `not a backlog ledger: ${ledger}\n`);
+  assert.ok(existsSync(worktree));
+  assert.ok(existsSync(ledger));
 });

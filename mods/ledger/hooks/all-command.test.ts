@@ -191,6 +191,53 @@ test('/ledger:all shows a child under its parent in the same repo, and any other
   )
 })
 
+test('/ledger:all indents a grandchild one step further than its parent', async ($, on) => {
+  const grandchild = entry('grandchild', '2026-10-05T09:30:00.000Z', { parent: 'child' })
+  const child = entry('child', '2026-10-04T09:30:00.000Z', { parent: 'epic' })
+  const epic = entry('epic', '2026-10-03T09:30:00.000Z')
+  const all = [grandchild, child, epic]
+  world(
+    on,
+    { 'bin/cc-ledgers list --json': exit(0, JSON.stringify(all)) },
+    Object.fromEntries(all.map(({ path }) => [path, ledgerText('Ship it.')])),
+  )
+
+  const { text } = await $.command.run({ command: 'ledger:all' })
+
+  expect(text.split('\n').slice(4)).toEqual([
+    `| app | epic | active | ${local(epic.updated)} | Ship it. |`,
+    `| app | ↳ child | active | ${local(child.updated)} | Ship it. |`,
+    `| app |   ↳ grandchild | active | ${local(grandchild.updated)} | Ship it. |`,
+  ])
+})
+
+test('/ledger:all lists the active children first, then the parked and archived ones, each newest first', async ($, on) => {
+  const parked = entry('c-parked', '2026-10-06T09:30:00.000Z', { parent: 'epic' })
+  const archived = entry('c-gone', '2026-10-05T09:30:00.000Z', { parent: 'epic', status: 'archived', archivePath: '/home/.claude/ledger-archive/app/2026-10-05-c-gone.md' })
+  const newer = entry('c-new', '2026-10-04T09:30:00.000Z', { parent: 'epic' })
+  const older = entry('c-old', '2026-10-03T09:30:00.000Z', { parent: 'epic' })
+  const epic = entry('epic', '2026-10-01T09:30:00.000Z')
+  world(
+    on,
+    { 'bin/cc-ledgers list --json': exit(0, JSON.stringify([older, parked, epic, archived, newer])) },
+    {
+      ...Object.fromEntries([newer, older, epic].map(({ path }) => [path, ledgerText('Ship it.')])),
+      [parked.path]: ledgerText('Parked: 2026-10-06 — waiting for the API.\nShip it.'),
+      [archived.archivePath ?? '']: ledgerText('Ship it.'),
+    },
+  )
+
+  const { text } = await $.command.run({ command: 'ledger:all' })
+
+  expect(text.split('\n').slice(4)).toEqual([
+    `| app | epic | active | ${local(epic.updated)} | Ship it. |`,
+    `| app | ↳ c-new | active | ${local(newer.updated)} | Ship it. |`,
+    `| app | ↳ c-old | active | ${local(older.updated)} | Ship it. |`,
+    `| app | ↳ c-parked | parked | ${local(parked.updated)} | Ship it. |`,
+    `| app | ↳ c-gone | archived | ${local(archived.updated)} | Ship it. |`,
+  ])
+})
+
 const BACKLOG_HEADER = '| repo | slug | updated | goal |\n| --- | --- | --- | --- |'
 
 const backlogEntry = (slug: string, updated: string): Entry & { main: string } => ({
@@ -250,4 +297,26 @@ test('/ledger:all rejects an entry whose main checkout is not a string', async (
   const { text } = await $.command.run({ command: 'ledger:all' })
 
   expect(text).toBe('cc-ledgers printed something that is not a list of ledgers.')
+})
+
+test('/ledger:all nests a backlog parent, child and grandchild in the backlog section as it does active tasks', async ($, on) => {
+  const grandchild = { ...backlogEntry('grandchild', '2026-10-06T08:00:00.000Z'), parent: 'child' }
+  const child = { ...backlogEntry('child', '2026-10-05T08:00:00.000Z'), parent: 'epic' }
+  const other = backlogEntry('other', '2026-10-04T08:00:00.000Z')
+  const epic = backlogEntry('epic', '2026-10-03T08:00:00.000Z')
+  const all = [grandchild, child, other, epic]
+  world(
+    on,
+    { 'bin/cc-ledgers list --json': exit(0, JSON.stringify(all)) },
+    Object.fromEntries(all.map(({ slug, path }) => [path, `# Task ledger — ${slug}\n\n## Goal\nA goal.\n`])),
+  )
+
+  const { text } = await $.command.run({ command: 'ledger:all' })
+
+  expect(text.split('\n').slice(6)).toEqual([
+    `| app | other | ${local(other.updated)} | A goal. |`,
+    `| app | epic | ${local(epic.updated)} | A goal. |`,
+    `| app | ↳ child | ${local(child.updated)} | A goal. |`,
+    `| app |   ↳ grandchild | ${local(grandchild.updated)} | A goal. |`,
+  ])
 })

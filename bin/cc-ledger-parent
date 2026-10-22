@@ -137,7 +137,7 @@ function children(lines) {
   const listed = [];
   for (let index = found.start + 1; index < found.end; index++) {
     const [, slug, retired] = lines[index].trim().match(CHILD) ?? [];
-    if (slug) listed.push({ index, slug, retired: retired !== undefined });
+    if (slug) listed.push({ index, slug, retired });
   }
   return listed;
 }
@@ -164,6 +164,18 @@ function register(ledger, ...flags) {
   if (result.status !== 0) console.error('warning: registry not updated');
 }
 
+// The parent of `task`, its parent, and so on, up to a slug with no ledger or a slug seen before.
+function ancestors(found, task) {
+  const seen = [];
+  let slug = parentBullet(task.lines)?.value;
+  while (slug !== undefined && !seen.includes(slug)) {
+    seen.push(slug);
+    const ledger = lookup(found, slug);
+    slug = ledger && parentBullet(ledger.lines)?.value;
+  }
+  return seen;
+}
+
 function add(parentSlug, childSlug) {
   if (parentSlug === childSlug) fail(`${childSlug} cannot be its own parent`);
   const found = ledgersBySlug();
@@ -176,10 +188,9 @@ function add(parentSlug, childSlug) {
   if (current !== undefined && current !== parent.slug) {
     fail(`${child.slug} already has the parent ${current}; first run cc-ledger-parent remove ${current} ${child.slug}`);
   }
-  const grandparent = parentBullet(parent.lines)?.value;
-  if (grandparent !== undefined) fail(`${parent.slug} has the parent ${grandparent}, so it cannot be a parent`);
-  const grandchildren = children(child.lines).map(({ slug }) => slug);
-  if (grandchildren.length > 0) fail(`${child.slug} has the children ${grandchildren.join(', ')}, so it cannot be a child`);
+  if (ancestors(found, parent).includes(child.slug)) {
+    fail(`${child.slug} is already the parent of ${parent.slug} or of one of its parents, so making it a child of ${parent.slug} would make a cycle`);
+  }
   const childLocation = location(child);
   const parentLocation = location(parent);
 
@@ -229,13 +240,32 @@ function childStatus(found, { slug, retired }) {
   };
 }
 
+// A retired slug can belong to a new task, so its ledger is not the child's.
+function childTime(found, { slug, retired }) {
+  if (retired) {
+    const [year, month, day] = retired.split('-').map(Number);
+    return new Date(year, month - 1, day).getTime();
+  }
+  const file = found.get(slug)?.[0];
+  return file ? fs.statSync(file).mtimeMs : 0;
+}
+
+// The order of childOrder() in mods/ledger/hooks/ledger.ts: active first, then the others, each newest first by the time
+// of the child's ledger, or its retire date once retired. A child with neither counts as oldest, and the stable sort keeps
+// their Children order.
+function ordered(found, listed) {
+  const dated = listed.map((child) => ({ shown: childStatus(found, child), time: childTime(found, child) }));
+  const active = ({ shown }) => shown.status === 'active';
+  return dated.sort((a, b) => Number(active(b)) - Number(active(a)) || b.time - a.time).map(({ shown }) => shown);
+}
+
 function show(parentSlug, json) {
   const found = ledgersBySlug();
   const parent = resolve(found, parentSlug);
   const shown = {
     parent: parent.slug,
     goal: firstText(body(parent.lines, 'Goal')),
-    children: children(parent.lines).map((listed) => childStatus(found, listed)),
+    children: ordered(found, children(parent.lines)),
   };
   if (json) {
     console.log(JSON.stringify(shown, null, 2));

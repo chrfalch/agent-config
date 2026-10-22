@@ -8,6 +8,7 @@
 # session with that slug. It replaces no title, a ledger slug, or an archived
 # slug from ~/.claude/ledger-archive/<repo>/; any other title came from /rename
 # and stays. It prints nothing else, because plain stdout reaches the model.
+# backlog prints the paths of this repository's backlog ledgers, one per line.
 #
 # Ledgers are found through git, not through a fixed directory layout:
 # - main checkout: one per linked worktree, wherever that worktree lives
@@ -66,10 +67,34 @@ prompt_submit() {
   jq -nc --arg title "$target" '{hookSpecificOutput: {hookEventName: "UserPromptSubmit", sessionTitle: $title}}' 2>/dev/null
 }
 
-if [ "$mode" = prompt-submit ]; then
-  prompt_submit
-  exit 0
-fi
+# Parent and child formats and statuses as bin/cc-ledger-parent writes and shows them.
+section() {
+  awk -v heading="## $2" '/^## / { title = $0; sub(/[ \t\r]+$/, "", title); inside = title == heading; next } inside' "$1" | tr -d '\r'
+}
+
+# The main checkout as cc-task-new works it out. Another repository with the same folder name
+# shares the backlog folder; its ledgers name another main checkout.
+backlog_ledgers() {
+  local common main candidate
+  common=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || return 0
+  main=$(dirname "$common")
+  for candidate in "$HOME/.claude/ledger-backlog/$(basename "$main")"/*.md; do
+    [ -f "$candidate" ] || continue
+    [ "$(section "$candidate" Location | sed -n -E 's/^- main:[[:space:]]*(.*[^[:space:]])[[:space:]]*$/\1/p' | head -n 1)" = "$main" ] && printf '%s\n' "$candidate"
+  done
+  return 0
+}
+
+case "$mode" in
+  prompt-submit)
+    prompt_submit
+    exit 0
+    ;;
+  backlog)
+    backlog_ledgers
+    exit 0
+    ;;
+esac
 
 ledgers=()
 
@@ -111,11 +136,6 @@ fi
 n=${#ledgers[@]}
 [ "$n" -eq 0 ] && exit 0
 
-# Parent and child formats and statuses as bin/cc-ledger-parent writes and shows them.
-section() {
-  awk -v heading="## $2" '/^## / { title = $0; sub(/[ \t\r]+$/, "", title); inside = title == heading; next } inside' "$1" | tr -d '\r'
-}
-
 ledger_titled() {
   local line candidate
   while IFS= read -r line; do
@@ -132,16 +152,11 @@ ledger_titled() {
   return 1
 }
 
-# The main checkout as cc-task-new works it out. Another repository with the same folder name
-# shares the backlog folder; its ledgers name another main checkout.
 in_backlog() {
-  local common main candidate
-  common=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || return 1
-  main=$(dirname "$common")
-  for candidate in "$HOME/.claude/ledger-backlog/$(basename "$main")"/*.md; do
-    [ -f "$candidate" ] && [ "$(slug "$candidate")" = "$1" ] || continue
-    [ "$(section "$candidate" Location | sed -n -E 's/^- main:[[:space:]]*(.*[^[:space:]])[[:space:]]*$/\1/p' | head -n 1)" = "$main" ] && return 0
-  done
+  local candidate
+  while IFS= read -r candidate; do
+    [ "$(slug "$candidate")" = "$1" ] && return 0
+  done < <(backlog_ledgers)
   return 1
 }
 

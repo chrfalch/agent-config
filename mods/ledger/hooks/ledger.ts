@@ -14,6 +14,8 @@ export type LedgerSummary = {
   parked?: Parked
   parent?: string
   children?: ChildLine[]
+  /** A ledger in ~/.claude/ledger-backlog/, shown because it is a parent of a listed task. */
+  isBacklog?: true
 }
 
 const FINISHED = /^(done|accepted|reviewed|dropped|skipped)\b/i
@@ -83,32 +85,48 @@ export function summarize(text: string, fallbackSlug: string, editedMs: number):
   }
 }
 
-export type Grouped<T> = { item: T; children: T[] }
+export type Grouped<T> = { item: T; children: Grouped<T>[] }
 
 /**
- * Puts each item under the first listed item its parent key names, one level deep, keeping the order of both.
- * An item whose parent is not listed, or is itself listed under a parent, stays at the top.
+ * Puts each item under the first listed item its parent key names, at any depth. The top level keeps the order of `items`,
+ * and so do the children of each item, unless `compareChildren` sorts them.
+ * An item whose parent is not listed stays at the top, and so does each item of a cycle, with its other children under it.
  */
-export function groupByParent<T>(items: T[], key: (item: T) => string, parentKey: (item: T) => string | undefined): Grouped<T>[] {
-  const keys = new Set(items.map(key))
+export function groupByParent<T>(
+  items: T[],
+  key: (item: T) => string,
+  parentKey: (item: T) => string | undefined,
+  compareChildren: (a: T, b: T) => number = () => 0,
+): Grouped<T>[] {
+  const first = new Map<string, T>()
+  for (const item of items) if (!first.has(key(item))) first.set(key(item), item)
   const listedParent = (item: T) => {
     const parent = parentKey(item)
-    return parent !== undefined && parent !== key(item) && keys.has(parent) ? parent : undefined
+    return parent !== undefined && parent !== key(item) && first.has(parent) ? parent : undefined
   }
-  const tops = new Set(items.filter(item => listedParent(item) === undefined).map(key))
-  const nestedUnder = (item: T) => {
-    const parent = listedParent(item)
-    return parent !== undefined && tops.has(parent) ? parent : undefined
+  const isInCycle = (item: T) => {
+    const seen = new Set<string>()
+    for (let parent = listedParent(item); parent !== undefined && !seen.has(parent); ) {
+      if (parent === key(item)) return true
+      seen.add(parent)
+      const next = first.get(parent)
+      parent = next && listedParent(next)
+    }
+    return false
   }
-  const groups = items.filter(item => nestedUnder(item) === undefined).map((item): Grouped<T> => ({ item, children: [] }))
-  const byKey = new Map<string, Grouped<T>>()
-  for (const group of groups) if (!byKey.has(key(group.item))) byKey.set(key(group.item), group)
-  for (const item of items) {
-    const parent = nestedUnder(item)
-    if (parent !== undefined) byKey.get(parent)?.children.push(item)
-  }
-  return groups
+  const isTop = (item: T) => listedParent(item) === undefined || isInCycle(item)
+  const group = (item: T): Grouped<T> => ({
+    item,
+    children: first.get(key(item)) === item ? items.filter(child => !isTop(child) && listedParent(child) === key(item)).sort(compareChildren).map(group) : [],
+  })
+  return items.filter(isTop).map(group)
 }
+
+/** The order of a parent's child tasks: the active ones first, then the others, each newest first. */
+export const childOrder =
+  <T>(isActive: (item: T) => boolean, time: (item: T) => number) =>
+  (a: T, b: T): number =>
+    Number(isActive(b)) - Number(isActive(a)) || time(b) - time(a)
 
 export const isoDate = (date: Date): string =>
   [date.getFullYear(), date.getMonth() + 1, date.getDate()].map(part => String(part).padStart(2, '0')).join('-')
@@ -160,18 +178,36 @@ function fields(ledger: LedgerSummary): string[] {
   return [ledger.goal && `**Goal:** ${ledger.goal}`, formatStep(ledger), ledger.next && `**Next:** ${ledger.next}`].filter(field => field !== '')
 }
 
-export function format(ledger: LedgerSummary, children: LedgerSummary[] = []): string {
+const title = (ledger: LedgerSummary): string => (ledger.isBacklog ? `${ledger.slug} (backlog)` : ledger.slug)
+
+function childLines(children: Grouped<LedgerSummary>[], indent: string): string[] {
+  if (children.length === 0) return []
   return [
-    `#### ${ledger.slug} · edited ${formatTime(ledger.editedMs)}`,
+    `${indent}- **Children:**`,
+    ...children.flatMap(({ item, children: grandchildren }) => [
+      `${indent}  - **${title(item)}** · edited ${formatTime(item.editedMs)}`,
+      ...fields(item).map(field => `${indent}    - ${field}`),
+      ...childLines(grandchildren, `${indent}    `),
+    ]),
+  ]
+}
+
+export function format(ledger: LedgerSummary, children: Grouped<LedgerSummary>[] = []): string {
+  return [
+    `#### ${title(ledger)} · edited ${formatTime(ledger.editedMs)}`,
     ...fields(ledger).map(field => `- ${field}`),
     ...(ledger.parent ? [`- **Parent:** ${ledger.parent}`] : []),
-    ...(children.length > 0 ? ['- **Children:**'] : []),
-    ...children.flatMap(child => [`  - **${child.slug}** · edited ${formatTime(child.editedMs)}`, ...fields(child).map(field => `    - ${field}`)]),
+    ...childLines(children, ''),
   ].join('\n')
 }
 
 export function formatAll(ledgers: LedgerSummary[]): string {
-  const groups = groupByParent(ledgers, ledger => ledger.slug, ledger => ledger.parent)
+  const groups = groupByParent(
+    ledgers,
+    ledger => ledger.slug,
+    ledger => ledger.parent,
+    childOrder(ledger => !ledger.isBacklog && !ledger.parked, ledger => ledger.editedMs),
+  )
   const order = groups.some(({ children }) => children.length > 0) ? 'newest first, children under their parent' : 'newest first'
   const count = ledgers.length === 1 ? '1 ledger' : `${ledgers.length} ledgers, ${order}`
   return [`**Task ledgers** · ${count}`, ...groups.map(({ item, children }) => format(item, children))].join('\n\n')
@@ -257,10 +293,9 @@ export type TaskName = { slug: string; parent?: string }
 
 function taskList(tasks: TaskName[]): string {
   const groups = groupByParent(tasks, task => task.slug, task => task.parent)
-  const name = ({ item, children }: Grouped<TaskName>) => {
-    if (children.length > 0) return `${item.slug} (children: ${children.map(child => child.slug).join(', ')})`
-    return item.parent ? `${item.slug} (parent: ${item.parent})` : item.slug
-  }
+  const nested = ({ item, children }: Grouped<TaskName>): string =>
+    children.length > 0 ? `${item.slug} (children: ${children.map(nested).join(', ')})` : item.slug
+  const name = (group: Grouped<TaskName>) => (group.children.length === 0 && group.item.parent ? `${group.item.slug} (parent: ${group.item.parent})` : nested(group))
   return groups.map(name).join(', ')
 }
 
@@ -283,8 +318,8 @@ export function otherRepositoryMessage(target: string, repo: string, main: strin
   return `Backlog task ${target} belongs to the ${repo} repository, with its main checkout at ${main}. ${UNCHANGED} Run /ledger:go ${target} from a session in that repository.`
 }
 
-export function backlogUncheckedMessage(target: string, tasks: TaskName[], error: string): string {
-  return `${unknownTaskMessage(target, tasks)} The backlog could not be checked: ${sentence(error)}`
+export function backlogUncheckedMessage(target: string, tasks: TaskName[], error: string, outcome = UNCHANGED): string {
+  return `${unknownTaskMessage(target, tasks, outcome)} The backlog could not be checked: ${sentence(error)}`
 }
 
 export function unparkFailedMessage(target: string, error: string): string {
@@ -310,7 +345,7 @@ export function retireHint(slug: string, branch: BranchState | null): string {
 }
 
 export const HELP = [
-  "- `/ledger` — Show each task ledger's goal, current step and next step. `/ledger <name>` shows one.",
+  "- `/ledger` — Show each task ledger's goal, current step and next step. A parent task in this repo's backlog is shown too, marked (backlog). `/ledger <name>` shows one.",
   '- `/ledger:task` — Add a separate task to the backlog: a ledger only, with no branch or worktree yet. `/ledger:go <slug>` starts it. With no current ledger, it starts the task at once and continues in this session. `--here` adds a ledger to this worktree instead.',
   "- `/ledger:update` — Write the latest results to this task's ledger. Without one, it points to `/ledger:task`.",
   "- `/ledger:next` — Write this task's ledger, clear the session, and continue from the next step. When every step is done, it first says how to retire the task.",
@@ -319,7 +354,7 @@ export const HELP = [
   "- `/ledger:park [<slug>] <reason>` — Mark a task parked. Without a slug it writes this task's ledger, parks it, then clears the session.",
   "- `/ledger:parent [<slug>]` — Show a parent task and each child's status and next step; without a slug, this task or its parent. `<slug> add <child>` and `<slug> remove <child>` change its children.",
   "- `/ledger:worktrees` — Show each linked git worktree's size, last commit, dirty files, ledger and PR.",
-  "- `/ledger:retire [<slug>]` — Archive a task's ledger, remove its worktree, and delete its branch when all of its commits are merged. `--dry-run` only shows what it would do. Uncommitted changes and unmerged work need `--force`.",
+  "- `/ledger:retire [<slug>]` — Archive a task's ledger, remove its worktree, and delete its branch when all of its commits are merged. A backlog task of this repo has no worktree or branch: its ledger is archived, then deleted. `--dry-run` only shows what it would do. Uncommitted changes, unmerged work and active child tasks need `--force`.",
   "- `/ledger:archive [<term>]` — List this repo's archived ledgers, newest first; a term keeps those that contain it, and `--all` lists every repo.",
   '- `/ledger:all` — Show every task ledger on this machine, active, backlog and archived; `--scan` rebuilds the list from disk.',
   '- `/ledger:dashboard` — Start a web page on this machine that lists every task ledger, with search, details, park and retire. It keeps running after the session ends; `stop` stops it.',

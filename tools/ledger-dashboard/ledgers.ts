@@ -3,7 +3,7 @@ import { existsSync, realpathSync } from 'node:fs';
 import { access, lstat, readFile, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { groupByParent, park, parkMarker, summarize, unpark } from '../../mods/ledger/hooks/ledger.js';
+import { childOrder, groupByParent, park, parkMarker, summarize, unpark, type Grouped } from '../../mods/ledger/hooks/ledger.js';
 import { renderMarkdown } from './markdown.js';
 import { singleUseTokens } from './tokens.js';
 
@@ -133,11 +133,11 @@ function parentIdOf(newestFirst: Entry[]): (entry: Entry) => string | undefined 
 }
 
 // Grouped by id, not by slug, so a child stays out of a group whose row is not the parent it resolves to.
-const familyOrder = (rows: Row[]): ListedRow[] =>
-  groupByParent(rows, row => row.id, row => row.parentId).flatMap(({ item, children }) => [
-    { ...item, nested: false },
-    ...children.map(child => ({ ...child, nested: true })),
-  ]);
+const familyOrder = (rows: Row[]): ListedRow[] => {
+  const listed = ({ item, children }: Grouped<Row>, nested: boolean): ListedRow[] => [{ ...item, nested }, ...children.flatMap(child => listed(child, true))];
+  const byStatusThenDate = childOrder<Row>(row => row.status === 'active', row => Date.parse(row.updated));
+  return groupByParent(rows, row => row.id, row => row.parentId, byStatusThenDate).flatMap(group => listed(group, false));
+};
 
 const sameTarget = (a: RetireTarget, b: RetireTarget): boolean =>
   a.id === b.id &&

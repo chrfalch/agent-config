@@ -1,7 +1,7 @@
 import type { On } from 'claude-code'
 import { expect, test } from 'claude-code/testing'
 
-import { formatAll, formatTime, groupByParent, summarize, unknownTaskMessage } from './ledger'
+import { formatAll, formatTime, groupByParent, summarize, unknownTaskMessage, type Grouped } from './ledger'
 
 type Reply = { value: { exitCode: number; stdout: string; stderr: string; isStdoutTruncated: false; isStderrTruncated: false } } | { deny: string }
 
@@ -40,24 +40,44 @@ type World = {
   removeFolder: (folder: string) => void
 }
 
-/** `ledgers` maps a path to its text, newest first: the first is edited at 4000 ms, the next at 3000 ms, and so on. */
-function world(on: On, cwd: string, ledgers: Record<string, string>, replies: Record<string, Reply> = {}): World {
+const BACKLOG = '/home/.claude/ledger-backlog/repo'
+const backlogPathOf = (slug: string): string => `${BACKLOG}/${slug}.md`
+
+/**
+ * `ledgers` maps a worktree ledger's path to its text, then `backlog` a backlog ledger's, then `unlisted` the ledger of
+ * another worktree that ledger-list.sh paths does not print, newest first: the first is edited at n × 1000 ms for n
+ * ledgers in all, the next 1000 ms earlier, and so on. `backlog` of a string is the error of a backlog lookup that fails.
+ */
+function world(
+  on: On,
+  cwd: string,
+  ledgers: Record<string, string>,
+  replies: Record<string, Reply> = {},
+  backlog: Record<string, string> | string = {},
+  unlisted: Record<string, string> = {},
+): World {
   const calls: string[] = []
   let markdownArgs: string | undefined
-  const paths = Object.keys(ledgers)
+  const backlogLedgers = typeof backlog === 'string' ? {} : backlog
+  const files = { ...ledgers, ...backlogLedgers, ...unlisted }
+  const all = Object.keys(files)
   const removed: string[] = []
   on('session.cwd', async () => ({ value: cwd }))
   on('process.run', async (_, e) => {
-    if (e.argv[0] === 'bash') return exit(0, paths.join('\n'))
+    if (e.argv[0] === 'bash' && e.argv[2] === 'paths') return exit(0, Object.keys(ledgers).join('\n'))
+    if (e.argv[0] === 'bash' && e.argv[2] === 'backlog') {
+      calls.push('ledger-list.sh backlog')
+      return typeof backlog === 'string' ? exit(1, '', backlog) : exit(0, Object.keys(backlog).join('\n'))
+    }
     calls.push(scriptKey(e.argv))
     return replies[scriptKey(e.argv)] ?? { deny: `unexpected command: ${JSON.stringify(e.argv)}` }
   })
   on('fs.stat', async (_, e) =>
     removed.some(folder => e.path === folder || e.path.startsWith(`${folder}/`))
       ? { deny: `ENOENT: no such file or directory, stat '${e.path}'` }
-      : { value: { kind: 'file', size: 0, mtimeMs: (paths.length - paths.indexOf(e.path)) * 1000, isLink: false } },
+      : { value: { kind: 'file', size: 0, mtimeMs: (all.length - all.indexOf(e.path)) * 1000, isLink: false } },
   )
-  on('fs.read', async (_, e) => (e.path in ledgers ? { value: ledgers[e.path] ?? '' } : { deny: `ENOENT: ${e.path}` }))
+  on('fs.read', async (_, e) => (e.path in files ? { value: files[e.path] ?? '' } : { deny: `ENOENT: ${e.path}` }))
   on('fs.write', async () => ({ value: undefined }))
   on('command.run', { command: 'ledger:go' }, async (_, e) => {
     markdownArgs = e.args
@@ -277,6 +297,10 @@ test('summarize reads CRLF parent and Children lines', () => {
   expect(summarize(crlf(ledgerText('epic', { children: ['- child-a'] })), 'folder', 0).children).toEqual([{ slug: 'child-a' }])
 })
 
+type Shape = [string, Shape[]]
+const shapeOf = ({ item, children }: Grouped<{ slug: string }>): Shape => [item.slug, children.map(shapeOf)]
+const shape = (items: { slug: string; parent?: string }[]): Shape[] => groupByParent(items, item => item.slug, item => item.parent).map(shapeOf)
+
 test('groupByParent puts a child under its listed parent and keeps the rest in their order', () => {
   const items = [
     { slug: 'child-a', parent: 'epic' },
@@ -285,26 +309,26 @@ test('groupByParent puts a child under its listed parent and keeps the rest in t
     { slug: 'orphan', parent: 'gone' },
     { slug: 'child-b', parent: 'epic' },
   ]
-  const grouped = groupByParent(items, item => item.slug, item => item.parent)
-  expect(grouped.map(({ item, children }) => [item.slug, children.map(child => child.slug)])).toEqual([
+  expect(shape(items)).toEqual([
     ['other', []],
-    ['epic', ['child-a', 'child-b']],
+    [
+      'epic',
+      [
+        ['child-a', []],
+        ['child-b', []],
+      ],
+    ],
     ['orphan', []],
   ])
 })
 
-test('groupByParent nests no deeper than one level and survives a cycle', () => {
+test('groupByParent nests at every depth, and keeps each task of a cycle at the top with its other children under it', () => {
   const chain = [{ slug: 'a', parent: 'b' }, { slug: 'b', parent: 'c' }, { slug: 'c' }]
-  const cycle = [{ slug: 'x', parent: 'y' }, { slug: 'y', parent: 'x' }]
+  const cycle = [{ slug: 'x', parent: 'y' }, { slug: 'y', parent: 'x' }, { slug: 'z', parent: 'x' }]
   const self = [{ slug: 's', parent: 's' }]
-  const shape = (items: { slug: string; parent?: string }[]) =>
-    groupByParent(items, item => item.slug, item => item.parent).map(({ item, children }) => [item.slug, children.map(child => child.slug)])
-  expect(shape(chain)).toEqual([
-    ['a', []],
-    ['c', ['b']],
-  ])
+  expect(shape(chain)).toEqual([['c', [['b', [['a', []]]]]]])
   expect(shape(cycle)).toEqual([
-    ['x', []],
+    ['x', [['z', []]]],
     ['y', []],
   ])
   expect(shape(self)).toEqual([['s', []]])
@@ -364,6 +388,206 @@ test('/ledger groups the children under their parent', async ($, on) => {
       '    - **Next:** Next of child-a.',
     ].join('\n'),
   )
+})
+
+test('/ledger does not look in the backlog when every parent is listed', async ($, on) => {
+  const { calls } = world(on, '/repo', {
+    [pathOf('child-a')]: ledgerText('child-a', { parent: 'epic' }),
+    [pathOf('epic')]: ledgerText('epic', { children: ['- child-a'] }),
+  })
+
+  await $.command.run({ command: 'ledger', args: '' })
+
+  expect(calls).toEqual([])
+})
+
+const BACKLOG_FAMILY = {
+  ledgers: { [pathOf('child-a')]: ledgerText('child-a', { parent: 'epic' }), [pathOf('other')]: ledgerText('other') },
+  backlog: { [backlogPathOf('epic')]: ledgerText('epic', { children: ['- child-a'] }), [backlogPathOf('idea')]: ledgerText('idea') },
+}
+
+test('/ledger shows a backlog parent of a listed task, marked backlog, with its children under it, and no other backlog task', async ($, on) => {
+  const { calls } = world(on, '/repo', BACKLOG_FAMILY.ledgers, {}, BACKLOG_FAMILY.backlog)
+
+  const { text } = await $.command.run({ command: 'ledger', args: '' })
+
+  expect(text).toBe(
+    [
+      '**Task ledgers** · 3 ledgers, newest first, children under their parent',
+      '',
+      `#### other · edited ${at(3000)}`,
+      '- **Goal:** Goal of other.',
+      '- **Next:** Next of other.',
+      '',
+      `#### epic (backlog) · edited ${at(2000)}`,
+      '- **Goal:** Goal of epic.',
+      '- **Next:** Next of epic.',
+      '- **Children:**',
+      `  - **child-a** · edited ${at(4000)}`,
+      '    - **Goal:** Goal of child-a.',
+      '    - **Next:** Next of child-a.',
+    ].join('\n'),
+  )
+  expect(calls).toEqual(['ledger-list.sh backlog'])
+})
+
+test('/ledger <name> matches a backlog parent of a listed task', async ($, on) => {
+  world(on, '/repo', BACKLOG_FAMILY.ledgers, {}, BACKLOG_FAMILY.backlog)
+
+  const { text } = await $.command.run({ command: 'ledger', args: 'EPI' })
+
+  expect(text).toBe(['**Task ledgers** · 1 ledger', '', `#### epic (backlog) · edited ${at(2000)}`, '- **Goal:** Goal of epic.', '- **Next:** Next of epic.'].join('\n'))
+})
+
+test('/ledger <name> does not match a backlog task that is no parent of a listed task', async ($, on) => {
+  world(on, '/repo', BACKLOG_FAMILY.ledgers, {}, BACKLOG_FAMILY.backlog)
+
+  const { text } = await $.command.run({ command: 'ledger', args: 'idea' })
+
+  expect(text).toBe('No ledger matches "idea".')
+})
+
+test('/ledger walks up a chain of backlog parents and nests each level under the one above', async ($, on) => {
+  world(
+    on,
+    '/repo',
+    { [pathOf('child-a')]: ledgerText('child-a', { parent: 'mid' }) },
+    {},
+    { [backlogPathOf('mid')]: ledgerText('mid', { parent: 'top', children: ['- child-a'] }), [backlogPathOf('top')]: ledgerText('top', { children: ['- mid'] }) },
+  )
+
+  const { text } = await $.command.run({ command: 'ledger', args: '' })
+
+  expect(text).toBe(
+    [
+      '**Task ledgers** · 3 ledgers, newest first, children under their parent',
+      '',
+      `#### top (backlog) · edited ${at(1000)}`,
+      '- **Goal:** Goal of top.',
+      '- **Next:** Next of top.',
+      '- **Children:**',
+      `  - **mid (backlog)** · edited ${at(2000)}`,
+      '    - **Goal:** Goal of mid.',
+      '    - **Next:** Next of mid.',
+      '    - **Children:**',
+      `      - **child-a** · edited ${at(3000)}`,
+      '        - **Goal:** Goal of child-a.',
+      '        - **Next:** Next of child-a.',
+    ].join('\n'),
+  )
+})
+
+const porcelainZ = (...worktrees: string[]): string => worktrees.map(path => `worktree ${path}\0HEAD abc\0\0`).join('')
+
+test('/ledger in a linked worktree walks up through a parent active in another worktree to a backlog grandparent, and shows no other worktree task', async ($, on) => {
+  world(
+    on,
+    `${WORKTREES}/child-a`,
+    { [pathOf('child-a')]: ledgerText('child-a', { parent: 'mid' }) },
+    { 'git worktree list --porcelain -z': exit(0, porcelainZ('/repo', `${WORKTREES}/child-a`, `${WORKTREES}/mid`, `${WORKTREES}/stray`)) },
+    { [backlogPathOf('top')]: ledgerText('top', { children: ['- mid'] }) },
+    { [pathOf('mid')]: ledgerText('mid', { parent: 'top', children: ['- child-a'] }), [pathOf('stray')]: ledgerText('stray') },
+  )
+
+  const { text } = await $.command.run({ command: 'ledger', args: '' })
+
+  expect(text).toBe(
+    [
+      '**Task ledgers** · 3 ledgers, newest first, children under their parent',
+      '',
+      `#### top (backlog) · edited ${at(3000)}`,
+      '- **Goal:** Goal of top.',
+      '- **Next:** Next of top.',
+      '- **Children:**',
+      `  - **mid** · edited ${at(2000)}`,
+      '    - **Goal:** Goal of mid.',
+      '    - **Next:** Next of mid.',
+      '    - **Children:**',
+      `      - **child-a** · edited ${at(4000)}`,
+      '        - **Goal:** Goal of child-a.',
+      '        - **Next:** Next of child-a.',
+    ].join('\n'),
+  )
+})
+
+test('/ledger skips another worktree whose ledger cannot be read, and still shows the parent found in the others', async ($, on) => {
+  world(
+    on,
+    `${WORKTREES}/child-a`,
+    { [pathOf('child-a')]: ledgerText('child-a', { parent: 'mid' }) },
+    { 'git worktree list --porcelain -z': exit(0, porcelainZ('/repo', `${WORKTREES}/child-a`, `${WORKTREES}/gone`, `${WORKTREES}/mid`)) },
+    {},
+    { [pathOf('mid')]: ledgerText('mid', { children: ['- child-a'] }) },
+  )
+
+  const { text } = await $.command.run({ command: 'ledger', args: '' })
+
+  expect(text.split('\n').filter(line => / · edited /.test(line))).toEqual([`#### mid · edited ${at(1000)}`, `  - **child-a** · edited ${at(2000)}`])
+})
+
+const parkedText = (slug: string, options: { parent?: string } = {}): string =>
+  ledgerText(slug, options).replace('## Next step\n', '## Next step\nParked: 2026-10-01 — Waiting for the API.\n')
+
+test('/ledger lists the active children first, then the parked ones, each newest first', async ($, on) => {
+  world(on, '/repo', {
+    [pathOf('child-parked')]: parkedText('child-parked', { parent: 'epic' }),
+    [pathOf('child-new')]: ledgerText('child-new', { parent: 'epic' }),
+    [pathOf('child-old')]: ledgerText('child-old', { parent: 'epic' }),
+    [pathOf('epic')]: ledgerText('epic', { children: ['- child-parked', '- child-new', '- child-old'] }),
+  })
+
+  const { text } = await $.command.run({ command: 'ledger', args: '' })
+
+  expect(text.split('\n').filter(line => / · edited /.test(line))).toEqual([
+    `#### epic · edited ${at(1000)}`,
+    `  - **child-new** · edited ${at(3000)}`,
+    `  - **child-old** · edited ${at(2000)}`,
+    `  - **child-parked** · edited ${at(4000)}`,
+  ])
+})
+
+test('/ledger stops at a cycle among backlog parents and shows each task once', async ($, on) => {
+  world(
+    on,
+    '/repo',
+    { [pathOf('child-a')]: ledgerText('child-a', { parent: 'p' }) },
+    {},
+    { [backlogPathOf('p')]: ledgerText('p', { parent: 'q' }), [backlogPathOf('q')]: ledgerText('q', { parent: 'p' }) },
+  )
+
+  const { text } = await $.command.run({ command: 'ledger', args: '' })
+
+  expect(text).toStartWith('**Task ledgers** · 3 ledgers')
+  expect(text.split('\n').filter(line => /\b(child-a|p|q)\b.* · edited /.test(line))).toEqual([
+    `#### p (backlog) · edited ${at(2000)}`,
+    `  - **child-a** · edited ${at(3000)}`,
+    `#### q (backlog) · edited ${at(1000)}`,
+  ])
+})
+
+test('/ledger keeps the parent note when the parent is in no worktree and not in the backlog', async ($, on) => {
+  world(on, '/repo', { [pathOf('child-a')]: ledgerText('child-a', { parent: 'gone' }) }, {}, { [backlogPathOf('idea')]: ledgerText('idea') })
+
+  const { text } = await $.command.run({ command: 'ledger', args: '' })
+
+  expect(text.split('\n').at(-1)).toBe('- **Parent:** gone')
+  expect(text).not.toContain('idea')
+})
+
+test('/ledger still shows the worktree ledgers when the backlog cannot be checked, and says so', async ($, on) => {
+  world(on, '/repo', { [pathOf('child-a')]: ledgerText('child-a', { parent: 'epic' }) }, {}, 'boom')
+
+  const { text } = await $.command.run({ command: 'ledger', args: '' })
+
+  expect(text).toStartWith(`**Task ledgers** · 1 ledger\n\n#### child-a · edited ${at(1000)}`)
+  expect(text).toContain('- **Parent:** epic')
+  expect(text.split('\n').at(-1)).toStartWith('Parent tasks in the backlog are not shown. ')
+  expect(text).toEndWith('boom')
+})
+
+test('unknownTaskMessage names the children of each child with it', () => {
+  const tasks = [{ slug: 'c', parent: 'b' }, { slug: 'a' }, { slug: 'b', parent: 'a' }]
+  expect(unknownTaskMessage('nope', tasks)).toEndWith('Task ledgers: a (children: b (children: c)).')
 })
 
 test('unknownTaskMessage names the children of a listed parent with it, and the parent of any other child', () => {

@@ -238,7 +238,7 @@ test('/ledger:all lists the active children first, then the parked and archived 
   ])
 })
 
-const BACKLOG_HEADER ='| repo | slug | updated | goal |\n| --- | --- | --- | --- |'
+const BACKLOG_HEADER = '| repo | slug | updated | goal |\n| --- | --- | --- | --- |'
 
 const backlogEntry = (slug: string, updated: string): Entry & { main: string } => ({
   ...entry(slug, updated, { status: 'backlog', path: `/home/.claude/ledger-backlog/app/${slug}.md`, branch: '' }),

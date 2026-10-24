@@ -3,13 +3,13 @@ description: Write the latest results to this task's ledger, clear the session, 
 argument-hint: <slug>
 ---
 
-The ledger hook replaces the operator's argument with two or more lines:
+The ledger hook replaces the argument with two or more lines:
 
 ```
 $ARGUMENTS
 ```
 
-- `task:` is the slug of the task the operator switches to. Do not start that
+- `task:` is the slug of the task to switch to. Do not start that
   task in this session: the next session does.
 - `ledger:` is the absolute path of this session's task ledger, or `none`.
 - `parked:`, when present, is the date and reason the task was parked. The
@@ -19,7 +19,7 @@ $ARGUMENTS
   status.
 - `promoted:`, when present, is the absolute path of the worktree the hook
   just made for a backlog task. That task's ledger is already in it.
-- `picked:`, when present, means the operator named a parent task. The hook
+- `picked:`, when present, means the argument named a parent task. The hook
   picked its first child task not yet started; the line runs from that parent
   task down to the `task:` value.
 - `marked:`, when present, is the ledger in which the hook just marked the task
@@ -51,5 +51,5 @@ even when it is not in the current working directory:
    `promoted:` line, add one line before the final line: the backlog task was
    promoted, and its worktree is at that path. If there is a `picked:` line,
    add one line before the final line that names the picked task and the
-   parent task the operator named. Add each `warning:` line before the final
+   parent task the argument named. Add each `warning:` line before the final
    line, as given.

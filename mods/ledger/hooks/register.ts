@@ -5,13 +5,17 @@ import {
   backlogUncheckedMessage,
   folderSlug,
   formatAll,
+  GO_FROM_SUBAGENT,
   GO_USAGE,
   goArgs,
+  goDeniedMessage,
   HELP,
+  isGoArgs,
   lookupFailedMessage,
   markFailedWarning,
   noChildToStartMessage,
   noLedgerMessage,
+  oneSwitchPerTurnMessage,
   otherRepositoryMessage,
   PARK_USAGE,
   park,
@@ -25,12 +29,14 @@ import {
   retireHint,
   severalLedgersMessage,
   sharedSlugMessage,
+  slugExpectedMessage,
   summarize,
   unknownTaskMessage,
   unpark,
   unparkFailedMessage,
   worktreeTaskMessage,
   worktreeWithoutLedgerMessage,
+  type GoFields,
   type LedgerSummary,
 } from './ledger'
 import { archiveCommand } from './archive-command'
@@ -54,6 +60,15 @@ import { basename } from './worktrees'
 import { worktreesCommand } from './worktrees-command'
 
 const armed = { plugin: 'ledger', key: 'armed' } as const
+
+type GoArm = { mode: 'go'; slug: string; ledger?: string }
+
+/**
+ * The task a /ledger:go call is starting, from its armed check until it armed the switch or gave up. It is set before the
+ * first await, so a second call that overlaps the first cannot also pass the check.
+ * It assumes the hooks module is loaded once per session; a second instance would hold its own reservation.
+ */
+let goStarting: string | undefined
 
 const uniqueByPath = (ledgers: Found[]): Found[] => ledgers.filter((ledger, index) => ledgers.findIndex(({ path }) => path === ledger.path) === index)
 
@@ -99,6 +114,126 @@ async function showRetireHint($: EngineInterface, ledger: string): Promise<void>
     if (current === 'all done') $.ui.log(retireHint(slug, await lookUpBranch($, worktreeOf(ledger))))
   } catch {}
 }
+
+/**
+ * Everything /ledger:go does before go.md runs: find the task, pick a parent's next child, promote a backlog task, unpark,
+ * mark it started, and arm the clear. A text says why the task was not started; then the clear is not armed, and a clear
+ * this turn already armed stays.
+ */
+async function startGo($: EngineInterface, input: string): Promise<{ target: string; fields: GoFields; args: string; arm: GoArm } | { text: string }> {
+  let promotedWorktree: string | undefined
+  let arm: GoArm | undefined
+  let target = input.trim()
+  if (target === '') return { text: GO_USAGE }
+  if (goStarting !== undefined) return { text: oneSwitchPerTurnMessage({ mode: 'go', slug: goStarting }, target) }
+  goStarting = target
+  try {
+    const { value: alreadyArmed } = await $.state.get(armed)
+    if (alreadyArmed) return { text: oneSwitchPerTurnMessage(alreadyArmed, target) }
+    const found = await findLedgers($)
+    if ('error' in found) return { text: lookupFailedMessage(found.error) }
+    const tasks = await Promise.all(found.map(async ledger => summarize(await $.fs.read(ledger.path), folderSlug(ledger.path), 0)))
+    const folder = await sessionFolder($)
+    const cwd = folder.path
+    let place = await placeOf($, target, found, tasks, cwd)
+    if ('text' in place) return place
+    const active = sessionLedger(found, folder)
+    if (active.kind === 'several') return { text: severalLedgersMessage(cwd, active.paths.map(folderSlug)) }
+    let main: string | null | undefined
+    const otherRepository = async (slug: string, at: Place): Promise<{ text: string } | undefined> => {
+      if ('ledger' in at) return undefined
+      if (main === undefined) main = await mainCheckout($, cwd)
+      const elsewhere = otherRepositoryTask(at.backlog, main)
+      return elsewhere ? { text: otherRepositoryMessage(slug, elsewhere.repo, elsewhere.main) } : undefined
+    }
+    const refused = await otherRepository(target, place)
+    if (refused) return refused
+
+    const warnings: string[] = []
+    let picked: string[] | undefined
+    if (await hasChildren($, target, place, main)) {
+      const chain = await childToStart($, target, cwd)
+      if ('error' in chain) {
+        if (!('ledger' in place)) return { text: pickFailedMessage(target, chain.error) }
+        warnings.push(pickFailedWarning(target, chain.error))
+      } else if (chain.length > 0) {
+        picked = chain
+        target = chain.at(-1) ?? target
+        place = await placeOf($, target, found, tasks, cwd)
+        if ('text' in place) return place
+        const refusedChild = await otherRepository(target, place)
+        if (refusedChild) return refusedChild
+      } else if (!('ledger' in place)) {
+        const shown = await showParent($, target, cwd)
+        return { text: noChildToStartMessage(target, 'error' in shown ? shown : shown.children) }
+      }
+    }
+
+    let ledger: string
+    if ('ledger' in place) ledger = place.ledger
+    else {
+      const promoted = await promoteBacklogTask($, target, cwd)
+      if ('error' in promoted) {
+        return { text: place.isUnregistered && promoted.isMissing ? unknownTaskMessage(target, tasks) : promoteFailedMessage(target, promoted.error) }
+      }
+      ledger = promoted.ledger
+      promotedWorktree = worktreeOf(ledger)
+    }
+    const text = await $.fs.read(ledger)
+    const { text: unparked, parked } = unpark(text)
+    if (parked) {
+      try {
+        await $.fs.write(ledger, unparked)
+      } catch (error) {
+        const reason = `Could not remove the parked marker. ${message(error)}`
+        return { text: promotedWorktree === undefined ? unparkFailedMessage(target, message(error)) : promotedThenFailedMessage(target, promotedWorktree, reason) }
+      }
+    }
+    const current = active.kind === 'one' ? active.path : undefined
+    const task = tasks.find(({ slug }) => slug === target) ?? summarize(text, target, 0)
+    let marked: string | undefined
+    if (task.parent) {
+      const mark = await markStarted($, task.parent, target, cwd)
+      if ('error' in mark) warnings.push(markFailedWarning(target, task.parent, mark.error))
+      else marked = mark.marked
+    }
+    const family = await familyOf($, task, cwd)
+    arm = { mode: 'go', slug: target, ...(current && current !== ledger && { ledger: current }) }
+    await $.state.set(armed, arm)
+    const fields = { parked, family, promotedWorktree, picked, marked, warnings }
+    return { target, fields, args: goArgs(target, current, fields), arm }
+  } catch (error) {
+    if (arm) await disarm($, arm)
+    // Once the worktree exists, saying that nothing was written would be wrong.
+    if (promotedWorktree === undefined) throw error
+    return { text: promotedThenFailedMessage(target, promotedWorktree, message(error)) }
+  } finally {
+    goStarting = undefined
+  }
+}
+
+/**
+ * Clears the switch a /ledger:go call armed, unless something armed another since. State hands back copies, not `arm`.
+ * Known limit: in the test harness $.state.get returns this hook's own last write (unverified in the engine), so an arm
+ * made meanwhile (a typed /ledger:next) may be cleared too. The cost is one missed clear; a "known limit" test in go-start.test.ts pins it.
+ */
+async function disarm($: EngineInterface, arm: GoArm): Promise<void> {
+  const { value } = await $.state.get(armed)
+  if (value?.mode === 'go' && value.slug === arm.slug && value.ledger === arm.ledger) await $.state.set(armed, null)
+}
+
+/** The answer of the hooks after /ledger:go; when they fail, the switch it armed is undone first. */
+async function disarmedOnFailure<T>($: EngineInterface, arm: GoArm, answer: Promise<T>): Promise<T> {
+  try {
+    return await answer
+  } catch (error) {
+    await disarm($, arm)
+    throw error
+  }
+}
+
+// The hook sees the model's raw input: the name may be missing, or carry a leading slash the Skill tool strips later.
+const skillName = (skill: string | undefined): string => (skill ?? '').trim().replace(/^\//, '')
 
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
@@ -156,91 +291,37 @@ export const register: Register = on => {
 
   // A command.run hook cannot clear the session, and an answer of { text } ends no turn, so go.md runs a
   // model turn even when there is no ledger to write: its turn.complete is what clears.
-  // Set once this run's promotion succeeds, so the .catch below does not say that nothing was written.
-  let promotedByGo: { slug: string; worktree: string } | undefined
   on('command.run', { command: 'ledger:go' }, async ($, e, next) => {
-    promotedByGo = undefined
-    let target = (e.args ?? '').trim()
-    if (target === '') return { text: GO_USAGE }
-    const found = await findLedgers($)
-    if ('error' in found) return { text: lookupFailedMessage(found.error) }
-    const tasks = await Promise.all(found.map(async ledger => summarize(await $.fs.read(ledger.path), folderSlug(ledger.path), 0)))
-    const folder = await sessionFolder($)
-    const cwd = folder.path
-    let place = await placeOf($, target, found, tasks, cwd)
-    if ('text' in place) return place
-    const active = sessionLedger(found, folder)
-    if (active.kind === 'several') return { text: severalLedgersMessage(cwd, active.paths.map(folderSlug)) }
-    let main: string | null | undefined
-    const otherRepository = async (slug: string, at: Place): Promise<{ text: string } | undefined> => {
-      if ('ledger' in at) return undefined
-      if (main === undefined) main = await mainCheckout($, cwd)
-      const elsewhere = otherRepositoryTask(at.backlog, main)
-      return elsewhere ? { text: otherRepositoryMessage(slug, elsewhere.repo, elsewhere.main) } : undefined
-    }
-    const refused = await otherRepository(target, place)
-    if (refused) return refused
+    // Should an engine raise both command.run and tool.call for one command, the second one sees this hook's own args.
+    if (isGoArgs(e.args ?? '')) return next(e)
+    const started = await startGo($, e.args ?? '')
+    return 'text' in started ? started : disarmedOnFailure($, started.arm, next({ ...e, args: started.args }))
+  }).catch(async ($, e, next) => (next.called ? next(e) : { text: lookupFailedMessage(next.error.message ?? next.error.kind) }))
 
-    const warnings: string[] = []
-    let picked: string[] | undefined
-    if (await hasChildren($, target, place, main)) {
-      const chain = await childToStart($, target, cwd)
-      if ('error' in chain) {
-        if (!('ledger' in place)) return { text: pickFailedMessage(target, chain.error) }
-        warnings.push(pickFailedWarning(target, chain.error))
-      } else if (chain.length > 0) {
-        picked = chain
-        target = chain.at(-1) ?? target
-        place = await placeOf($, target, found, tasks, cwd)
-        if ('text' in place) return place
-        const refusedChild = await otherRepository(target, place)
-        if (refusedChild) return refusedChild
-      } else if (!('ledger' in place)) {
-        const shown = await showParent($, target, cwd)
-        return { text: noChildToStartMessage(target, 'error' in shown ? shown : shown.children) }
-      }
+  // The model starts /ledger:go through the Skill tool, which raises no command.run: the Skill tool expands go.md itself.
+  on('tool.call', { tool: 'Skill' }, async ($, e, next) => {
+    if (skillName(e.skill) !== 'ledger:go') return next(e)
+    // A subagent's turn end does not clear, so the main session would clear at its own turn's end, mid-task.
+    if (e.agentId !== undefined) return { deny: GO_FROM_SUBAGENT }
+    // No slug has a colon, so even one of the lines this hook writes means the model passed them instead of a slug.
+    if (/^(task|ledger):/.test(e.args ?? '')) return { deny: slugExpectedMessage(e.args ?? '') }
+    const started = await startGo($, e.args ?? '')
+    if ('text' in started) return { deny: started.text }
+    // The permission prompt runs inside next(), after the promotion. A promoted worktree stays: the next /ledger:go finds its ledger there.
+    const ran = await disarmedOnFailure($, started.arm, next({ ...e, args: started.args }))
+    // A person's No at the permission prompt comes back as an error result, not as a deny.
+    if (ran.isError === true) {
+      await disarm($, started.arm)
+      const reason = ran.text ?? ''
+      const text = goDeniedMessage(started.target, started.fields, reason)
+      // The engine shows the model its own rejection text instead, so only the person can learn what was done.
+      if (text !== reason) $.ui.log(text)
+      return { ...ran, text }
     }
-
-    let ledger: string
-    let promotedWorktree: string | undefined
-    if ('ledger' in place) ledger = place.ledger
-    else {
-      const promoted = await promoteBacklogTask($, target, cwd)
-      if ('error' in promoted) {
-        return { text: place.isUnregistered && promoted.isMissing ? unknownTaskMessage(target, tasks) : promoteFailedMessage(target, promoted.error) }
-      }
-      ledger = promoted.ledger
-      promotedWorktree = worktreeOf(ledger)
-      promotedByGo = { slug: target, worktree: promotedWorktree }
-    }
-    const text = await $.fs.read(ledger)
-    const { text: unparked, parked } = unpark(text)
-    if (parked) {
-      try {
-        await $.fs.write(ledger, unparked)
-      } catch (error) {
-        const reason = `Could not remove the parked marker. ${message(error)}`
-        return { text: promotedWorktree === undefined ? unparkFailedMessage(target, message(error)) : promotedThenFailedMessage(target, promotedWorktree, reason) }
-      }
-    }
-    const current = active.kind === 'one' ? active.path : undefined
-    const task = tasks.find(({ slug }) => slug === target) ?? summarize(text, target, 0)
-    let marked: string | undefined
-    if (task.parent) {
-      const mark = await markStarted($, task.parent, target, cwd)
-      if ('error' in mark) warnings.push(markFailedWarning(target, task.parent, mark.error))
-      else marked = mark.marked
-    }
-    const family = await familyOf($, task, cwd)
-    await $.state.set(armed, { mode: 'go', slug: target, ...(current && current !== ledger && { ledger: current }) })
-    return next({ ...e, args: goArgs(target, current, { parked, family, promotedWorktree, picked, marked, warnings }) })
-  }).catch(async ($, e, next) => {
-    await $.state.set(armed, null)
-    if (next.called) return next(e)
-    const error = next.error.message ?? next.error.kind
-    if (promotedByGo === undefined) return { text: lookupFailedMessage(error) }
-    return { text: promotedThenFailedMessage(promotedByGo.slug, promotedByGo.worktree, error) }
-  })
+    if (ran.deny === undefined) return ran
+    await disarm($, started.arm)
+    return { ...ran, deny: goDeniedMessage(started.target, started.fields, ran.deny) }
+  }).catch(async ($, e, next) => (next.called ? next(e) : { deny: lookupFailedMessage(next.error.message ?? next.error.kind) }))
 
   // The first word names a task only when a ledger has that slug; otherwise it is part of the reason.
   on('command.run', { command: 'ledger:park' }, async ($, e, next) => {

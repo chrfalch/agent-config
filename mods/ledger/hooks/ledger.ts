@@ -292,6 +292,8 @@ export function goArgs(
   return fields.join('\n')
 }
 
+export const isGoArgs = (args: string): boolean => /^task: [^\n]*\nledger: /.test(args)
+
 export const worktreeWithoutLedgerMessage = (word: string, worktree: string): string =>
   `${word} names the worktree ${worktree}, which has no task ledger. ${UNCHANGED} To give it one, type /ledger:task --here in a session there.`
 
@@ -303,6 +305,35 @@ export function parkArgs(slug: string, ledgerPath: string, reason: string): stri
 }
 
 export const GO_USAGE = 'Usage: /ledger:go <slug>. Run /ledger to see the slug of each task.'
+
+export const GO_FROM_SUBAGENT = `Only the main session can switch tasks with /ledger:go. ${UNCHANGED}`
+
+export function slugExpectedMessage(args: string): string {
+  const slug = /^task: (.*)/.exec(args)?.[1] ?? '<slug>'
+  return `/ledger:go takes a task slug, such as ${slug}, not the task: and ledger: lines it writes itself. ${UNCHANGED}`
+}
+
+const armedTurn = {
+  go: (slug: string) => `switches to task ${slug}`,
+  next: (slug: string) => `ends with /ledger:next, which clears the session and continues task ${slug}`,
+  close: () => 'ends with /ledger:close, which clears the session',
+  park: (slug: string) => `parks task ${slug} and clears the session`,
+}
+
+export function oneSwitchPerTurnMessage(armed: { mode: keyof typeof armedTurn; slug: string }, target: string): string {
+  return `This turn already ${armedTurn[armed.mode](armed.slug)}, so /ledger:go ${target} was not started and nothing was written. A turn switches tasks only once: run /ledger:go ${target} after the session clears.`
+}
+
+/** What /ledger:go did before the Skill call was denied, or the denial alone when it did nothing. */
+export function goDeniedMessage(target: string, { promotedWorktree, parked, marked }: GoFields, denial: string): string {
+  const done = [
+    ...(promotedWorktree ? [`Promoted backlog task ${target}: its branch, worktree and ledger are at ${promotedWorktree}.`] : []),
+    ...(parked ? [`Removed the parked marker from ${target}.`] : []),
+    ...(marked ? [`Marked ${target} started in ${marked}.`] : []),
+  ]
+  if (done.length === 0) return denial
+  return `${done.join(' ')} Then the Skill call was denied: ${sentence(denial)} The session was not cleared.`
+}
 
 export type TaskName = { slug: string; parent?: string }
 

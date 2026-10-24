@@ -150,7 +150,9 @@ transcript is re-billed on every turn; the ledger is read once per fresh session
   which task first, then read its full ledger. On "go <slug>", do not ask.
   If the session is not already in that task's worktree, move into it
   with `EnterWorktree` (`path`: the worktree from the ledger's Location), then
-  continue.
+  continue. A task still in the backlog has no worktree yet. For such a task,
+  start `/ledger:go <slug>` yourself through the Skill tool. It makes the worktree
+  and clears the session, the same as when the operator types it.
   Do not re-read files or rerun tests to re-establish state; the ledger is the
   state. If every step is done, say so and ask whether to commit or open a PR.
 - The old session stays resumable after `/clear`. If the ledger turns out to be

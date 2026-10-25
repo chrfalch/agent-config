@@ -454,7 +454,9 @@ ban. It also made resume `/clear` then `go`.
 ledger with no task open wrote `.claude/ledger.md` in the main checkout. Since
 2026-10-16, `hooks/ledger-gate.sh` denies that write. A ledger lives only in a
 linked worktree. `/ledger:task` creates the worktree and the ledger together,
-when the task starts.
+when the task starts. Since 2026-10-25, the hook also denies ledger text that
+cites a session folder path: macOS deletes those files, so cited files go in
+`.claude/evidence/` in the worktree.
 
 **Resume is `/ledger:next` or `/ledger:close`.** `/ledger:next` updates the
 ledger, clears the session and sends `go <slug>`. `/ledger:close` updates the

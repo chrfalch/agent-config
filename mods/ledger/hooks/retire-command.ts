@@ -112,6 +112,12 @@ async function activeChildrenOf($: EngineInterface, ledgerPath: string): Promise
   return (summarize(text, '', 0).children ?? []).filter(({ retired }) => retired === undefined).map(({ slug }) => slug)
 }
 
+// Only for the plan: cc-worktree-retire checks the folder again when it archives it.
+async function hasEvidenceIn($: EngineInterface, worktree: string): Promise<boolean> {
+  const entries = await $.fs.list(`${worktree}/.claude/evidence`).catch(() => [])
+  return entries.length > 0
+}
+
 /** Plans or retires the backlog task whose ledger is `ledgerPath`: it has no worktree or branch, only the ledger. */
 async function retireBacklogLedger(
   $: EngineInterface,
@@ -134,7 +140,10 @@ export async function retireLedger(
 ): Promise<string> {
   const state = await readState($, worktreeOf(ledgerPath))
   if ('error' in state) return state.error
-  if (dryRun) return formatPlan(slug, state, new Date(), { activeChildren: await activeChildrenOf($, ledgerPath) })
+  if (dryRun) {
+    const [activeChildren, hasEvidence] = await Promise.all([activeChildrenOf($, ledgerPath), hasEvidenceIn($, state.path)])
+    return formatPlan(slug, state, new Date(), { activeChildren, hasEvidence })
+  }
   const blockers = retireBlockers(state)
   if (blockers.length > 0 && !forced) return notRetiredMessage(blockers)
 

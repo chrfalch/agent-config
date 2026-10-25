@@ -52,9 +52,21 @@ function worktreeReplies(worktree: string, branch: string, overrides: WorktreeRe
 }
 
 /** `removed` is a folder fs.stat no longer finds, as after /ledger:retire removed the worktree. `files` replaces a ledger's whole text. */
-type Setup = { cwd: string; ledgers?: string[]; titles?: Record<string, string>; files?: Record<string, string>; replies?: Replies; removed?: string }
+type Setup = {
+  cwd: string
+  ledgers?: string[]
+  titles?: Record<string, string>
+  files?: Record<string, string>
+  replies?: Replies
+  removed?: string
+  /** Worktrees whose .claude/evidence/ folder holds a file. */
+  evidence?: string[]
+}
 
-function world(on: On, { cwd, ledgers = [ledgerOf(FIX_LOGIN), ledgerOf(NEW_API)], titles = {}, files = {}, replies: extra = {}, removed }: Setup): Call[] {
+function world(
+  on: On,
+  { cwd, ledgers = [ledgerOf(FIX_LOGIN), ledgerOf(NEW_API)], titles = {}, files = {}, replies: extra = {}, removed, evidence = [] }: Setup,
+): Call[] {
   const calls: Call[] = []
   const known: Replies = {
     ...replies([LEDGER_LIST, ok(ledgers.join('\n'))], [LEDGER_BACKLOG, ok('')], [retireScript(FIX_LOGIN), ok(SCRIPT_OUTPUT)], [retireScript(FIX_LOGIN, '--force'), ok(SCRIPT_OUTPUT)],
@@ -72,6 +84,11 @@ function world(on: On, { cwd, ledgers = [ledgerOf(FIX_LOGIN), ledgerOf(NEW_API)]
   })
   on('fs.stat', async (_, e) =>
     e.path === removed ? { deny: `ENOENT: no such file or directory, stat '${e.path}'` } : { value: { kind: 'file', size: 0, mtimeMs: 0, isLink: false } },
+  )
+  on('fs.list', async (_, e: { path: string }) =>
+    evidence.some(worktree => e.path === `${worktree}/.claude/evidence`)
+      ? { value: [{ name: 'xcodebuild-red.log', kind: 'file', size: 0, mtimeMs: 0, isLink: false }] }
+      : { deny: `ENOENT: no such file or directory, scandir '${e.path}'` },
   )
   on('fs.read', async (_, e) => {
     const file = files[e.path]
@@ -146,6 +163,22 @@ test('/ledger:retire <slug> --dry-run shows the plan for that task and runs only
   expect(lines.at(-1)).toBe('Run `/ledger:retire new-api` to retire it.')
   expect(ranScript(calls)).toEqual([])
   expect(calls.filter(({ argv }) => argv[0] === 'git').every(({ cwd }) => cwd === NEW_API)).toBe(true)
+})
+
+test('/ledger:retire <slug> --dry-run lists the evidence folder it would archive, and copies nothing', async ($, on) => {
+  const calls = world(on, { cwd: REPO, evidence: [NEW_API] })
+  const { text } = await $.command.run({ command: 'ledger:retire', args: 'new-api --dry-run' })
+  expect(text.split('\n')[5]).toMatch(
+    /^- evidence: \/repo\/\.claude\/worktrees\/new-api\/\.claude\/evidence\/ is copied to ~\/\.claude\/ledger-archive\/repo\/\d{4}-\d{2}-\d{2}-new-api\/$/,
+  )
+  expect(ranScript(calls)).toEqual([])
+  expect(calls.every(({ argv }) => argv[0] === 'git' || argv[0] === 'gh' || argv[1]?.endsWith('hooks/ledger-list.sh'))).toBe(true)
+})
+
+test('/ledger:retire <slug> --dry-run of a worktree without evidence names no evidence folder', async ($, on) => {
+  world(on, { cwd: REPO })
+  const { text } = await $.command.run({ command: 'ledger:retire', args: 'new-api --dry-run' })
+  expect(text).not.toContain('evidence')
 })
 
 test('/ledger:retire --dry-run without a slug in a task worktree plans that task', async ($, on) => {

@@ -1,6 +1,6 @@
 import type { EngineInterface, ProcessRunResult } from 'claude-code'
 
-import { message, run } from './lookup'
+import { message, run, sessionFolder } from './lookup'
 import { basename } from './worktrees'
 
 /** One entry of ~/.claude/ledgers.json, as `cc-ledgers list --json` prints it. `parent` is the slug of its parent task. `main` is the main checkout of a backlog task. */
@@ -38,7 +38,7 @@ export async function backlogLedgerPath($: EngineInterface, main: string, slug: 
 export async function registeredTasks($: EngineInterface, slug: string): Promise<Entry[] | { error: string }> {
   let result: ProcessRunResult
   try {
-    result = await $.process.run([scriptPath($, 'cc-ledgers'), 'list', '--json'])
+    result = await $.process.run([scriptPath($, 'cc-ledgers'), 'list', '--json'], { cwd: (await sessionFolder($)).path })
   } catch (error) {
     return { error: `cc-ledgers did not run: ${message(error)}` }
   }

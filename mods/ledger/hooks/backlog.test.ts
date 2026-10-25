@@ -133,7 +133,7 @@ test('/ledger:go to a backlog task promotes it in this repo, then continues ther
 
   expect(w.commands).toEqual([
     { key: WORKTREE_LIST, cwd: `${FIX_LOGIN_TREE}/src` },
-    { key: REGISTRY, cwd: undefined },
+    { key: REGISTRY, cwd: `${FIX_LOGIN_TREE}/src` },
     { key: COMMON_DIR, cwd: `${FIX_LOGIN_TREE}/src` },
     { key: PROMOTE('new-idea'), cwd: `${FIX_LOGIN_TREE}/src` },
   ])
@@ -155,7 +155,7 @@ test('/ledger:go to a backlog task from the main checkout continues with no ledg
 
   expect(w.commands).toEqual([
     { key: WORKTREE_LIST, cwd: '/repo' },
-    { key: REGISTRY, cwd: undefined },
+    { key: REGISTRY, cwd: '/repo' },
     { key: COMMON_DIR, cwd: '/repo' },
     { key: PROMOTE('new-idea'), cwd: '/repo' },
   ])

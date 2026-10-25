@@ -1,7 +1,7 @@
 import type { EngineInterface, ProcessRunResult } from 'claude-code'
 
 import { childOrder, formatTime, groupByParent, summarize, type Grouped } from './ledger'
-import { message } from './lookup'
+import { message, sessionFolder } from './lookup'
 import { type Entry, parseEntries, scriptPath } from './registry'
 
 const USAGE = 'Usage: /ledger:all [--scan]'
@@ -96,7 +96,7 @@ export async function allCommand($: EngineInterface, args: string): Promise<stri
   const script = scriptPath($, 'cc-ledgers')
   let result: ProcessRunResult
   try {
-    result = await $.process.run([script, scan ? 'scan' : 'list', '--json'])
+    result = await $.process.run([script, scan ? 'scan' : 'list', '--json'], { cwd: (await sessionFolder($)).path })
   } catch (error) {
     return `cc-ledgers did not run: ${message(error)}`
   }

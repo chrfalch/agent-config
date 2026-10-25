@@ -1,5 +1,7 @@
 #!/bin/bash
 # Archives a worktree's task ledger, removes the worktree, then deletes its cc-dd-path build folders.
+# A non-empty .claude/evidence/ folder is archived first, next to the ledger copy and named after it,
+# or <date>-<slug> when there is no ledger.
 # --delete-branch <sha> then deletes the worktree's local branch, but only while it still points at
 # <sha>. The caller decides whether that commit is merged: a squash-merged branch never looks merged
 # to git. A branch that moved since is kept, and retiring still succeeds.
@@ -131,9 +133,9 @@ if [ -n "$parent" ]; then
   parent_ledger=$(ledger_titled "$parent")
 fi
 
+archive="$HOME/.claude/ledger-archive/$repo"
 dest=""
 if [ -f "$ledger" ]; then
-  archive="$HOME/.claude/ledger-archive/$repo"
   mkdir -p "$archive"
   for old in "$archive"/*.md; do
     if [ -f "$old" ] && cmp -s "$ledger" "$old"; then
@@ -158,6 +160,29 @@ if [ -f "$ledger" ]; then
   fi
 else
   echo "no ledger at $ledger, nothing to archive"
+fi
+
+# Without a ledger too: info/exclude keeps evidence untracked, so git worktree remove would delete it silently.
+if [ -n "$wt" ] && [ -n "$(ls -A "$wt/.claude/evidence" 2>/dev/null)" ]; then
+  if [ -n "$dest" ]; then
+    evidence="${dest%.md}"
+  else
+    evidence="$archive/$(date +%F)-$slug"
+    mkdir -p "$archive"
+  fi
+  if [ ! -e "$evidence" ]; then
+    cp -R "$wt/.claude/evidence" "$evidence"
+    if ! diff -rq "$wt/.claude/evidence" "$evidence" >/dev/null 2>&1; then
+      echo "copy does not match the evidence: $evidence/" >&2
+      exit 1
+    fi
+    echo "archived evidence $evidence/"
+  elif diff -rq "$wt/.claude/evidence" "$evidence" >/dev/null 2>&1; then
+    echo "already archived evidence $evidence/"
+  else
+    echo "$evidence/ already exists and differs from $wt/.claude/evidence/. Compare them, move one away, then retire again." >&2
+    exit 1
+  fi
 fi
 
 prefix=""

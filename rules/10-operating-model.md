@@ -83,6 +83,14 @@ transcript is re-billed on every turn; the ledger is read once per fresh session
   structured report, not the transcript), open questions, and the exact next step.
   Once the task has a worktree, the ledger lives at `.claude/ledger.md` in it. It never lives in the main checkout. A PreToolUse hook denies a
   ledger write in the main checkout.
+- **Evidence lives in the worktree.** Every file a ledger cites goes in
+  `.claude/evidence/` in the task's worktree. The ledger names it by its path
+  relative to the worktree, such as `.claude/evidence/xcodebuild-red.log`.
+  The session scratchpad holds only files that nobody cites. macOS deletes it.
+  Large data never goes in evidence and is not cited: repo copies, build
+  output, `node_modules`. Keep evidence small. Git does not track it. Retire
+  archives it next to the ledger. A hook denies ledger text that cites a
+  session folder path.
 - **New work, new task.** When the operator asks for work outside the current
   ledger's goal, it is a separate task by default. Start it with
   `/ledger:task <what the task is>`. You invoke it yourself through the Skill
@@ -172,8 +180,10 @@ Absolute. A worktree is disposable. Its ledger is the record of the task.
   archive and remove. Uncommitted changes or an unmerged branch need `--force`.
 - `bin/cc-worktree-retire` copies `.claude/ledger.md` to
   `~/.claude/ledger-archive/<repo>/<YYYY-MM-DD>-<slug>.md`, checks the copy,
-  then runs `git worktree remove`. Running it twice archives once. It also
-  deletes the worktree's `cc-dd-path` build folders. Without the ledger mod,
+  then runs `git worktree remove`. Running it twice archives once. Before the
+  removal, it copies `.claude/evidence/` to a folder with the same name as the
+  ledger copy, without `.md`. It also deletes the worktree's `cc-dd-path` build
+  folders. Without the ledger mod,
   run `bin/cc-worktree-retire <worktree> [--force]` from the agent-config repo.
 - `<repo>` is the main checkout's directory name. `<slug>` is the branch name
   without its owner prefix.

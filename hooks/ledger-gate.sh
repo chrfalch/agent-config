@@ -1,7 +1,9 @@
 #!/bin/bash
 # PreToolUse gate on Write, Edit, MultiEdit and Bash: a task ledger lives in a
 # linked worktree, never in a repo's main checkout. Denies a write to
-# .claude/ledger.md in a main checkout. Exits 0 and stays silent otherwise.
+# .claude/ledger.md in a main checkout. Also denies new text for any ledger, in
+# a worktree or in ~/.claude/ledger-backlog/, that cites a file in a Claude Code
+# session folder: macOS deletes those. Exits 0 and stays silent otherwise.
 
 self="$0"
 if [ -L "$self" ]; then self=$(readlink "$self"); fi
@@ -11,7 +13,7 @@ input=$(cat)
 tool=$(printf '%s' "$input" | jq -r '.tool_name // ""')
 cwd=$(printf '%s' "$input" | jq -r '.cwd // ""')
 
-ledger='["'"'"']?[^[:space:];&|<>"'"'"']*\.claude/ledger\.md["'"'"']?'
+ledger='["'"'"']?[^[:space:];&|<>"'"'"']*\.claude/(ledger|ledger-backlog/[^/[:space:]]+/[^/[:space:]]+)\.md["'"'"']?'
 # A command name at the start of a command, behind wrappers such as sudo, env,
 # xargs, then, or a variable assignment, and optionally given as a full path.
 command_start='(^|[;&|({])[[:space:]]*((sudo|xargs|env|command|exec|nohup|then|do|else|[A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*)[[:space:]]+(-[^[:space:]]*[[:space:]]+)*)*(/[^[:space:]]*/)?'
@@ -42,7 +44,18 @@ in_main_checkout() {
   [ "$git_dir" = "$common_dir" ]
 }
 
-denied=""
+deny() {
+  printf '%s' "$1" | jq -Rs '{
+    hookSpecificOutput: {
+      hookEventName: "PreToolUse",
+      permissionDecision: "deny",
+      permissionDecisionReason: .
+    }
+  }'
+  exit 0
+}
+
+denied="" writes_ledger=""
 while IFS= read -r target; do
   target=$(printf '%s' "$target" | tr -d '"'"'"'')
   case "$target" in
@@ -53,31 +66,33 @@ while IFS= read -r target; do
     *) target="$cwd/$target" ;;
   esac
   case "$target" in
-    */.claude/ledger.md) ;;
+    */.claude/ledger.md) writes_ledger=1 ;;
+    */.claude/ledger-backlog/*/*.md) writes_ledger=1; continue ;;
     *) continue ;;
   esac
   if in_main_checkout "$target"; then denied="$denied $target"; fi
 done <<< "$targets"
 
-if [ -z "$denied" ]; then
-  exit 0
+if [ -n "$denied" ]; then
+  deny "$(printf '%s\n' \
+    "This would write a task ledger in a repo's main checkout:$denied" \
+    "" \
+    "A ledger belongs in the task's worktree, never in the main checkout." \
+    "Start the task first. This writes its ledger to the backlog, with no branch or worktree yet:" \
+    "  $repo/bin/cc-task-new <slug> --goal '<one paragraph>'" \
+    "Then give it a branch and a worktree, and move its ledger in:" \
+    "  $repo/bin/cc-task-new --promote <slug>" \
+    "Then work in the worktree that cc-task-new --promote prints." \
+    "This check does not follow cd: from the main checkout, use the absolute path to the worktree's .claude/ledger.md.")"
 fi
 
-reason=$(printf '%s\n' \
-  "This would write a task ledger in a repo's main checkout:$denied" \
-  "" \
-  "A ledger belongs in the task's worktree, never in the main checkout." \
-  "Start the task first. This writes its ledger to the backlog, with no branch or worktree yet:" \
-  "  $repo/bin/cc-task-new <slug> --goal '<one paragraph>'" \
-  "Then give it a branch and a worktree, and move its ledger in:" \
-  "  $repo/bin/cc-task-new --promote <slug>" \
-  "Then work in the worktree that cc-task-new --promote prints." \
-  "This check does not follow cd: from the main checkout, use the absolute path to the worktree's .claude/ledger.md.")
+[ -n "$writes_ledger" ] || exit 0
 
-printf '%s' "$reason" | jq -Rs '{
-  hookSpecificOutput: {
-    hookEventName: "PreToolUse",
-    permissionDecision: "deny",
-    permissionDecisionReason: .
-  }
-}'
+# Only the text being written: an Edit's old_string may still name an old path.
+# For Bash the whole command is checked, a heuristic like written_by.
+new_text=$(printf '%s' "$input" | jq -r '.tool_input | [.content, .new_string, .edits[]?.new_string, .command] | map(strings) | join("\n")')
+uuid='[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}'
+session_citation="/tmp/claude-[0-9]+/[^/[:space:]]+/$uuid|<scratchpad>/[^[:space:]]|scratchpad/[A-Za-z0-9_.-]"
+printf '%s\n' "$new_text" | grep -qE "$session_citation" || exit 0
+
+deny "A task ledger may not cite files in the Claude Code session folder or its scratchpad, because macOS deletes them. Move the file to .claude/evidence/ in the task's worktree and cite that path, for example .claude/evidence/xcodebuild-red.log. Copy the file and write the ledger in two separate commands."

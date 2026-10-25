@@ -146,20 +146,22 @@ function planFooter(slug: string, blockers: string[]): string {
 
 /**
  * `footer: false` leaves out the /ledger:retire command that carries out the plan, for the dashboard, which has its own.
- * `activeChildren` are the task's child tasks not yet retired.
+ * `activeChildren` are the task's child tasks not yet retired. `hasEvidence` is whether the worktree's .claude/evidence/ holds anything.
  */
 export function formatPlan(
   slug: string,
   state: WorktreeState,
   today: Date,
-  { footer = true, activeChildren = [] }: { footer?: boolean; activeChildren?: string[] } = {},
+  { footer = true, activeChildren = [], hasEvidence = false }: { footer?: boolean; activeChildren?: string[]; hasEvidence?: boolean } = {},
 ): string {
+  const archive = archivePath(state, today)
   return [
     `**Retire ${slug}** — nothing done yet`,
     `- worktree: ${state.path}`,
     `- branch: ${state.branch || 'detached HEAD'} · ${aheadLabel(state)} · ${prLabel(state.mergedPr)}`,
     `- uncommitted changes: ${state.dirty || 'none'}`,
-    `- archive: ${archivePath(state, today)}`,
+    `- archive: ${archive}`,
+    ...(hasEvidence ? [`- evidence: ${state.path}/.claude/evidence/ is copied to ${archive.replace(/\.md$/, '/')}`] : []),
     "- then: git worktree remove, and the worktree's cc-dd-path build folders are deleted",
     ...(state.branch ? [`- local branch: ${state.branch} is ${isBranchMerged(state) ? 'deleted, because it is merged' : `kept, because ${keptBranchReason(state)}`}`] : []),
     ...(footer ? ['', planFooter(slug, [...retireBlockers(state), ...childrenBlockers(activeChildren)])] : []),

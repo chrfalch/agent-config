@@ -131,6 +131,15 @@ test('formatPlan for a clean, merged worktree gives the command that retires it'
   )
 })
 
+test('formatPlan lists the evidence folder next to the archived ledger when the worktree has evidence', () => {
+  const lines = formatPlan('fast-steps', CLEAN, OCT_5, { hasEvidence: true }).split('\n')
+  expect(lines.slice(4, 6)).toEqual([
+    '- archive: ~/.claude/ledger-archive/repo/2026-10-05-fix-login.md',
+    '- evidence: /repo/.claude/worktrees/fix-login/.claude/evidence/ is copied to ~/.claude/ledger-archive/repo/2026-10-05-fix-login/',
+  ])
+  expect(formatPlan('fast-steps', CLEAN, OCT_5)).not.toContain('evidence')
+})
+
 test('formatPlan for dirty, unmerged work says why it needs --force', () => {
   const state: WorktreeState = { ...CLEAN, dirty: 2, ahead: 3, defaultBranch: 'develop', mergedPr: { kind: 'unknown', error: 'gh pr list failed (exit 4): auth required' } }
   const lines = formatPlan('fast-steps', state, OCT_5).split('\n')

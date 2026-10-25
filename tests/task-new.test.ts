@@ -777,3 +777,70 @@ for (const { name, args } of promoteFailures) {
     assert.equal(existsSync(path.join(main, '.claude/worktrees/fix-login')), false);
   });
 }
+
+const EVIDENCE = '.claude/evidence/';
+const excludeFile = (main: string) => path.join(main, '.git/info/exclude');
+const evidenceLines = (main: string) => readFileSync(excludeFile(main), 'utf8').split('\n').filter((line) => line === EVIDENCE).length;
+
+function assertEvidenceIgnored(home: string, worktree: string) {
+  mkdirSync(path.join(worktree, EVIDENCE), { recursive: true });
+  writeFileSync(path.join(worktree, EVIDENCE, 'red.log'), 'FAIL\n');
+  assert.doesNotMatch(git(home, worktree, 'status', '--porcelain', '--untracked-files=all'), /evidence/);
+}
+
+test('--promote keeps .claude/evidence/ out of git through info/exclude, and a second task adds no second line', (t) => {
+  const { home, main } = checkout(t);
+  backlogged(home, main, 'fix-login');
+  backlogged(home, main, 'new-api');
+
+  const first = taskNew(home, main, '--promote', 'fix-login');
+  assert.equal(first.status, 0, first.stderr);
+  assert.equal(evidenceLines(main), 1);
+  assertEvidenceIgnored(home, path.join(main, '.claude/worktrees/fix-login'));
+
+  const second = taskNew(home, main, '--promote', 'new-api');
+  assert.equal(second.status, 0, second.stderr);
+  assert.equal(evidenceLines(main), 1);
+});
+
+test('--stack keeps .claude/evidence/ out of git through info/exclude', (t) => {
+  const { home, main } = checkout(t);
+  const result = taskNew(home, main, 'fix-login', '--stack');
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(evidenceLines(main), 1);
+  assertEvidenceIgnored(home, path.join(main, '.claude/worktrees/fix-login'));
+});
+
+test('--here keeps .claude/evidence/ out of git through info/exclude', (t) => {
+  const { home, main } = checkout(t);
+  const worktree = ownerWorktree(home, main, 'chrfalch/fix-login');
+  const result = taskNew(home, worktree, '--here');
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(evidenceLines(main), 1);
+  assertEvidenceIgnored(home, worktree);
+});
+
+test('--promote creates info/exclude when the repository has none', (t) => {
+  const { home, main } = checkout(t);
+  rmSync(path.join(main, '.git/info'), { recursive: true, force: true });
+  backlogged(home, main, 'fix-login');
+  const result = taskNew(home, main, '--promote', 'fix-login');
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(readFileSync(excludeFile(main), 'utf8'), `${EVIDENCE}\n`);
+});
+
+test('--promote puts the exclude line on its own line after an exclude file with no final newline', (t) => {
+  const { home, main } = checkout(t);
+  writeFileSync(excludeFile(main), '*.log');
+  backlogged(home, main, 'fix-login');
+  const result = taskNew(home, main, '--promote', 'fix-login');
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(readFileSync(excludeFile(main), 'utf8'), `*.log\n${EVIDENCE}\n`);
+});
+
+test('a backlog task leaves info/exclude alone: it has no worktree yet', (t) => {
+  const { home, main } = checkout(t);
+  const before = readFileSync(excludeFile(main), 'utf8');
+  backlogged(home, main, 'fix-login');
+  assert.equal(readFileSync(excludeFile(main), 'utf8'), before);
+});

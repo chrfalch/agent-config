@@ -119,6 +119,16 @@ register_ledger() {
     echo "warning: registry not updated" >&2
 }
 
+# info/exclude is shared by every worktree of the repository, and is never committed.
+exclude_evidence() {
+  local exclude="$common/info/exclude"
+  if grep -qxF '.claude/evidence/' "$exclude" 2>/dev/null; then return 0; fi
+  { mkdir -p "$common/info" &&
+    { [ ! -s "$exclude" ] || [ -z "$(tail -c 1 "$exclude")" ] || echo >> "$exclude"; } &&
+    echo '.claude/evidence/' >> "$exclude"; } ||
+    echo "warning: .claude/evidence/ not added to $exclude" >&2
+}
+
 report() {
   echo "worktree $wt"
   echo "branch   $branch"
@@ -152,6 +162,7 @@ if [ -n "$here" ]; then
   mkdir -p "$wt/.claude"
   write_ledger "$template"
   register_ledger
+  exclude_evidence
   report
   exit 0
 fi
@@ -220,4 +231,5 @@ else
   register_ledger
 fi
 trap - EXIT
+exclude_evidence
 report

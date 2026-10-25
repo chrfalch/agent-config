@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import test, { type TestContext } from 'node:test';
 import { freshHome, REPO, run } from './helpers.js';
@@ -625,4 +625,156 @@ test('retire of a file that is not a backlog ledger is refused and changes nothi
   assert.equal(result.stderr, `not a backlog ledger: ${ledger}\n`);
   assert.ok(existsSync(worktree));
   assert.ok(existsSync(ledger));
+});
+
+const EVIDENCE: Record<string, string> = { 'xcodebuild-red.log': 'FAIL 3 tests\n', 'review/round-1.md': 'Verdict: accept\n' };
+
+function writeEvidence(folder: string, files = EVIDENCE) {
+  for (const [name, text] of Object.entries(files)) {
+    mkdirSync(path.dirname(path.join(folder, name)), { recursive: true });
+    writeFileSync(path.join(folder, name), text);
+  }
+}
+
+function assertEvidence(folder: string) {
+  for (const [name, text] of Object.entries(EVIDENCE)) assert.equal(readFileSync(path.join(folder, name), 'utf8'), text, name);
+}
+
+const evidenceOf = (worktree: string) => path.join(worktree, '.claude/evidence');
+const archiveOf = (home: string) => path.join(home, '.claude/ledger-archive/main');
+
+test('retire copies the evidence folder next to the archived ledger and prints where', (t) => {
+  const { home, worktree } = worktreeWithLedger(t);
+  writeEvidence(evidenceOf(worktree));
+
+  const result = run(home, retire, worktree);
+
+  assert.equal(result.status, 0, result.stderr);
+  const archived = path.join(archiveOf(home), `${today()}-wt-a`);
+  assert.equal(archivedPath(result.stdout), `${archived}.md`);
+  assert.ok(result.stdout.includes(`archived evidence ${archived}/\n`), result.stdout);
+  assertEvidence(archived);
+  assert.equal(existsSync(worktree), false);
+});
+
+for (const [name, arrange] of [
+  ['no evidence folder', () => {}],
+  ['an empty evidence folder', (worktree: string) => mkdirSync(evidenceOf(worktree))],
+] as const) {
+  test(`retire with ${name} archives only the ledger`, (t) => {
+    const { home, worktree } = worktreeWithLedger(t);
+    arrange(worktree);
+
+    const result = run(home, retire, worktree);
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.doesNotMatch(result.stdout, /evidence/);
+    assert.deepEqual(readdirSync(archiveOf(home)), [`${today()}-wt-a.md`]);
+  });
+}
+
+function worktreeWithEvidenceOnly(t: TestContext) {
+  const { home, worktree } = worktreeWithBuildFolders(t, []);
+  writeFileSync(path.join(home, 'main/.git/info/exclude'), '.claude/\n');
+  writeEvidence(evidenceOf(worktree));
+  return { home, worktree };
+}
+
+test('retire of a worktree with evidence and no ledger archives the evidence under the slug', (t) => {
+  const { home, worktree } = worktreeWithEvidenceOnly(t);
+
+  const result = run(home, retire, worktree);
+
+  assert.equal(result.status, 0, result.stderr);
+  const archived = path.join(archiveOf(home), `${today()}-wt-a`);
+  assert.ok(result.stdout.includes(`archived evidence ${archived}/\n`), result.stdout);
+  assertEvidence(archived);
+  assert.deepEqual(readdirSync(archiveOf(home)), [`${today()}-wt-a`]);
+  assert.equal(existsSync(worktree), false);
+});
+
+test('retire of a worktree with no ledger and evidence already archived copies nothing again', (t) => {
+  const { home, worktree } = worktreeWithEvidenceOnly(t);
+  const archived = path.join(archiveOf(home), `${today()}-wt-a`);
+  writeEvidence(archived);
+
+  const result = run(home, retire, worktree);
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.ok(result.stdout.includes(`already archived evidence ${archived}/\n`), result.stdout);
+  assert.equal(existsSync(worktree), false);
+});
+
+test('retire of a worktree with no ledger keeps it when the archived evidence differs', (t) => {
+  const { home, worktree } = worktreeWithEvidenceOnly(t);
+  const archived = path.join(archiveOf(home), `${today()}-wt-a`);
+  writeEvidence(archived, { 'xcodebuild-red.log': 'something else\n' });
+
+  const result = run(home, retire, worktree);
+
+  assert.equal(result.status, 1);
+  assert.ok(result.stderr.includes(archived), result.stderr);
+  assert.ok(existsSync(evidenceOf(worktree)));
+});
+
+test('retire of an already archived ledger copies the evidence next to that copy', (t) => {
+  const { home, worktree, ledger } = worktreeWithLedger(t);
+  writeEvidence(evidenceOf(worktree));
+  const existing = path.join(archiveOf(home), '2026-01-01-wt-a');
+  mkdirSync(archiveOf(home), { recursive: true });
+  writeFileSync(`${existing}.md`, readFileSync(ledger));
+
+  const result = run(home, retire, worktree);
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.ok(result.stdout.includes(`archived evidence ${existing}/\n`), result.stdout);
+  assertEvidence(existing);
+  assert.deepEqual(readdirSync(archiveOf(home)).sort(), ['2026-01-01-wt-a', '2026-01-01-wt-a.md']);
+});
+
+test('retire of an already archived ledger and evidence copies nothing again', (t) => {
+  const { home, worktree, ledger } = worktreeWithLedger(t);
+  writeEvidence(evidenceOf(worktree));
+  const existing = path.join(archiveOf(home), '2026-01-01-wt-a');
+  writeEvidence(existing);
+  writeFileSync(`${existing}.md`, readFileSync(ledger));
+
+  const result = run(home, retire, worktree);
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.ok(result.stdout.includes(`already archived evidence ${existing}/\n`), result.stdout);
+  assert.deepEqual(readdirSync(archiveOf(home)).sort(), ['2026-01-01-wt-a', '2026-01-01-wt-a.md']);
+  assert.equal(existsSync(worktree), false);
+});
+
+test('retire keeps the worktree when the archived evidence folder holds other files', (t) => {
+  const { home, worktree, ledger } = worktreeWithLedger(t);
+  writeEvidence(evidenceOf(worktree));
+  const existing = path.join(archiveOf(home), '2026-01-01-wt-a');
+  writeEvidence(existing, { 'xcodebuild-red.log': 'something else\n' });
+  writeFileSync(`${existing}.md`, readFileSync(ledger));
+
+  const result = run(home, retire, worktree);
+
+  assert.equal(result.status, 1);
+  assert.ok(result.stderr.includes(existing), result.stderr);
+  assert.ok(existsSync(evidenceOf(worktree)));
+  assert.equal(readFileSync(path.join(existing, 'xcodebuild-red.log'), 'utf8'), 'something else\n');
+});
+
+test('retire keeps the worktree when the evidence copy does not match, and a rerun finishes', (t) => {
+  const { home, worktree } = worktreeWithLedger(t);
+  writeEvidence(evidenceOf(worktree));
+
+  const failed = run(home, ['env', `PATH=${failing(home, 'diff')}`, ...retire], worktree);
+
+  assert.equal(failed.status, 1);
+  assert.match(failed.stderr, /evidence/);
+  assert.ok(existsSync(evidenceOf(worktree)));
+
+  const rerun = run(home, retire, worktree);
+
+  assert.equal(rerun.status, 0, rerun.stderr);
+  assert.ok(rerun.stdout.includes(`already archived evidence ${path.join(archiveOf(home), `${today()}-wt-a`)}/\n`), rerun.stdout);
+  assert.equal(existsSync(worktree), false);
 });

@@ -49,7 +49,9 @@ function checkouts(t: TestContext) {
   return { root, main, worktree, plain };
 }
 
-type ToolInput = { file_path: string } | { command: string };
+type ToolInput =
+  | { file_path: string; content?: string; old_string?: string; new_string?: string; edits?: { old_string: string; new_string: string }[] }
+  | { command: string };
 
 function gate(root: string, cwd: string, toolName: string, toolInput: ToolInput) {
   const input = JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: toolName, tool_input: toolInput, cwd });
@@ -232,6 +234,109 @@ test('a missing jq is allowed', (t) => {
 });
 
 for (const command of bashWrites) {
+  test(`Bash ${JSON.stringify(command)} in a linked worktree is allowed`, (t) => {
+    const { root, worktree } = checkouts(t);
+    assertAllowed(gate(root, worktree, 'Bash', { command }));
+  });
+}
+
+const SESSION = '/private/tmp/claude-501/-Users-me-repos-app/3757e52e-56c2-4bea-866f-8e427c324a1e';
+const citations = [
+  `${SESSION}/scratchpad/xcodebuild-red.log`,
+  '/tmp/claude-501/-Users-me-repos-app/3757e52e-56c2-4bea-866f-8e427c324a1e/tasks/b1.output',
+  '/tmp/claude-501/-Users-me-repos-app/3757E52E-56C2-4BEA-866F-8E427C324A1E/tasks/b1.output',
+  '<scratchpad>/handover.md',
+  'scratchpad/review-1.txt',
+];
+const prose = [
+  'Files in the session scratchpad are deleted by macOS.',
+  'Evidence used to live under /tmp/claude-501 and is lost.',
+  '- red: .claude/evidence/xcodebuild-red.log',
+  'The scratchpad/ folder is not cited.',
+];
+
+/** The tool input that writes `text` into `file` with each file tool. */
+function writing(tool: string, file: string, text: string): ToolInput {
+  switch (tool) {
+    case 'Write':
+      return { file_path: file, content: `# Task ledger — task\n\n${text}\n` };
+    case 'Edit':
+      return { file_path: file, old_string: '- <decision>', new_string: text };
+    default:
+      return { file_path: file, edits: [{ old_string: 'a', new_string: 'fine' }, { old_string: 'b', new_string: text }] };
+  }
+}
+
+for (const tool of ['Write', 'Edit', 'MultiEdit']) {
+  for (const citation of citations) {
+    test(`${tool} of a worktree ledger that cites ${citation} is denied`, (t) => {
+      const { root, worktree } = checkouts(t);
+      assertDenied(gate(root, worktree, tool, writing(tool, path.join(worktree, '.claude/ledger.md'), `- red: ${citation}`)));
+    });
+  }
+
+  for (const text of prose) {
+    test(`${tool} of a worktree ledger with ${JSON.stringify(text)} is allowed`, (t) => {
+      const { root, worktree } = checkouts(t);
+      assertAllowed(gate(root, worktree, tool, writing(tool, path.join(worktree, '.claude/ledger.md'), text)));
+    });
+  }
+
+  test(`${tool} of a backlog ledger that cites the scratchpad is denied`, (t) => {
+    const { root, plain } = checkouts(t);
+    const backlog = path.join(root, '.claude/ledger-backlog/main/idea.md');
+    assertDenied(gate(root, plain, tool, writing(tool, backlog, `- notes: ${citations[0]}`)));
+    assertAllowed(gate(root, plain, tool, writing(tool, backlog, '- red: .claude/evidence/red.log')));
+  });
+
+  test(`${tool} of a file that is not a ledger may cite the scratchpad`, (t) => {
+    const { root, worktree } = checkouts(t);
+    assertAllowed(gate(root, worktree, tool, writing(tool, path.join(worktree, 'docs/notes.md'), `- red: ${citations[0]}`)));
+  });
+}
+
+test('an Edit whose old text cites the scratchpad and new text does not is allowed', (t) => {
+  const { root, worktree } = checkouts(t);
+  const edit = { file_path: path.join(worktree, '.claude/ledger.md'), old_string: `- red: ${citations[0]}`, new_string: '- red: .claude/evidence/red.log' };
+  assertAllowed(gate(root, worktree, 'Edit', edit));
+});
+
+test('the citation deny reason says why and names .claude/evidence/', (t) => {
+  const { root, worktree } = checkouts(t);
+  const reason = assertDenied(gate(root, worktree, 'Write', writing('Write', path.join(worktree, '.claude/ledger.md'), `- red: ${citations[0]}`)));
+  assert.match(reason, /macOS deletes/);
+  assert.ok(reason.includes('.claude/evidence/'), reason);
+  assert.match(reason, /two separate commands/);
+  assert.doesNotMatch(reason, /cc-task-new/);
+});
+
+test('a ledger write in a main checkout that also cites the scratchpad keeps the main-checkout reason', (t) => {
+  const { root, main } = checkouts(t);
+  const reason = assertDenied(gate(root, main, 'Write', writing('Write', path.join(main, '.claude/ledger.md'), `- red: ${citations[0]}`)));
+  assert.match(reason, /main checkout/);
+});
+
+const bashCitingWrites = [
+  `cat > .claude/ledger.md <<EOF\n# Task ledger — task\n- red: ${citations[0]}\nEOF`,
+  "echo '- handover: <scratchpad>/handover.md' >> .claude/ledger.md",
+  "printf '%s\\n' '- review: scratchpad/review-1.txt' | tee -a .claude/ledger.md",
+  `cat >> ~/.claude/ledger-backlog/main/idea.md <<EOF\n- red: ${citations[1]}\nEOF`,
+];
+
+for (const command of bashCitingWrites) {
+  test(`Bash ${JSON.stringify(command)} in a linked worktree is denied`, (t) => {
+    const { root, worktree } = checkouts(t);
+    assertDenied(gate(root, worktree, 'Bash', { command }));
+  });
+}
+
+const bashAllowedNearCitations = [
+  `cp ${citations[0]} .claude/evidence/xcodebuild-red.log`,
+  `cat ${citations[0]} > .claude/evidence/red.log`,
+  "echo '- the scratchpad is gone; see .claude/evidence/red.log' >> .claude/ledger.md",
+];
+
+for (const command of bashAllowedNearCitations) {
   test(`Bash ${JSON.stringify(command)} in a linked worktree is allowed`, (t) => {
     const { root, worktree } = checkouts(t);
     assertAllowed(gate(root, worktree, 'Bash', { command }));

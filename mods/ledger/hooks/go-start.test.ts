@@ -67,7 +67,7 @@ const shown = (parent: string, children: { slug: string; status: string }[]): Re
  * `listed` are the ledgers ledger-list.sh paths prints; `files` every other file there is to read, such as a backlog ledger
  * or the ledger a promotion moves into its new worktree.
  */
-function world(on: On, cwd: string, listed: Record<string, string>, replies: Record<string, Reply>, files: Record<string, string> = {}) {
+function world(on: On, cwd: string, listed: Record<string, string>, replies: Record<string, Reply>, files: Record<string, string> = {}, removed?: string) {
   const all = { ...listed, ...files }
   const commands: { key: string; cwd?: string }[] = []
   const calls: string[] = []
@@ -83,7 +83,9 @@ function world(on: On, cwd: string, listed: Record<string, string>, replies: Rec
     if (key !== WORKTREE_LIST) commands.push({ key, cwd: e.init?.cwd })
     return replies[key] ?? { deny: `unexpected command: ${JSON.stringify(e.argv)}` }
   })
-  on('fs.stat', async () => ({ value: { kind: 'file', size: 0, mtimeMs: 0, isLink: false } }))
+  on('fs.stat', async (_, e) =>
+    e.path === removed ? { deny: `ENOENT: no such file or directory, stat '${e.path}'` } : { value: { kind: 'file', size: 0, mtimeMs: 0, isLink: false } },
+  )
   on('fs.read', async (_, e) => (e.path in all ? { value: all[e.path] ?? '' } : { deny: `ENOENT: ${e.path}` }))
   on('fs.write', async (_, e) => {
     writes.push(e.path)
@@ -451,8 +453,25 @@ for (const via of ['typed', 'Skill'] as const) {
     const w = world(on, '/repo', {}, IDEA_REPLIES, IDEA_FILES)
 
     expect(await startVia(via, $, w, 'idea')).toEqual({ args: `task: idea\nledger: none\npromoted: ${WORKTREES}/idea` })
-    expect(keys(w.commands)).toEqual([REGISTRY, COMMON_DIR, PROMOTE('idea')])
+    expect(w.commands).toEqual([
+      { key: REGISTRY, cwd: '/repo' },
+      { key: COMMON_DIR, cwd: '/repo' },
+      { key: PROMOTE('idea'), cwd: '/repo' },
+    ])
     expect(w.armed).toEqual([{ mode: 'go', slug: 'idea' }])
+    await expectGoTo($, w, 'idea')
+  })
+
+  test(`/ledger:go ${via} from a removed worktree runs the registry in the nearest folder that still exists`, async ($, on) => {
+    const gone = `${WORKTREES}/gone`
+    const w = world(on, gone, {}, IDEA_REPLIES, IDEA_FILES, gone)
+
+    expect(await startVia(via, $, w, 'idea')).toEqual({ args: `task: idea\nledger: none\npromoted: ${WORKTREES}/idea` })
+    expect(w.commands).toEqual([
+      { key: REGISTRY, cwd: WORKTREES },
+      { key: COMMON_DIR, cwd: WORKTREES },
+      { key: PROMOTE('idea'), cwd: WORKTREES },
+    ])
     await expectGoTo($, w, 'idea')
   })
 

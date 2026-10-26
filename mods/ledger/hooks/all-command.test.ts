@@ -25,10 +25,16 @@ const ledgerText = (next: string): string => `# Task ledger — x\n\n## Goal\nA 
 // The script is keyed by its folder and name, because the plugin root differs from machine to machine.
 const scriptKey = (argv: readonly string[]): string => [(argv[0] ?? '').split('/').slice(-2).join('/'), ...argv.slice(1)].join(' ')
 
-function world(on: On, replies: Record<string, Reply>, files: Record<string, string> = {}): string[][] {
-  const calls: string[][] = []
-  on('process.run', async (_, e: { argv: string[] }) => {
-    calls.push(e.argv)
+type Session = { cwd?: string; removed?: string }
+
+function world(on: On, replies: Record<string, Reply>, files: Record<string, string> = {}, { cwd = '/repo', removed }: Session = {}): { argv: string[]; cwd?: string }[] {
+  const calls: { argv: string[]; cwd?: string }[] = []
+  on('session.cwd', async () => ({ value: cwd }))
+  on('fs.stat', async (_, e) =>
+    e.path === removed ? { deny: `ENOENT: no such file or directory, stat '${e.path}'` } : { value: { kind: 'file', size: 0, mtimeMs: 0, isLink: false } },
+  )
+  on('process.run', async (_, e: { argv: string[]; init?: { cwd?: string } }) => {
+    calls.push({ argv: e.argv, cwd: e.init?.cwd })
     return replies[scriptKey(e.argv)] ?? { deny: `unexpected command: ${JSON.stringify(e.argv)}` }
   })
   on('fs.read', async (_, e) => (e.path in files ? { value: files[e.path] ?? '' } : { deny: `ENOENT: ${e.path}` }))
@@ -118,7 +124,18 @@ test('/ledger:all --scan rebuilds the registry and names the rebuild first', asy
   expect(text).toBe(
     `rebuilt /home/.claude/ledgers.json: 1 active, 0 archived\n\n**All task ledgers** · 1 task, 1 active\n\n${HEADER}\n| app | only | active | ${local(only.updated)} | Ship it. |`,
   )
-  expect(calls.map(scriptKey)).toEqual(['bin/cc-ledgers scan --json'])
+  expect(calls.map(({ argv, cwd }) => ({ key: scriptKey(argv), cwd }))).toEqual([{ key: 'bin/cc-ledgers scan --json', cwd: '/repo' }])
+})
+
+test('/ledger:all from a removed worktree runs the registry in the nearest folder that still exists', async ($, on) => {
+  const only = entry('only', '2026-10-05T09:30:00.000Z')
+  const gone = '/repo/.claude/worktrees/gone'
+  const calls = world(on, { 'bin/cc-ledgers list --json': exit(0, JSON.stringify([only])) }, { [only.path]: ledgerText('Ship it.') }, { cwd: gone, removed: gone })
+
+  const { text } = await $.command.run({ command: 'ledger:all' })
+
+  expect(text).toBe(`**All task ledgers** · 1 task, 1 active\n\n${HEADER}\n| app | only | active | ${local(only.updated)} | Ship it. |`)
+  expect(calls.map(({ argv, cwd }) => ({ key: scriptKey(argv), cwd }))).toEqual([{ key: 'bin/cc-ledgers list --json', cwd: '/repo/.claude/worktrees' }])
 })
 
 test('/ledger:all with an empty registry says how to rebuild it', async ($, on) => {

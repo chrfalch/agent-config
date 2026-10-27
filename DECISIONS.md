@@ -596,3 +596,29 @@ task counts each child task in another repository that is not marked retired
 as active, so its retire needs `--force`. A later change makes retire edit the
 other repository; until then, a warning is safer than a write to a repository
 that the retire did not check.
+
+## 2026-10-27 — Retire and the task lists work across two repositories
+
+**This replaces one point of the entry above: "Retire is cautious for now".**
+Retire now edits a parent ledger in another repository, and checks the child
+tasks there.
+
+**A child task marks itself retired in the other repository.** Retire runs
+`cc-ledger-parent mark` there. It changes one line, the child's line under
+`## Children`, and only after the worktree is gone, the same as for a parent
+in this repository. When the parent does not list the child, retire prints a
+warning with the line to add and the command to run.
+
+**A parent task looks up each child task in another repository.** Only a
+child that is retired there lets the parent retire. A child that is active, in
+the backlog, parked or missing blocks it, the same as a child in this
+repository that is not marked retired. `--force` overrides.
+
+**Session start shows the status from the other repository.** It asks
+`cc-ledger-parent status`, which reads that repository. A lookup that takes
+more than 3 seconds shows `unknown`, so a slow disk cannot stall the session.
+
+**`/ledger:all` and the dashboard group a family by main checkout.** A child
+task goes under its parent in another repository. Two repositories with the
+same folder name are two families. A registry entry without a main checkout,
+from before this change, still finds its parent by repo name.

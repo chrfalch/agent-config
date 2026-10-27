@@ -100,6 +100,7 @@ test('upsert registers a worktree ledger with the title slug, the repo and the b
     path: ledger,
     branch: 'me/fix-login',
     status: 'active',
+    main,
     created: entry.created,
     updated: mtimeIso(ledger),
   });
@@ -195,6 +196,7 @@ test('archive with no entry builds one from the archive copy and its Location se
     path: '/work/app/.claude/worktrees/fix/.claude/ledger.md',
     branch: 'me/fix',
     status: 'archived',
+    main: '/work/app',
     created: entry.created,
     updated: entry.updated,
     archivePath: copy,
@@ -312,7 +314,7 @@ test('scan rebuilds the registry from worktree ledgers, issue ledgers and the ar
   assert.deepEqual(
     entries.map(({ created, ...rest }) => rest),
     [
-      { repo: 'app', slug: 'feature-title', path: feature, branch: 'me/feature', status: 'active', updated: '2026-10-03T00:00:00.000Z' },
+      { repo: 'app', slug: 'feature-title', path: feature, branch: 'me/feature', status: 'active', main, updated: '2026-10-03T00:00:00.000Z' },
       { repo: 'crash', slug: 'crash', path: issue, branch: '', status: 'active', updated: '2026-10-02T00:00:00.000Z' },
       { repo: 'app', slug: 'old-task', path: '/work/old/.claude/ledger.md', branch: 'me/old', status: 'archived', updated: '2026-10-01T00:00:00.000Z', archivePath: copy },
     ],
@@ -663,4 +665,83 @@ test('scan rebuilds the parent of active and archived entries', (t) => {
     ],
   );
   assert.equal(Object.hasOwn(entries.find((entry) => entry.slug === 'epic') ?? {}, 'parent'), false);
+});
+
+test('upsert gives a worktree ledger the main checkout of its repository, with repo and branch from flags too', (t) => {
+  const h = home(t);
+  const main = checkout(h, path.join(h, 'repos/org/app'));
+  const ledger = ledgerIn(worktree(h, main, 'fix', 'me/fix'), 'fix');
+  const loose = ledgerIn(path.join(h, 'issues/crash'), 'crash');
+
+  ledgers(h, 'upsert', ledger, '--repo', 'app', '--branch', 'me/fix');
+  ledgers(h, 'upsert', loose);
+
+  const bySlug = Object.fromEntries(registry(h).map((entry) => [entry.slug, entry]));
+  assert.equal(bySlug.fix?.main, main);
+  assert.equal(Object.hasOwn(bySlug.crash ?? {}, 'main'), false);
+});
+
+test('archive keeps the main checkout of the active entry', (t) => {
+  const h = home(t);
+  const main = checkout(h, path.join(h, 'repos/app'));
+  const ledger = ledgerIn(worktree(h, main, 'fix', 'me/fix'), 'fix');
+  ledgers(h, 'upsert', ledger);
+  const copy = archiveCopy(h, 'app', '2026-10-20-fix.md', readFileSync(ledger, 'utf8'));
+
+  ledgers(h, 'archive', ledger, copy);
+
+  assert.deepEqual(registry(h).map(({ status, main: of }) => ({ status, main: of })), [{ status: 'archived', main }]);
+});
+
+test('archive keeps the main checkout of a backlog entry', (t) => {
+  const h = home(t);
+  const backlog = backlogLedger(h, 'app', 'idea', '/work/app');
+  ledgers(h, 'upsert', backlog);
+  const copy = archiveCopy(h, 'app', '2026-10-20-idea.md', readFileSync(backlog, 'utf8'));
+
+  ledgers(h, 'archive', backlog, copy);
+
+  assert.deepEqual(registry(h).map(({ status, main }) => ({ status, main })), [{ status: 'archived', main: '/work/app' }]);
+});
+
+test('scan gives an archived entry the main checkout of its previous entry, else of its - main: line, else of its worktree path', (t) => {
+  const h = home(t);
+  const location = (lines: string) => `# Task ledger — task\n\n## Location\n${lines}`;
+  const known = archiveCopy(h, 'app', '2026-10-01-known.md', location('- worktree: /work/moved/fix\n'));
+  const backlog = archiveCopy(h, 'app', '2026-10-02-backlog.md', location('- main: /work/app\n- worktree: <path>\n'));
+  const derived = archiveCopy(h, 'app', '2026-10-03-derived.md', location('- worktree: /work/app/.claude/worktrees/fix\n'));
+  const elsewhere = archiveCopy(h, 'app', '2026-10-04-elsewhere.md', location('- worktree: /work/fix\n'));
+  const prior: Entry[] = [
+    {
+      repo: 'app',
+      slug: 'task',
+      path: '/work/moved/fix/.claude/ledger.md',
+      branch: '',
+      status: 'archived',
+      main: '/work/other',
+      created: '2020-01-01T00:00:00.000Z',
+      updated: '2020-01-01T00:00:00.000Z',
+      archivePath: known,
+    },
+  ];
+  writeFileSync(registryFile(h), JSON.stringify(prior));
+
+  ledgers(h, 'scan', path.join(h, 'nothing-here'));
+
+  const mainOf = (copy: string) => registry(h).find((entry) => entry.archivePath === copy)?.main;
+  assert.deepEqual([known, backlog, derived, elsewhere].map(mainOf), ['/work/other', '/work/app', '/work/app', undefined]);
+});
+
+test('scan skips a - main: line that starts with a template placeholder, and takes the main checkout from the worktree path', (t) => {
+  const h = home(t);
+  const copy = archiveCopy(
+    h,
+    'app',
+    '2026-10-05-template.md',
+    '# Task ledger — task\n\n## Location\n- main: <main checkout> (cc-task-new fills this in)\n- worktree: /work/app/.claude/worktrees/fix\n',
+  );
+
+  ledgers(h, 'scan', path.join(h, 'nothing-here'));
+
+  assert.equal(registry(h).find((entry) => entry.archivePath === copy)?.main, '/work/app');
 });

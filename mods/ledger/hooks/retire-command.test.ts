@@ -15,9 +15,12 @@ const exit = (exitCode: number, stdout: string, stderr: string): Reply => ({
 type Replies = Record<string, Reply>
 type Call = { argv: string[]; cwd?: string }
 
-// A bash script is keyed by its folder and name, because the plugin root differs from machine to machine.
+// A script is keyed by its folder and name, because the plugin root differs from machine to machine.
+const script = (file: string): string => file.split('/').slice(-2).join('/')
 const argvKey = (argv: readonly string[]): string =>
-  JSON.stringify(argv[0] === 'bash' ? ['bash', (argv[1] ?? '').split('/').slice(-2).join('/'), ...argv.slice(2)] : argv)
+  JSON.stringify(
+    argv[0] === 'bash' ? ['bash', script(argv[1] ?? ''), ...argv.slice(2)] : argv[0]?.endsWith('/bin/cc-ledger-parent') ? [script(argv[0]), ...argv.slice(1)] : argv,
+  )
 
 const replies = (...entries: [argv: string[], reply: Reply][]): Replies => Object.fromEntries(entries.map(([argv, reply]) => [argvKey(argv), reply]))
 
@@ -517,12 +520,48 @@ test('/ledger:retire <slug> --dry-run of a worktree parent with an active child 
   )
 })
 
-test('/ledger:retire <slug> --dry-run counts a child in another repository not yet retired, and names it with its main checkout', async ($, on) => {
-  world(on, { cwd: REPO, files: { [ledgerOf(FIX_LOGIN)]: withChildren('fast-steps', '- parser @ /lib (started 2026-10-02)\n- old @ /lib (retired 2026-10-01)\n') } })
+const childStatus = (slug: string, main: string): string[] => ['bin/cc-ledger-parent', 'status', slug, '--main', main]
+
+test('/ledger:retire <slug> --dry-run counts a child in another repository that is active there, and names it with its main checkout', async ($, on) => {
+  const calls = world(on, {
+    cwd: REPO,
+    files: { [ledgerOf(FIX_LOGIN)]: withChildren('fast-steps', '- parser @ /lib (started 2026-10-02)\n- old @ /lib (retired 2026-10-01)\n') },
+    replies: replies([childStatus('parser', '/lib'), ok('active\n')]),
+  })
   const { text } = await $.command.run({ command: 'ledger:retire', args: 'fast-steps --dry-run' })
   expect(text.split('\n').at(-1)).toBe(
     'Retiring it needs --force: it has an active child (parser @ /lib). Run `/ledger:retire fast-steps --force` to retire it anyway.',
   )
+  expect(calls.filter(({ argv }) => argv[1] === 'status').map(({ argv }) => argv.slice(1))).toEqual([['status', 'parser', '--main', '/lib']])
+})
+
+test('/ledger:retire <slug> --dry-run counts a child in another repository by its status there, and as active when the status is unknown', async ($, on) => {
+  const children = ['done', 'gone', 'idea', 'paused', 'broken'].map(slug => `- ${slug} @ /lib\n`).join('')
+  world(on, {
+    cwd: REPO,
+    files: { [ledgerOf(FIX_LOGIN)]: withChildren('fast-steps', children) },
+    replies: replies(
+      [childStatus('done', '/lib'), ok('retired\n')],
+      [childStatus('gone', '/lib'), ok('missing\n')],
+      [childStatus('idea', '/lib'), ok('backlog\n')],
+      [childStatus('paused', '/lib'), ok('parked\n')],
+      [childStatus('broken', '/lib'), exit(1, '', '2 ledgers in the repository at /lib have the slug broken\n')],
+    ),
+  })
+  const { text } = await $.command.run({ command: 'ledger:retire', args: 'fast-steps --dry-run' })
+  expect(text.split('\n').at(-1)).toBe(
+    'Retiring it needs --force: it has active children (gone @ /lib, idea @ /lib, paused @ /lib, broken @ /lib). Run `/ledger:retire fast-steps --force` to retire it anyway.',
+  )
+})
+
+test('/ledger:retire <slug> --dry-run of a parent whose child in another repository is retired there needs no --force', async ($, on) => {
+  world(on, {
+    cwd: REPO,
+    files: { [ledgerOf(FIX_LOGIN)]: withChildren('fast-steps', '- parser @ /lib (started 2026-10-02)\n') },
+    replies: replies([childStatus('parser', '/lib'), ok('retired\n')]),
+  })
+  const { text } = await $.command.run({ command: 'ledger:retire', args: 'fast-steps --dry-run' })
+  expect(text.split('\n').at(-1)).toBe('Run `/ledger:retire fast-steps` to retire it.')
 })
 
 test('/ledger:retire <slug> --dry-run of a parent whose children are all retired needs no --force', async ($, on) => {

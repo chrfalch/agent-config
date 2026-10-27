@@ -43,10 +43,14 @@ type World = {
 const BACKLOG = '/home/.claude/ledger-backlog/repo'
 const backlogPathOf = (slug: string): string => `${BACKLOG}/${slug}.md`
 
+/** The ledgers ledger-list.sh prints when it runs in another repository's main checkout; a string is the error it fails with. */
+type Repository = { ledgers?: Record<string, string>; backlog?: Record<string, string> } | string
+
 /**
  * `ledgers` maps a worktree ledger's path to its text, then `backlog` a backlog ledger's, then `unlisted` the ledger of
- * another worktree that ledger-list.sh paths does not print, newest first: the first is edited at n × 1000 ms for n
- * ledgers in all, the next 1000 ms earlier, and so on. `backlog` of a string is the error of a backlog lookup that fails.
+ * another worktree that ledger-list.sh paths does not print, then `elsewhere` the ledgers of other repositories by main
+ * checkout, newest first: the first is edited at n × 1000 ms for n ledgers in all, the next 1000 ms earlier, and so on.
+ * `backlog` of a string is the error of a backlog lookup that fails.
  */
 function world(
   on: On,
@@ -55,15 +59,23 @@ function world(
   replies: Record<string, Reply> = {},
   backlog: Record<string, string> | string = {},
   unlisted: Record<string, string> = {},
+  elsewhere: Record<string, Repository> = {},
 ): World {
   const calls: string[] = []
   let markdownArgs: string | undefined
   const backlogLedgers = typeof backlog === 'string' ? {} : backlog
-  const files = { ...ledgers, ...backlogLedgers, ...unlisted }
+  const other = Object.values(elsewhere).flatMap(repository => (typeof repository === 'string' ? [] : [repository.backlog ?? {}, repository.ledgers ?? {}]))
+  const files: Record<string, string> = Object.assign({ ...ledgers, ...backlogLedgers, ...unlisted }, ...other)
   const all = Object.keys(files)
   const removed: string[] = []
   on('session.cwd', async () => ({ value: cwd }))
-  on('process.run', async (_, e) => {
+  on('process.run', async (_, e: { argv: string[]; init?: { cwd?: string } }) => {
+    const there = elsewhere[e.init?.cwd ?? '']
+    if (e.argv[0] === 'bash' && there !== undefined) {
+      calls.push(`ledger-list.sh ${e.argv[2]} in ${e.init?.cwd}`)
+      if (typeof there === 'string') return exit(1, '', there)
+      return exit(0, Object.keys((e.argv[2] === 'paths' ? there.ledgers : there.backlog) ?? {}).join('\n'))
+    }
     if (e.argv[0] === 'bash' && e.argv[2] === 'paths') return exit(0, Object.keys(ledgers).join('\n'))
     if (e.argv[0] === 'bash' && e.argv[2] === 'backlog') {
       calls.push('ledger-list.sh backlog')
@@ -680,20 +692,71 @@ test('formatAll never puts a child under a listed task that only shares the slug
   )
 })
 
-test('/ledger looks up a parent in another repository neither in the backlog nor in the other worktrees of this one', async ($, on) => {
+const APP_BACKLOG = '/home/.claude/ledger-backlog/app'
+
+test('/ledger shows a parent in another repository from that repository, named with its main checkout, and not a task here of its slug', async ($, on) => {
   const { calls } = world(
     on,
     '/repo',
     { [pathOf('child-a')]: ledgerText('child-a', { parent: 'epic @ /app' }) },
     {},
     { [backlogPathOf('epic')]: ledgerText('epic', { children: ['- child-a'] }) },
+    {},
+    { '/app': { backlog: { [`${APP_BACKLOG}/epic.md`]: ledgerText('epic', { children: ['- child-a @ /repo'] }) } } },
   )
 
   const { text } = await $.command.run({ command: 'ledger', args: '' })
 
-  expect(calls).toEqual([])
-  expect(text).toContain('- **Parent:** epic @ /app')
-  expect(text).not.toContain('epic (backlog)')
+  expect(text).toBe(
+    [
+      '**Task ledgers** · 2 ledgers, newest first, children under their parent',
+      '',
+      `#### epic @ /app (backlog) · edited ${at(1000)}`,
+      '- **Goal:** Goal of epic.',
+      '- **Next:** Next of epic.',
+      '- **Children:**',
+      `  - **child-a** · edited ${at(3000)}`,
+      '    - **Goal:** Goal of child-a.',
+      '    - **Next:** Next of child-a.',
+    ].join('\n'),
+  )
+  expect(calls).toEqual(['ledger-list.sh backlog in /app'])
+})
+
+test('/ledger walks up from a parent in another repository through its parent there to a grandparent back in this repository', async ($, on) => {
+  world(
+    on,
+    '/repo',
+    { [pathOf('child-a')]: ledgerText('child-a', { parent: 'epic @ /app' }) },
+    { 'git rev-parse --path-format=absolute --git-common-dir': exit(0, '/repo/.git\n') },
+    { [backlogPathOf('root')]: ledgerText('root', { children: ['- top @ /app'] }) },
+    {},
+    {
+      '/app': {
+        backlog: { [`${APP_BACKLOG}/epic.md`]: ledgerText('epic', { parent: 'top', children: ['- child-a @ /repo'] }) },
+        ledgers: { '/app/.claude/worktrees/top/.claude/ledger.md': ledgerText('top', { parent: 'root @ /repo', children: ['- epic'] }) },
+      },
+    },
+  )
+
+  const { text } = await $.command.run({ command: 'ledger', args: '' })
+
+  expect(text.split('\n').filter(line => / · edited /.test(line))).toEqual([
+    `#### root (backlog) · edited ${at(3000)}`,
+    `  - **top @ /app** · edited ${at(1000)}`,
+    `      - **epic @ /app (backlog)** · edited ${at(2000)}`,
+    `          - **child-a** · edited ${at(4000)}`,
+  ])
+})
+
+test('/ledger stops at a parent in a repository that cannot be listed, and still shows the child with its parent line', async ($, on) => {
+  world(on, '/repo', { [pathOf('child-a')]: ledgerText('child-a', { parent: 'epic @ /gone' }) }, {}, {}, {}, { '/gone': 'not a directory' })
+
+  const { text } = await $.command.run({ command: 'ledger', args: '' })
+
+  expect(text).toBe(
+    ['**Task ledgers** · 1 ledger', '', `#### child-a · edited ${at(1000)}`, '- **Goal:** Goal of child-a.', '- **Next:** Next of child-a.', '- **Parent:** epic @ /gone'].join('\n'),
+  )
 })
 
 test('/ledger:parent <slug> names a child in another repository with its main checkout', async ($, on) => {

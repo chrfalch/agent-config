@@ -350,7 +350,7 @@ test('/ledger:help says /ledger:retire retires a worktree or backlog task, and n
   const { text } = await $.command.run({ command: 'ledger:help', args: '' })
   const retire = text.split('\n').find(line => line.startsWith('- `/ledger:retire'))
   expect(retire).toBe(
-    "- `/ledger:retire [<slug>]` — Archive a task's ledger, remove its worktree, and delete its branch when all of its commits are merged. A backlog task of this repo has no worktree or branch: its ledger is archived, then deleted. `--dry-run` only shows what it would do. Uncommitted changes, unmerged work and active child tasks need `--force`.",
+    "- `/ledger:retire [<slug>]` — Archive a task's ledger, remove its worktree, and delete its branch when all of its commits are merged. A backlog task of this repo has no worktree or branch: its ledger is archived, then deleted. `--dry-run` only shows what it would do. Uncommitted changes, unmerged work and active child tasks need `--force`. A child task is marked retired in its parent ledger, also in another repo; a child task in another repo blocks its parent until it is retired there.",
   )
 })
 

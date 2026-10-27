@@ -3,7 +3,7 @@ import { existsSync, realpathSync } from 'node:fs';
 import { access, lstat, readFile, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { childOrder, groupByParent, park, parkMarker, summarize, unpark, type Grouped } from '../../mods/ledger/hooks/ledger.js';
+import { childOrder, groupByParent, isParentOf, park, parkMarker, summarize, unpark, type Grouped } from '../../mods/ledger/hooks/ledger.js';
 import { renderMarkdown } from './markdown.js';
 import { singleUseTokens } from './tokens.js';
 
@@ -22,7 +22,7 @@ type Engine = {
   plugin: { root: string };
 };
 
-type Entry = { repo: string; slug: string; status: string; updated: string; path: string; archivePath?: string; branch?: unknown; parent?: string; parentMain?: string };
+type Entry = { repo: string; slug: string; status: string; updated: string; path: string; archivePath?: string; branch?: unknown; parent?: string; parentMain?: string; main?: string };
 type WorktreeState = { path: string; mainCheckout: string };
 type Pr = { state: string; number: number };
 
@@ -116,18 +116,11 @@ const idOf = (entry: Entry): string => entry.archivePath ?? entry.path;
 
 const branchOf = (entry: Entry): string => (typeof entry.branch === 'string' ? entry.branch : '');
 
-const taskKey = (repo: string, slug: string): string => `${repo}\0${slug}`;
-
-// A parent with no parentMain is in the repo of its child. A retired slug can be given again, and then the task that is not archived is the parent.
+// A retired slug can be given again, and then the task that is not archived is the parent.
 function parentIdOf(newestFirst: Entry[]): (entry: Entry) => string | undefined {
-  const tasks = new Map<string, Entry>();
-  for (const entry of newestFirst) {
-    const key = taskKey(entry.repo, entry.slug);
-    const known = tasks.get(key);
-    if (known === undefined || (isArchived(known) && !isArchived(entry))) tasks.set(key, entry);
-  }
   return entry => {
-    const parent = entry.parent === undefined || entry.parentMain !== undefined ? undefined : tasks.get(taskKey(entry.repo, entry.parent));
+    const candidates = newestFirst.filter(task => isParentOf(task, entry));
+    const parent = candidates.find(task => !isArchived(task)) ?? candidates[0];
     return parent && idOf(parent);
   };
 }

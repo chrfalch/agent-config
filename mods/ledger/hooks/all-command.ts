@@ -1,6 +1,6 @@
 import type { EngineInterface, ProcessRunResult } from 'claude-code'
 
-import { childOrder, formatTime, groupByParent, summarize, taskName, type Grouped } from './ledger'
+import { childOrder, formatTime, groupByParent, isParentOf, summarize, taskName, type Grouped } from './ledger'
 import { message, sessionFolder } from './lookup'
 import { type Entry, parseEntries, scriptPath } from './registry'
 
@@ -21,18 +21,23 @@ export async function statusAndNext($: EngineInterface, entry: Entry): Promise<[
   }
 }
 
-const taskKey = (repo: string, slug: string): string => `${repo}\0${slug}`
-
 // A table cell drops leading spaces, but keeps no-break spaces.
 const INDENT = '  '
 
 type Task = { entry: Entry; status: string }
 
+const fileOf = ({ entry }: Task): string => entry.archivePath ?? entry.path
+
+// A slug can be given again; the newest task of that slug is the parent.
 function familyOrder<T extends Task>(newestFirst: T[]): (T & { name: string })[] {
+  const parentFile = ({ entry }: T): string | undefined => {
+    const parent = newestFirst.find(task => isParentOf(task.entry, entry))
+    return parent && fileOf(parent)
+  }
   const groups = groupByParent(
     newestFirst,
-    ({ entry }) => taskKey(entry.repo, entry.slug),
-    ({ entry }) => (entry.parent === undefined || entry.parentMain !== undefined ? undefined : taskKey(entry.repo, entry.parent)),
+    fileOf,
+    parentFile,
     childOrder(({ status }) => status === 'active', ({ entry }) => Date.parse(entry.updated)),
   )
   const descendants = (children: Grouped<T>[], depth: number): (T & { name: string })[] =>

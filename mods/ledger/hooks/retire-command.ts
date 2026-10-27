@@ -106,10 +106,19 @@ export async function retireCommand($: EngineInterface, args: string): Promise<s
 
 type RetireFlags = { dryRun: boolean; forced: boolean }
 
+// As cc-worktree-retire counts it: unless cc-ledger-parent finds it retired there.
+async function isActiveElsewhere($: EngineInterface, slug: string, main: string, cwd: string): Promise<boolean> {
+  const { stdout, failure } = await run($, [scriptPath($, 'cc-ledger-parent'), 'status', slug, '--main', main], cwd)
+  return failure !== undefined || stdout.trim() !== 'retired'
+}
+
 // Only for the plan: an unreadable ledger shows no children, and cc-worktree-retire still refuses a parent with active ones.
 async function activeChildrenOf($: EngineInterface, ledgerPath: string): Promise<string[]> {
   const text = await $.fs.read(ledgerPath).catch(() => '')
-  return (summarize(text, '', 0).children ?? []).filter(({ retired }) => retired === undefined).map(taskName)
+  const unretired = (summarize(text, '', 0).children ?? []).filter(({ retired }) => retired === undefined)
+  const { path: cwd } = await sessionFolder($)
+  const active = await Promise.all(unretired.map(({ slug, main }) => main === undefined || isActiveElsewhere($, slug, main, cwd)))
+  return unretired.filter((_, index) => active[index]).map(taskName)
 }
 
 // Only for the plan: cc-worktree-retire checks the folder again when it archives it.

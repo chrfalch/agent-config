@@ -173,25 +173,49 @@ task_status() {
   fi
 }
 
-# A task in another repository, `<slug> @ <main>`, is shown as its line names it: its status is not looked up here.
+# The status of task $1 in the repository whose main checkout is $2, which cc-ledger-parent looks up there.
+# A lookup that hangs, on a slow network disk say, must not stall the session start; macOS has no timeout(1).
+status_elsewhere() {
+  local lookup watchdog code
+  command -v node >/dev/null 2>&1 || return 1
+  "$(dirname "$(readlink -f "$0")")/../bin/cc-ledger-parent" status "$1" --main "$2" 2>/dev/null &
+  lookup=$!
+  { sleep 3 && kill "$lookup"; } >/dev/null 2>&1 &
+  watchdog=$!
+  wait "$lookup" && code=0 || code=$?
+  kill "$watchdog" 2>/dev/null
+  # 128 + SIGTERM: the watchdog stopped the lookup.
+  if [ "$code" -eq 143 ]; then echo unknown; return 0; fi
+  return "$code"
+}
+
+# A task in another repository is `<slug> @ <main>`. When its status cannot be looked up there, its line is shown as it is.
 relations() {
-  local parent line child elsewhere mark date
+  local parent line child elsewhere mark date status
   local child_line='^- ([A-Za-z0-9._-]+)( @ /[^[:space:]]*)?( \((retired|started) ([0-9]{4}-[0-9]{2}-[0-9]{2})\))?[[:space:]]*$'
   parent=$(section "$1" Location | sed -n -E '/^- parent:[[:space:]]*</d; s/^- parent:[[:space:]]*([^[:space:]]+( @ \/[^[:space:]]*)?)[[:space:]]*$/\1/p' | head -n 1)
   case "$parent" in
     "") ;;
-    *" @ "*) echo "Parent task: $parent." ;;
+    *" @ "*)
+      if status=$(status_elsewhere "${parent%% @ *}" "${parent#* @ }"); then
+        echo "Parent task: $parent ($status)."
+      else
+        echo "Parent task: $parent."
+      fi
+      ;;
     *) echo "Parent task: $parent ($(task_status "$parent"))." ;;
   esac
   section "$1" Children | while IFS= read -r line; do
     [[ $line =~ $child_line ]] || continue
     child=${BASH_REMATCH[1]} elsewhere=${BASH_REMATCH[2]} mark=${BASH_REMATCH[4]} date=${BASH_REMATCH[5]}
-    if [ -n "$elsewhere" ]; then
-      echo "Child task: $child$elsewhere${mark:+ ($mark $date)}."
-    elif [ "$mark" = retired ]; then
-      echo "Child task: $child (retired $date)."
-    else
+    if [ "$mark" = retired ]; then
+      echo "Child task: $child$elsewhere (retired $date)."
+    elif [ -z "$elsewhere" ]; then
       echo "Child task: $child ($(task_status "$child"))."
+    elif status=$(status_elsewhere "$child" "${elsewhere# @ }"); then
+      echo "Child task: $child$elsewhere ($status)."
+    else
+      echo "Child task: $child$elsewhere${mark:+ ($mark $date)}."
     fi
   done
 }

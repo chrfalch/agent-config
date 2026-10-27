@@ -556,3 +556,43 @@ or price changed since 2026-10-09.
 Analysis.
 Benchmark figures are secondary: kingy.ai copied them from OpenAI's charts, and the
 launch post returned 403.
+
+## 2026-10-27 — A parent task and its child task can be in two repositories
+
+**A link to another repository names that repository by the absolute path of
+its main checkout.** The child ledger gets `- parent: <slug> @ <main>`, and the
+parent ledger gets `- <slug> @ <main>` under `## Children`. A link inside one
+repository keeps its old format, so old ledgers stay valid. The main checkout
+path is what `cc-task-new` and the backlog `- main:` line already use to tell
+repositories apart. The folder name is not enough: two clones can have the same
+name. A remote URL is not enough either: a repository can have no remote, and
+two clones of one remote are two places to work. Every worktree of a
+repository finds the same main checkout, so the link does not depend on where
+the command ran. Equal slugs in two repositories are two tasks.
+
+**A command names a task in another repository as `<slug>@<path>`.** The path
+is any folder in that repository, so the operator does not need to know where
+its main checkout is. The argument splits at the first `@`, because a slug
+cannot hold one. A path in this repository is the same as the bare slug. One
+word per task keeps `/ledger:parent <parent> add <child>` at three words.
+
+**`add` refuses a link when a main checkout path has whitespace.** `cc-ledger-parent
+next` prints one task per word, the `/ledger:go` hook splits that output on
+whitespace, and the ledger lines are read with one-word patterns in bash and
+TypeScript. Quoting in each of them costs more than it gives. A link inside one
+repository does not hold a path, so it is not refused.
+
+**`/ledger:go` does not move the session to another repository.**
+`EnterWorktree` enters only worktrees of the session's own repository. So when
+the next child task is in another repository, `/ledger:go` promotes it there
+with `cc-task-new --repo <main> --promote`, marks it started, and names its
+worktree. The session is not cleared. For now, the operator opens a session
+there. A follow-up change lets the parent session send work to the child's
+worktree through subagents.
+
+**Retire is cautious for now.** Retiring a child task does not edit a parent
+ledger in another repository. It prints the line to change by hand. A parent
+task counts each child task in another repository that is not marked retired
+as active, so its retire needs `--force`. A later change makes retire edit the
+other repository; until then, a warning is safer than a write to a repository
+that the retire did not check.

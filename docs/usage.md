@@ -297,7 +297,6 @@ ledger.
 `/ledger:parent <parent> remove <child>` undoes all three. The command refuses
 a relation that breaks one of these rules:
 
-- The parent task and the child task are in the same repo.
 - A task cannot be its own parent task, and the relation cannot make a cycle.
   When a task is already the parent task of `<parent>`, or of one of its
   parent tasks, the command refuses to make it a child task of `<parent>`.
@@ -357,6 +356,58 @@ in the `parent of <n>` count.
 
 The parent task can be in a worktree or in the backlog of this repo. Either
 way, its line for the child task is marked retired.
+
+#### A child task in another repository
+
+A parent task and its child task can be in two repositories. Name a task in
+another repository as `<slug>@<path>`. The path is any folder in that
+repository. The command finds the repository's main checkout, and looks for the
+slug in that repository's worktrees and backlog:
+
+```
+/ledger:parent <parent> add <child>@/Users/me/repos/other-app
+```
+
+`/ledger:parent` does not expand `~`, so give an absolute path there. A
+relative path is read from the session's folder. A `<slug>@<path>` whose path is in this repository is the same as `<slug>`.
+A path that is not in a git repository is refused.
+
+A link to another repository names that repository by the absolute path of its
+main checkout:
+
+- The child ledger gets `- parent: <parent> @ <main checkout>`.
+- The parent ledger gets `- <child> @ <main checkout>`, and the started or
+  retired mark follows it.
+- The child's entry in `~/.claude/ledgers.json` gets `parent` and
+  `parentMain`.
+
+Two tasks with the same slug in two repositories are two tasks. The command
+refuses a link to another repository when the path of either main checkout has
+a space or another whitespace character.
+
+To make the child task in the other repository, run `bin/cc-task-new` with
+`--repo <path>`. It makes the backlog task as if you ran it in that repository.
+`--repo` also works with `--promote`. It does not work with `--here` or
+`--stack`, because both build on the current worktree.
+
+`/ledger:go <parent>` can pick a child task in another repository. It then
+promotes that task there, with `cc-task-new --repo <main checkout> --promote
+<child>`, marks it started, and names its new worktree. The session stays where
+it is and is not cleared, because `EnterWorktree` enters only worktrees of the
+session's own repository. For now, open a session in that worktree and type
+`go <child>`. A follow-up change lets the parent session send work to the
+child's worktree through subagents.
+
+`/ledger:parent`, `/ledger` at session start and `bin/cc-ledger-parent next`
+show such a child task as `<child> @ <main checkout>` or `<child>@<main checkout>`.
+The other repository's status is not looked up at session start.
+
+Retire is cautious for now:
+
+- `/ledger:retire <child>` in the other repository does not edit the parent
+  ledger. It prints a warning with the line to change by hand.
+- A parent task with a child task in another repository that is not marked
+  retired counts that child task as active.
 
 ### The dashboard
 

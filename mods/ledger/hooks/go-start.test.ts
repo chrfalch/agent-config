@@ -830,3 +830,57 @@ test("a subagent's Skill call of ledger:go is refused, because only the main ses
   expect(w.commands).toEqual([])
   await expectNothingChanged($, w)
 })
+
+const LIB_WORKTREE = '/lib/.claude/worktrees/parser'
+const PROMOTE_IN = (main: string, slug: string) => `bin/cc-task-new --repo ${main} --promote ${slug}`
+const promotedIn = (main: string, slug: string): Reply =>
+  exit(0, `worktree ${main}/.claude/worktrees/${slug}\nbranch   ${slug}\nbase     origin/main @ abc1234\nledger   ${main}/.claude/worktrees/${slug}/.claude/ledger.md\n`)
+const EPIC_WITH_LIB_CHILD = { [pathOf('epic')]: ledgerText('epic', { children: '- busy\n- parser @ /lib' }) }
+const staysHere = (child: string, worktree: string) =>
+  `The session was not cleared and stays here, because a session cannot move to another repository. To continue in ${child}, open a session in ${worktree} and type go ${child}.`
+
+for (const via of ['typed', 'Skill'] as const) {
+  test(`/ledger:go <parent> (${via}) promotes a picked child in another repository there, marks it started, and does not move the session`, async ($, on) => {
+    const w = world(on, `${WORKTREES}/epic`, EPIC_WITH_LIB_CHILD, {
+      [NEXT('epic')]: exit(0, 'epic parser@/lib\n'),
+      [PROMOTE_IN('/lib', 'parser')]: promotedIn('/lib', 'parser'),
+      [START('epic', 'parser@/lib')]: exit(0, `started parser@/lib in ${pathOf('epic')}\n`),
+    })
+
+    const { refusal } = await startVia(via, $, w, 'epic')
+
+    expect(refusal).toBe(
+      `Picked child task parser of epic. It belongs to the repository at /lib, so it was promoted there: its branch, worktree and ledger are at ${LIB_WORKTREE}. Marked parser started in ${pathOf('epic')}. ${staysHere('parser', LIB_WORKTREE)}`,
+    )
+    expect(w.commands).toEqual([NEXT('epic'), PROMOTE_IN('/lib', 'parser'), START('epic', 'parser@/lib')].map(key => ({ key, cwd: `${WORKTREES}/epic` })))
+    await expectNothingChanged($, w)
+  })
+}
+
+test('/ledger:go <parent> names the parent in another repository of a picked grandchild there, and passes on a failed mark', async ($, on) => {
+  const w = world(on, '/repo', EPIC_WITH_LIB_CHILD, {
+    [NEXT('epic')]: exit(0, 'epic phase@/lib leaf@/lib\n'),
+    [PROMOTE_IN('/lib', 'leaf')]: promotedIn('/lib', 'leaf'),
+    [START('phase@/lib', 'leaf@/lib')]: exit(1, '', 'boom\n'),
+  })
+
+  const { text } = await $.command.run({ command: 'ledger:go', args: 'epic' })
+
+  expect(text).toBe(
+    `Picked child task leaf of phase @ /lib. It belongs to the repository at /lib, so it was promoted there: its branch, worktree and ledger are at /lib/.claude/worktrees/leaf. Could not mark leaf started in its parent phase @ /lib: boom. ${staysHere('leaf', '/lib/.claude/worktrees/leaf')}`,
+  )
+  await expectNothingChanged($, w)
+})
+
+test('/ledger:go <parent> says why a picked child in another repository could not be promoted, and changes nothing else', async ($, on) => {
+  const w = world(on, '/repo', EPIC_WITH_LIB_CHILD, {
+    [NEXT('epic')]: exit(0, 'epic parser@/lib\n'),
+    [PROMOTE_IN('/lib', 'parser')]: exit(1, '', 'branch already exists: parser\n'),
+  })
+
+  const { text } = await $.command.run({ command: 'ledger:go', args: 'epic' })
+
+  expect(text).toBe(`Could not start backlog task parser @ /lib. branch already exists: parser. ${UNCHANGED}`)
+  expect(keys(w.commands)).toEqual([NEXT('epic'), PROMOTE_IN('/lib', 'parser')])
+  await expectNothingChanged($, w)
+})

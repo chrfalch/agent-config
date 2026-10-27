@@ -16,6 +16,7 @@ type Entry = {
   updated: string;
   archivePath?: string;
   parent?: string;
+  parentMain?: string;
   main?: string;
 };
 
@@ -577,6 +578,29 @@ test('upsert of a backlog ledger takes the parent from its Location section, in 
   assert.equal(entry?.parent, 'epic');
 });
 
+test('upsert reads a parent in another repository as its slug and parentMain, and a parent here has no parentMain', (t) => {
+  const h = home(t);
+  const child = ledgerIn(path.join(h, 'issues/child'), 'child', withParent('epic @ /work/app'));
+  const local = ledgerIn(path.join(h, 'issues/local'), 'local', withParent('epic'));
+
+  ledgers(h, 'upsert', child, local);
+
+  const bySlug = Object.fromEntries(registry(h).map((entry) => [entry.slug, entry]));
+  assert.deepEqual(Object.keys(bySlug.child ?? {}), ['repo', 'slug', 'path', 'branch', 'parent', 'parentMain', 'status', 'created', 'updated']);
+  assert.deepEqual({ parent: bySlug.child?.parent, parentMain: bySlug.child?.parentMain }, { parent: 'epic', parentMain: '/work/app' });
+  assert.equal(bySlug.local?.parent, 'epic');
+  assert.equal(Object.hasOwn(bySlug.local ?? {}, 'parentMain'), false);
+});
+
+test('upsert takes a parent in another repository from --parent <slug>@<main>', (t) => {
+  const h = home(t);
+  const ledger = ledgerIn(path.join(h, 'issues/child'), 'child');
+
+  ledgers(h, 'upsert', ledger, '--parent', 'epic@/work/app');
+
+  assert.deepEqual(registry(h).map(({ parent, parentMain }) => ({ parent, parentMain })), [{ parent: 'epic', parentMain: '/work/app' }]);
+});
+
 test('upsert of a backlog ledger takes the parent from --parent before its Location section', (t) => {
   const h = home(t);
   const backlog = backlogLedger(h, 'app', 'fix-login', '/work/app');
@@ -596,6 +620,20 @@ test('archive keeps the parent of the active entry', (t) => {
   ledgers(h, 'archive', ledger, copy);
 
   assert.deepEqual(registry(h).map(({ status, parent }) => ({ status, parent })), [{ status: 'archived', parent: 'epic' }]);
+});
+
+test('archive keeps the parentMain of an active entry whose parent is in another repository', (t) => {
+  const h = home(t);
+  const ledger = ledgerIn(path.join(h, 'issues/child'), 'child', withParent('epic @ /work/app'));
+  ledgers(h, 'upsert', ledger);
+  const copy = archiveCopy(h, 'child', '2026-10-20-child.md', readFileSync(ledger, 'utf8'));
+
+  ledgers(h, 'archive', ledger, copy);
+
+  assert.deepEqual(
+    registry(h).map(({ status, parent, parentMain }) => ({ status, parent, parentMain })),
+    [{ status: 'archived', parent: 'epic', parentMain: '/work/app' }],
+  );
 });
 
 test('archive with no entry takes the parent from the archive copy', (t) => {

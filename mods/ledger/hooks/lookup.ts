@@ -89,11 +89,13 @@ async function otherWorktreeLedgers($: EngineInterface): Promise<Map<string, Led
 /**
  * The unlisted ledgers that are the parent of a listed task, the parent of that parent, and so on. A parent is looked up
  * in the backlog, marked as backlog, then in the other worktrees, whose ledgers findLedgers does not list from a linked
- * worktree. Each walk up stops at a parent that is listed or seen before, or that has no ledger in either place.
+ * worktree. Each walk up stops at a parent that is listed or seen before, that has no ledger in either place, or that is
+ * in another repository.
  */
 export async function unlistedAncestors($: EngineInterface, listed: LedgerSummary[]): Promise<LedgerSummary[] | { error: string }> {
   const seen = new Set(listed.map(({ slug }) => slug))
-  if (listed.every(({ parent }) => parent === undefined || seen.has(parent))) return []
+  const parentHere = ({ parent }: LedgerSummary) => (parent?.includes(' @ ') ? undefined : parent)
+  if (listed.map(parentHere).every(parent => parent === undefined || seen.has(parent))) return []
   const found = await findBacklogLedgers($)
   if ('error' in found) return found
   const backlog = new Map<string, LedgerSummary>()
@@ -101,11 +103,11 @@ export async function unlistedAncestors($: EngineInterface, listed: LedgerSummar
   let active: Map<string, LedgerSummary> | undefined
   const ancestors: LedgerSummary[] = []
   for (const ledger of listed) {
-    for (let parent = ledger.parent; parent !== undefined && !seen.has(parent); ) {
+    for (let parent = parentHere(ledger); parent !== undefined && !seen.has(parent); ) {
       seen.add(parent)
       const ancestor = backlog.get(parent) ?? (active ??= await otherWorktreeLedgers($)).get(parent)
       if (ancestor) ancestors.push(ancestor)
-      parent = ancestor?.parent
+      parent = ancestor && parentHere(ancestor)
     }
   }
   return ancestors

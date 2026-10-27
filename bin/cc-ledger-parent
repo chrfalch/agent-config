@@ -1,16 +1,20 @@
 #!/usr/bin/env node
-// Makes one task the parent of another in the same repository, and shows a parent's children.
+// Makes one task the parent of another, and shows a parent's children.
 // Usage: cc-ledger-parent add <parent> <child>
 //        cc-ledger-parent remove <parent> <child>
 //        cc-ledger-parent show <parent> [--json]
 //        cc-ledger-parent start <parent> <child>
 //        cc-ledger-parent next <parent>
-// A slug is a ledger's title slug, looked up in the ledgers of every worktree of the repository
-// that holds the current folder, and in the backlog ledgers that name its main checkout. The
-// child's `- parent: <slug>` bullet under ## Location is the source of truth. The parent's
-// ## Children section lists its children, so that a retired child, whose ledger is gone, keeps a
-// line there: `- <slug> (retired YYYY-MM-DD)`. /ledger:go marks a child it starts with
-// `- <slug> (started YYYY-MM-DD)` (start), and starts the child that next prints.
+// A task is `<slug>`, in the repository that holds the current folder, or `<slug>@<path>`, in the
+// repository that holds <path>, its main checkout or any worktree, relative paths allowed. A slug is
+// a ledger's title slug, looked up in the ledgers of every worktree of that repository, and in the
+// backlog ledgers that name its main checkout. The child's `- parent: <slug>` bullet under
+// ## Location is the source of truth. The parent's ## Children section lists its children, so that
+// a retired child, whose ledger is gone, keeps a line there: `- <slug> (retired YYYY-MM-DD)`.
+// /ledger:go marks a child it starts with `- <slug> (started YYYY-MM-DD)` (start), and starts the
+// child that next prints. When parent and child are in two repositories, each line names the other
+// task's main checkout: `- parent: <slug> @ <main>` and `- <slug> @ <main>`. show prints such a
+// child as `<slug>@<main>`, and next every task outside the current repository.
 'use strict';
 const { spawnSync } = require('node:child_process');
 const fs = require('node:fs');
@@ -23,13 +27,14 @@ const usage = [
   '       cc-ledger-parent show <parent> [--json]',
   '       cc-ledger-parent start <parent> <child>',
   '       cc-ledger-parent next <parent>',
+  'A task is <slug> in this repository, or <slug>@<path> in the repository that holds <path>.',
 ].join('\n');
 
 const backlogRoot = path.join(os.homedir(), '.claude', 'ledger-backlog');
 const inBacklog = (ledger) => path.dirname(path.dirname(ledger)) === backlogRoot;
 
 const SLUG = /^[A-Za-z0-9._-]+$/;
-const CHILD = /^- ([A-Za-z0-9._-]+)(?: \((retired|started) (\d{4}-\d\d-\d\d)\))?$/;
+const CHILD = /^- ([A-Za-z0-9._-]+)(?: @ (\/\S*))?(?: \((retired|started) (\d{4}-\d\d-\d\d)\))?$/;
 // Same marker as parkedOf() in mods/ledger/hooks/ledger.ts.
 const PARKED = /^Parked:[ \t]*\d{4}-\d{2}-\d{2}[ \t]*[—-]/;
 
@@ -43,16 +48,46 @@ function titleSlug(text) {
   return text.match(/^# Task ledger[ \t]*(?:—|-)[ \t]*(.*)$/m)?.[1].trim() ?? '';
 }
 
-function git(...args) {
-  const result = spawnSync('git', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
-  if (result.status !== 0) fail(`not inside a git repository: ${process.cwd()}`);
-  return result.stdout;
+function git(folder, ...args) {
+  const result = spawnSync('git', ['-C', folder, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+  return result.status === 0 ? result.stdout : undefined;
 }
 
+// A folder in each repository that a command named, for `git worktree list`. The main checkout is not always one:
+// for a bare repository it is the folder that holds it.
+const namedFolders = new Map();
+
 // The main checkout the way cc-task-new works it out, so it matches the `- main:` line cc-task-new writes.
-function mainCheckout() {
-  return path.dirname(git('rev-parse', '--path-format=absolute', '--git-common-dir').trim());
+// The absolute path tells apart two repositories with the same folder name.
+function mainCheckout(folder) {
+  const common = git(folder, 'rev-parse', '--path-format=absolute', '--git-common-dir');
+  if (common === undefined) return undefined;
+  const main = path.dirname(common.trim());
+  if (!namedFolders.has(main)) namedFolders.set(main, folder);
+  return main;
 }
+
+let cwdRepository;
+const thisRepository = () => (cwdRepository ??= { main: mainCheckout(process.cwd()) }).main;
+
+// The Children line format and cc-worktree-retire read a slug as one word of these characters.
+function parseTask(arg) {
+  const at = arg.indexOf('@');
+  const slug = at === -1 ? arg : arg.slice(0, at);
+  if (!SLUG.test(slug)) fail(`unsupported slug ${JSON.stringify(slug)}: a slug must match ^[A-Za-z0-9._-]+$`);
+  if (at === -1) return { slug, main: thisRepository() ?? fail(`not inside a git repository: ${process.cwd()}`) };
+  const folder = arg.slice(at + 1);
+  if (folder === '') fail(`no folder after the @ in ${arg}`);
+  return { slug, main: mainCheckout(folder) ?? fail(`not inside a git repository: ${path.resolve(folder)}`) };
+}
+
+const same = (a, b) => a.slug === b.slug && a.main === b.main;
+const repositoryName = (main) => (main === thisRepository() ? 'this repository' : `the repository at ${main}`);
+// A task as a command run in the repository at `main` names it: by its slug alone when it is there.
+const taskNameFrom = (main, { slug, main: own }) => (own === main ? slug : `${slug}@${own}`);
+const taskName = (ref) => taskNameFrom(thisRepository(), ref);
+// A task as a line of the ledger `from` names it.
+const linkFrom = (from, { slug, main }) => (main === from.main ? slug : `${slug} @ ${main}`);
 
 // Another repository with the same folder name shares the backlog folder; its ledgers name another main checkout.
 function backlogLedgers(main) {
@@ -73,31 +108,36 @@ function backlogLedgers(main) {
     });
 }
 
-function ledgersBySlug() {
-  const worktrees = git('worktree', 'list', '--porcelain')
+const repositories = new Map();
+
+// A main checkout that a ledger names may be gone; its backlog ledgers still count.
+function ledgersBySlug(main) {
+  if (repositories.has(main)) return repositories.get(main);
+  const worktrees = (git(namedFolders.get(main) ?? main, 'worktree', 'list', '--porcelain') ?? '')
     .split('\n')
     .filter((line) => line.startsWith('worktree '))
     .map((line) => path.join(line.slice('worktree '.length), '.claude', 'ledger.md'))
     .filter((ledger) => fs.statSync(ledger, { throwIfNoEntry: false })?.isFile());
   const found = new Map();
-  for (const ledger of [...worktrees, ...backlogLedgers(mainCheckout())]) {
+  for (const ledger of [...worktrees, ...backlogLedgers(main)]) {
     const slug = titleSlug(fs.readFileSync(ledger, 'utf8'));
     if (slug) found.set(slug, [...(found.get(slug) ?? []), ledger]);
   }
+  repositories.set(main, found);
   return found;
 }
 
-function lookup(found, slug) {
-  const files = found.get(slug) ?? [];
-  if (files.length > 1) fail(`${files.length} ledgers in this repository have the slug ${slug}: ${files.join(', ')}`);
+function lookup({ slug, main }) {
+  const files = ledgersBySlug(main).get(slug) ?? [];
+  if (files.length > 1) fail(`${files.length} ledgers in ${repositoryName(main)} have the slug ${slug}: ${files.join(', ')}`);
   if (files.length === 0) return undefined;
   const text = fs.readFileSync(files[0], 'utf8');
   // Lines keep their own `\r`, so a save changes only the lines it adds or drops.
-  return { slug, file: files[0], lines: text.split('\n'), cr: text.includes('\r\n') ? '\r' : '' };
+  return { slug, main, file: files[0], lines: text.split('\n'), cr: text.includes('\r\n') ? '\r' : '' };
 }
 
-function resolve(found, slug) {
-  return lookup(found, slug) ?? fail(`no task ledger with the slug ${slug} in this repository`);
+function resolve(ref) {
+  return lookup(ref) ?? fail(`no task ledger with the slug ${ref.slug} in ${repositoryName(ref.main)}`);
 }
 
 function insert(task, index, ...lines) {
@@ -125,24 +165,24 @@ function afterLastText(lines, { start, end }) {
 
 const firstText = (lines) => lines.map((line) => line.trim()).find((line) => line !== '') ?? '';
 
-function parentBullet(lines) {
-  const found = section(lines, 'Location');
+function parentBullet(task) {
+  const found = section(task.lines, 'Location');
   if (!found) return undefined;
   for (let index = found.start + 1; index < found.end; index++) {
     // One word, and not a template placeholder, the same as the parent cc-worktree-retire reads.
-    const value = lines[index].trimEnd().match(/^- parent:[ \t]*(\S+)$/)?.[1];
-    if (value !== undefined && !value.startsWith('<')) return { index, value };
+    const [, slug, main] = task.lines[index].trimEnd().match(/^- parent:[ \t]*(\S+)(?: @ (\/\S*))?$/) ?? [];
+    if (slug !== undefined && !slug.startsWith('<')) return { index, slug, main: main ?? task.main };
   }
   return undefined;
 }
 
-function children(lines) {
-  const found = section(lines, 'Children');
+function children(task) {
+  const found = section(task.lines, 'Children');
   if (!found) return [];
   const listed = [];
   for (let index = found.start + 1; index < found.end; index++) {
-    const [, slug, mark, date] = lines[index].trim().match(CHILD) ?? [];
-    if (slug) listed.push({ index, slug, ...(mark && { [mark]: date }) });
+    const [, slug, main, mark, date] = task.lines[index].trim().match(CHILD) ?? [];
+    if (slug) listed.push({ index, slug, main: main ?? task.main, ...(mark && { [mark]: date }) });
   }
   return listed;
 }
@@ -169,59 +209,63 @@ function register(ledger, ...flags) {
   if (result.status !== 0) console.error('warning: registry not updated');
 }
 
-// The parent of `task`, its parent, and so on, up to a slug with no ledger or a slug seen before.
-function ancestors(found, task) {
+// The parent of `task`, its parent, and so on, in any repository, up to a task with no ledger or a task seen before.
+function ancestors(task) {
   const seen = [];
-  let slug = parentBullet(task.lines)?.value;
-  while (slug !== undefined && !seen.includes(slug)) {
-    seen.push(slug);
-    const ledger = lookup(found, slug);
-    slug = ledger && parentBullet(ledger.lines)?.value;
+  let parent = parentBullet(task);
+  while (parent !== undefined && !seen.some((ancestor) => same(ancestor, parent))) {
+    seen.push(parent);
+    const ledger = lookup(parent);
+    parent = ledger && parentBullet(ledger);
   }
   return seen;
 }
 
-function add(parentSlug, childSlug) {
-  if (parentSlug === childSlug) fail(`${childSlug} cannot be its own parent`);
-  const found = ledgersBySlug();
-  const parent = resolve(found, parentSlug);
-  const child = resolve(found, childSlug);
-  if (children(parent.lines).some(({ slug, retired }) => retired && slug === child.slug)) {
-    fail(`${child.slug} is a retired child of ${parent.slug}; give the new task another slug`);
+function add(parentArg, childArg) {
+  const [parentRef, childRef] = [parseTask(parentArg), parseTask(childArg)];
+  if (same(parentRef, childRef)) fail(`${taskName(childRef)} cannot be its own parent`);
+  const parent = resolve(parentRef);
+  const child = resolve(childRef);
+  if (children(parent).some((line) => line.retired && same(line, child))) {
+    fail(`${taskName(child)} is a retired child of ${taskName(parent)}; give the new task another slug`);
   }
-  const current = parentBullet(child.lines)?.value;
-  if (current !== undefined && current !== parent.slug) {
-    fail(`${child.slug} already has the parent ${current}; first run cc-ledger-parent remove ${current} ${child.slug}`);
+  const current = parentBullet(child);
+  if (current !== undefined && !same(current, parent)) {
+    fail(`${taskName(child)} already has the parent ${taskName(current)}; first run cc-ledger-parent remove ${taskName(current)} ${taskName(child)}`);
   }
-  if (ancestors(found, parent).includes(child.slug)) {
-    fail(`${child.slug} is already the parent of ${parent.slug} or of one of its parents, so making it a child of ${parent.slug} would make a cycle`);
+  if (ancestors(parent).some((ancestor) => same(ancestor, child))) {
+    fail(`${taskName(child)} is already the parent of ${taskName(parent)} or of one of its parents, so making it a child of ${taskName(parent)} would make a cycle`);
   }
+  // A link line and a line of next stay one word for each path, which the shell and every reader of them split on.
+  const spaced = parent.main === child.main ? undefined : [parent.main, child.main].find((main) => /\s/.test(main));
+  if (spaced) fail(`the main checkout ${spaced} has whitespace in its path, so no task there can be linked to a task in another repository`);
   const childLocation = location(child);
   const parentLocation = location(parent);
 
   // The child's bullet first: once it is written, a rerun of the same add finishes the parent.
   if (current === undefined) {
-    insert(child, afterLastText(child.lines, childLocation), `- parent: ${parent.slug}`);
+    insert(child, afterLastText(child.lines, childLocation), `- parent: ${linkFrom(child, parent)}`);
     save(child);
   }
-  if (!children(parent.lines).some(({ slug }) => slug === child.slug)) {
+  if (!children(parent).some((line) => same(line, child))) {
     const listed = section(parent.lines, 'Children');
-    if (listed) insert(parent, afterLastText(parent.lines, listed), `- ${child.slug}`);
-    else insert(parent, afterLastText(parent.lines, parentLocation), '', '## Children', `- ${child.slug}`);
+    const line = `- ${linkFrom(parent, child)}`;
+    if (listed) insert(parent, afterLastText(parent.lines, listed), line);
+    else insert(parent, afterLastText(parent.lines, parentLocation), '', '## Children', line);
     save(parent);
   }
-  register(child.file, '--parent', parent.slug);
+  register(child.file, '--parent', taskNameFrom(child.main, parent));
 }
 
-function remove(parentSlug, childSlug) {
-  const found = ledgersBySlug();
-  const parent = resolve(found, parentSlug);
-  const child = resolve(found, childSlug);
-  const bullet = parentBullet(child.lines);
-  if (bullet?.value !== parent.slug) fail(`${child.slug} is not a child of ${parent.slug}`);
+function remove(parentArg, childArg) {
+  const [parentRef, childRef] = [parseTask(parentArg), parseTask(childArg)];
+  const parent = resolve(parentRef);
+  const child = resolve(childRef);
+  const bullet = parentBullet(child);
+  if (!bullet || !same(bullet, parent)) fail(`${taskName(child)} is not a child of ${taskName(parent)}`);
 
   // The parent first: until the child's bullet is gone, a rerun of the same remove still finds the pair.
-  const lines = children(parent.lines).filter(({ slug }) => slug === child.slug);
+  const lines = children(parent).filter((line) => same(line, child));
   if (lines.length > 0) {
     for (const { index } of lines.reverse()) parent.lines.splice(index, 1);
     const listed = section(parent.lines, 'Children');
@@ -233,51 +277,52 @@ function remove(parentSlug, childSlug) {
   register(child.file);
 }
 
-function childStatus(found, { slug, retired }) {
-  if (retired) return { slug, status: 'retired', next: '' };
-  const child = lookup(found, slug);
-  if (!child) return { slug, status: 'missing', next: '' };
+// A child in another repository is looked up there, and shown with its main checkout.
+function childStatus(parent, line) {
+  const named = { slug: line.slug, ...(line.main !== parent.main && { main: line.main }) };
+  if (line.retired) return { ...named, status: 'retired', next: '' };
+  const child = lookup(line);
+  if (!child) return { ...named, status: 'missing', next: '' };
   const next = body(child.lines, 'Next step');
   return {
-    slug,
+    ...named,
     status: inBacklog(child.file) ? 'backlog' : PARKED.test(firstText(next)) ? 'parked' : 'active',
-    next: firstText(next.filter((line) => !PARKED.test(line.trim()))),
+    next: firstText(next.filter((text) => !PARKED.test(text.trim()))),
   };
 }
 
 // A retired slug can belong to a new task, so its ledger is not the child's.
-function childTime(found, { slug, retired }) {
+function childTime({ slug, main, retired }) {
   if (retired) {
     const [year, month, day] = retired.split('-').map(Number);
     return new Date(year, month - 1, day).getTime();
   }
-  const file = found.get(slug)?.[0];
+  const file = ledgersBySlug(main).get(slug)?.[0];
   return file ? fs.statSync(file).mtimeMs : 0;
 }
 
 // The order of childOrder() in mods/ledger/hooks/ledger.ts: active first, then the others, each newest first by the time
 // of the child's ledger, or its retire date once retired. A child with neither counts as oldest, and the stable sort keeps
 // their Children order.
-function ordered(found, listed) {
-  const dated = listed.map((child) => ({ shown: childStatus(found, child), time: childTime(found, child) }));
+function ordered(parent) {
+  const dated = children(parent).map((line) => ({ shown: childStatus(parent, line), time: childTime(line) }));
   const active = ({ shown }) => shown.status === 'active';
   return dated.sort((a, b) => Number(active(b)) - Number(active(a)) || b.time - a.time).map(({ shown }) => shown);
 }
 
-function show(parentSlug, json) {
-  const found = ledgersBySlug();
-  const parent = resolve(found, parentSlug);
+function show(parentArg, json) {
+  const parent = resolve(parseTask(parentArg));
   const shown = {
     parent: parent.slug,
     goal: firstText(body(parent.lines, 'Goal')),
-    children: ordered(found, children(parent.lines)),
+    children: ordered(parent),
   };
   if (json) {
     console.log(JSON.stringify(shown, null, 2));
     return;
   }
   console.log([shown.parent, shown.goal].join('\t'));
-  for (const { slug, status, next } of shown.children) console.log([slug, status, next].join('\t'));
+  for (const { slug, main, status, next } of shown.children) console.log([main ? `${slug}@${main}` : slug, status, next].join('\t'));
 }
 
 // The local date, as `date +%F` in cc-worktree-retire writes it.
@@ -286,51 +331,48 @@ function today() {
   return [now.getFullYear(), now.getMonth() + 1, now.getDate()].map((part) => String(part).padStart(2, '0')).join('-');
 }
 
-function start(parentSlug, childSlug) {
-  const parent = resolve(ledgersBySlug(), parentSlug);
-  const line = children(parent.lines).find(({ slug }) => slug === childSlug) ?? fail(`${childSlug} is not listed under ## Children of ${parent.slug}; add it with /ledger:parent ${parent.slug} add ${childSlug}`);
+function start(parentArg, childArg) {
+  const [parentRef, child] = [parseTask(parentArg), parseTask(childArg)];
+  const parent = resolve(parentRef);
+  const line =
+    children(parent).find((listed) => same(listed, child)) ??
+    fail(`${taskName(child)} is not listed under ## Children of ${taskName(parent)}; add it with /ledger:parent ${taskName(parent)} add ${taskName(child)}`);
   if (line.retired || line.started) return;
   const text = parent.lines[line.index];
-  parent.lines[line.index] = `${text.match(/^\s*/)[0]}- ${childSlug} (started ${today()})${text.endsWith('\r') ? '\r' : ''}`;
+  parent.lines[line.index] = `${text.match(/^\s*/)[0]}- ${linkFrom(parent, child)} (started ${today()})${text.endsWith('\r') ? '\r' : ''}`;
   save(parent);
-  console.log(`started ${childSlug} in ${parent.file}`);
+  console.log(`started ${taskName(child)} in ${parent.file}`);
 }
 
 // A marked child, or one no longer in the backlog, has been started already. A child with children of its own is not
 // started itself, its children are; once none of them is left, its later siblings still get their turn.
-// A slug already on `path` is a cycle, which would otherwise recurse forever.
-function firstToStart(found, task, path) {
-  for (const { slug, retired, started } of children(task.lines)) {
-    if (retired || started || path.includes(slug)) continue;
-    const child = lookup(found, slug);
+// A task already on `path` is a cycle, which would otherwise recurse forever.
+function firstToStart(task, path) {
+  for (const line of children(task)) {
+    if (line.retired || line.started || path.some((ancestor) => same(ancestor, line))) continue;
+    const child = lookup(line);
     if (!child || !inBacklog(child.file)) continue;
-    const picked = children(child.lines).length === 0 ? [...path, slug] : firstToStart(found, child, [...path, slug]);
+    const picked = children(child).length === 0 ? [...path, child] : firstToStart(child, [...path, child]);
     if (picked) return picked;
   }
   return undefined;
 }
 
-function next(parentSlug) {
-  const found = ledgersBySlug();
-  const picked = firstToStart(found, resolve(found, parentSlug), [parentSlug]);
-  if (picked) console.log(picked.join(' '));
+function next(parentArg) {
+  const parent = resolve(parseTask(parentArg));
+  const picked = firstToStart(parent, [parent]);
+  if (picked) console.log(picked.map(taskName).join(' '));
 }
 
 const [command, ...args] = process.argv.slice(2);
-const slugs = args.filter((arg) => arg !== '--json');
-const json = slugs.length < args.length;
-
-// The Children line format and cc-worktree-retire read a slug as one word of these characters.
-function supported(...given) {
-  for (const slug of given) if (!SLUG.test(slug)) fail(`unsupported slug ${JSON.stringify(slug)}: a slug must match ^[A-Za-z0-9._-]+$`);
-  return given;
-}
+const names = args.filter((arg) => arg !== '--json');
+const json = names.length < args.length;
 
 try {
   const changes = { add, remove, start };
-  if (Object.hasOwn(changes, command) && args.length === 2 && !json) changes[command](...supported(...args));
-  else if (command === 'show' && slugs.length === 1) show(...supported(slugs[0]), json);
-  else if (command === 'next' && args.length === 1 && !json) next(...supported(args[0]));
+  if (Object.hasOwn(changes, command) && args.length === 2 && !json) changes[command](...args);
+  else if (command === 'show' && names.length === 1) show(names[0], json);
+  else if (command === 'next' && args.length === 1 && !json) next(args[0]);
   else fail(usage);
 } catch (error) {
   fail(`cc-ledger-parent ${command}: ${error.message}`);

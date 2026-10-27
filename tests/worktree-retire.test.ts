@@ -474,7 +474,7 @@ test('retire only warns when rm fails to clean up after a failed parent write', 
 });
 
 test('retire finishes when the parent ledger cannot be written, and names the line to change by hand', (t) => {
-  const { home, worktree, parent } = family(t, '- wt-title\n');
+  const { home, worktree, parent } = family(t, '- wt-title (started 2026-10-02)\n');
   const before = readFileSync(parent.ledger, 'utf8');
   const folder = path.dirname(parent.ledger);
 
@@ -491,10 +491,10 @@ test('retire finishes when the parent ledger cannot be written, and names the li
   assert.equal(existsSync(worktree), false);
   assert.equal(hasBranch(home, mainOf(home), 'test/wt-a'), false);
   assert.equal(registered(home)[0]?.status, 'archived');
-  const lines = result.stderr.split('\n').filter(Boolean);
-  assert.equal(lines.length, 1, result.stderr);
-  assert.ok(lines[0]?.includes(parent.ledger), result.stderr);
-  assert.ok(lines[0]?.includes(`- wt-title (retired ${today()})`), result.stderr);
+  assert.equal(
+    result.stderr,
+    `warning: could not update ${realpathSync(parent.ledger)}; under ## Children, end the line '- wt-title' with '(retired ${today()})' by hand, in place of its started mark if it has one\n`,
+  );
   assert.doesNotMatch(result.stdout, /^Parent /m);
 });
 
@@ -777,4 +777,81 @@ test('retire keeps the worktree when the evidence copy does not match, and a rer
   assert.equal(rerun.status, 0, rerun.stderr);
   assert.ok(rerun.stdout.includes(`already archived evidence ${path.join(archiveOf(home), `${today()}-wt-a`)}/\n`), rerun.stdout);
   assert.equal(existsSync(worktree), false);
+});
+
+const crossRepoWarning = (other: string, line: string) =>
+  `warning: parent epic is in the repository at ${other}, so its Children section is not updated. There, under ## Children of epic, end the line '${line}' with '(retired ${today()})' by hand, in place of its started mark if it has one.\n`;
+
+// The parent epic in a worktree of a second repository, with `children` under ## Children.
+function foreignParent(home: string, children: string) {
+  const main = path.join(home, 'elsewhere/app');
+  mkdirSync(main, { recursive: true });
+  git(home, main, 'init', '--quiet', '-b', 'main');
+  git(home, main, 'commit', '--quiet', '--allow-empty', '-m', 'first');
+  const worktree = path.join(home, 'elsewhere/wt-epic');
+  git(home, main, 'worktree', 'add', '--quiet', '-b', 'test/epic', worktree);
+  const ledger = path.join(worktree, '.claude/ledger.md');
+  mkdirSync(path.dirname(ledger));
+  writeFileSync(ledger, `# Task ledger — epic\n\n## Location\n- worktree: ${worktree}\n- branch: test/epic\n\n## Children\n${children}`);
+  return { main: realpathSync(main), ledger };
+}
+
+test('retire of a child whose parent is in another repository changes neither that parent nor a local ledger of that slug, and names the line to change there', (t) => {
+  const { home, worktree, ledger } = worktreeWithLedger(t);
+  const here = realpathSync(mainOf(home));
+  const foreign = foreignParent(home, `- wt-title @ ${here} (started 2026-10-02)\n`);
+  writeFileSync(ledger, `${readFileSync(ledger, 'utf8')}- parent: epic @ ${foreign.main}\n`);
+  const local = taskIn(home, 'wt-epic', 'epic', '\n## Children\n- wt-title\n');
+  const before = [readFileSync(foreign.ledger), readFileSync(local.ledger)];
+
+  const result = run(home, retire, worktree);
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(existsSync(worktree), false);
+  assert.deepEqual([readFileSync(foreign.ledger), readFileSync(local.ledger)], before);
+  assert.equal(result.stderr, crossRepoWarning(foreign.main, `- wt-title @ ${here}`));
+  assert.deepEqual(parentLines(result.stdout), []);
+});
+
+test('retire of a backlog child whose parent is in another repository leaves that parent as it is, and names the line to change there', (t) => {
+  const { home } = worktreeWithLedger(t);
+  const here = realpathSync(mainOf(home));
+  const foreign = foreignParent(home, `- idea @ ${here}\n`);
+  const child = backlogTask(home, 'idea', `- parent: epic @ ${foreign.main}\n`);
+  const before = readFileSync(foreign.ledger);
+
+  const result = run(home, retire, child);
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(existsSync(child), false);
+  assert.deepEqual(readFileSync(foreign.ledger), before);
+  assert.equal(result.stderr, crossRepoWarning(foreign.main, `- idea @ ${here}`));
+});
+
+test('retire refuses a parent with children in another repository not yet retired, names them, and --force retires it', (t) => {
+  const { home } = worktreeWithLedger(t);
+  const children = '- parser @ /x/lib\n- old @ /x/lib (retired 2026-10-01)\n- begun @ /x/lib (started 2026-10-02)\n';
+  const parent = taskIn(home, 'wt-epic', 'epic', `\n## Children\n${children}`);
+
+  const refused = run(home, retire, parent.worktree);
+
+  assert.equal(refused.status, 1);
+  assert.match(refused.stderr, /^epic has active children: parser @ \/x\/lib, begun @ \/x\/lib\. [^\n]*--force[^\n]*\n$/);
+  assert.ok(existsSync(parent.worktree));
+
+  const forced = run(home, retire, parent.worktree, '--force');
+
+  assert.equal(forced.status, 0, forced.stderr);
+  assert.equal(existsSync(parent.worktree), false);
+});
+
+test('retire of a child marks its own line only, not a child of the same slug in another repository', (t) => {
+  const { home, worktree, parent } = family(t, '- wt-title @ /x/lib\n- wt-title\n');
+  const before = readFileSync(parent.ledger, 'utf8');
+
+  const result = run(home, retire, worktree);
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(readFileSync(parent.ledger, 'utf8'), before.replace('- wt-title\n', `- wt-title (retired ${today()})\n`));
+  assert.deepEqual(parentLines(result.stdout), []);
 });

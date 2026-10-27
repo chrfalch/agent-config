@@ -7,8 +7,8 @@ import { freshHome, REPO, run } from './helpers.js';
 const PARENT = path.join(REPO, 'bin/cc-ledger-parent');
 const LEDGERS = [path.join(REPO, 'bin/cc-ledgers')] as const;
 
-type Entry = { slug: string; path: string; status: string; parent?: string };
-type Shown = { parent: string; goal: string; children: { slug: string; status: string; next: string }[] };
+type Entry = { slug: string; path: string; status: string; parent?: string; parentMain?: string };
+type Shown = { parent: string; goal: string; children: { slug: string; status: string; next: string; main?: string }[] };
 
 function git(home: string, directory: string, ...args: string[]): void {
   const result = run(home, ['git', '-C', directory, '-c', 'user.name=test', '-c', 'user.email=test@example.com'], ...args);
@@ -550,6 +550,8 @@ for (const args of [
   ['add', 'epic one', 'child-a'],
   ['remove', 'epic', 'child one'],
   ['remove', 'epic one', 'child-a'],
+  ['remove', 'nope', 'child one'],
+  ['start', 'nope', 'child one'],
   ['show', 'epic one'],
 ]) {
   test(`${args[0]} refuses the unsupported slug in ${JSON.stringify(args.slice(1))} with one line and changes nothing`, (t) => {
@@ -845,4 +847,357 @@ test('next prints nothing when no child is left to start', (t) => {
 
   assert.equal(result.stdout, '');
   assert.equal(result.stderr, '');
+});
+
+// A second repository in the same HOME, at `folder` under it, with a worktree task for each slug.
+function otherRepository(home: string, folder: string, ...slugs: string[]) {
+  const main = path.join(home, folder);
+  mkdirSync(main, { recursive: true });
+  git(home, main, 'init', '--quiet', '-b', 'main');
+  git(home, main, 'commit', '--quiet', '--allow-empty', '-m', 'first');
+  const ledgers: Record<string, string> = {};
+  for (const slug of slugs) ledgers[slug] = addTask(home, main, slug);
+  return { main, ledgers };
+}
+
+const withParentBullet = (text: string, bullet: string) => text.replace('- base: main @ abc1234\n', `- base: main @ abc1234\n${bullet}\n`);
+const withChildren = (text: string, lines: string) => text.replace('- base: main @ abc1234\n\n', `- base: main @ abc1234\n\n## Children\n${lines}\n`);
+
+test('add of a child in another repository writes both links with the other main checkout, and a rerun changes nothing', (t) => {
+  const { home, main, ledgers } = repository(t, 'epic');
+  const lib = otherRepository(home, 'repos/lib', 'parser');
+  const parser = lib.ledgers.parser ?? '';
+  const epic = ledgers.epic ?? '';
+  const before = [read(parser), read(epic)] as const;
+
+  const result = ok(home, main, 'add', 'epic', `parser@${lib.main}`);
+
+  assert.equal(result.stderr, '');
+  assert.equal(read(parser), withParentBullet(before[0], `- parent: epic @ ${main}`));
+  assert.equal(read(epic), withChildren(before[1], `- parser @ ${lib.main}\n`));
+  const after = [read(parser), read(epic)];
+  assert.equal(ok(home, main, 'add', 'epic', `parser@${lib.main}`).stderr, '');
+  assert.deepEqual([read(parser), read(epic)], after);
+});
+
+test('add of a child in another repository registers the parent slug and its main checkout', (t) => {
+  const { home, main } = repository(t, 'epic');
+  const lib = otherRepository(home, 'repos/lib', 'parser');
+
+  ok(home, main, 'add', 'epic', `parser@${lib.main}`);
+
+  const { parent, parentMain } = registered(home, 'parser') ?? {};
+  assert.deepEqual({ parent, parentMain }, { parent: 'epic', parentMain: main });
+  assert.equal(Object.hasOwn(registered(home, 'epic') ?? {}, 'parentMain'), false);
+});
+
+test('add run in the child repository, with the parent named by slug@path, writes the same links', (t) => {
+  const { home, main, ledgers } = repository(t, 'epic');
+  const lib = otherRepository(home, 'repos/lib', 'parser');
+  const parser = lib.ledgers.parser ?? '';
+  const epic = ledgers.epic ?? '';
+  const before = [read(parser), read(epic)] as const;
+
+  ok(home, lib.main, 'add', `epic@${main}`, 'parser');
+
+  assert.equal(read(parser), withParentBullet(before[0], `- parent: epic @ ${main}`));
+  assert.equal(read(epic), withChildren(before[1], `- parser @ ${lib.main}\n`));
+});
+
+test('a slug@path argument may name a linked worktree of the repository, relative to the current folder', (t) => {
+  const { home, main, ledgers } = repository(t, 'epic');
+  const lib = otherRepository(home, 'repos/lib', 'parser');
+
+  ok(home, main, 'add', 'epic', 'parser@../lib/.claude/worktrees/parser');
+
+  assert.match(read(ledgers.epic ?? ''), new RegExp(`^## Children\\n- parser @ ${lib.main}$`, 'm'));
+  assert.match(read(lib.ledgers.parser ?? ''), new RegExp(`^- parent: epic @ ${main}$`, 'm'));
+});
+
+test('a slug@path argument that names the current repository writes the links of one repository', (t) => {
+  const { home, main, ledgers } = repository(t, 'epic', 'child-a');
+  const before = [read(ledgers['child-a'] ?? ''), read(ledgers.epic ?? '')] as const;
+
+  ok(home, main, 'add', `epic@${main}`, 'child-a@.');
+
+  assert.equal(read(ledgers['child-a'] ?? ''), withParentBullet(before[0], '- parent: epic'));
+  assert.equal(read(ledgers.epic ?? ''), withChildren(before[1], '- child-a\n'));
+  assert.equal(Object.hasOwn(registered(home, 'child-a') ?? {}, 'parentMain'), false);
+});
+
+test('tasks with one slug in two repositories are two children, and a bare slug finds only this repository\'s task', (t) => {
+  const { home, main, ledgers } = repository(t, 'epic', 'shared');
+  const lib = otherRepository(home, 'repos/lib', 'shared', 'only-lib');
+  const epicBefore = read(ledgers.epic ?? '');
+
+  ok(home, main, 'add', 'epic', 'shared');
+  ok(home, main, 'add', 'epic', `shared@${lib.main}`);
+
+  assert.equal(read(ledgers.epic ?? ''), withChildren(epicBefore, `- shared\n- shared @ ${lib.main}\n`));
+  assert.match(read(ledgers.shared ?? ''), /^- parent: epic$/m);
+  assert.match(read(lib.ledgers.shared ?? ''), new RegExp(`^- parent: epic @ ${main}$`, 'm'));
+  const unknown = parent(home, main, 'add', 'epic', 'only-lib');
+  assert.equal(unknown.status, 1);
+  assert.equal(unknown.stderr, 'no task ledger with the slug only-lib in this repository\n');
+
+  ok(home, main, 'remove', 'epic', `shared@${lib.main}`);
+
+  assert.equal(read(ledgers.epic ?? ''), withChildren(epicBefore, '- shared\n'));
+  assert.match(read(ledgers.shared ?? ''), /^- parent: epic$/m);
+  assert.doesNotMatch(read(lib.ledgers.shared ?? ''), /^- parent:/m);
+});
+
+test('remove of a child in another repository restores both ledgers and clears the parent in the registry', (t) => {
+  const { home, main, ledgers } = repository(t, 'epic');
+  const lib = otherRepository(home, 'repos/lib', 'parser');
+  const files = [lib.ledgers.parser ?? '', ledgers.epic ?? ''];
+  const before = files.map(read);
+  ok(home, main, 'add', 'epic', `parser@${lib.main}`);
+
+  ok(home, lib.main, 'remove', `epic@${main}`, 'parser');
+
+  assert.deepEqual(files.map(read), before);
+  const entry = registered(home, 'parser') ?? {};
+  assert.equal(Object.hasOwn(entry, 'parent') || Object.hasOwn(entry, 'parentMain'), false);
+});
+
+test('show names a child in another repository as slug@main, looks up its status there, and JSON adds main to it only', (t) => {
+  const { home, main, ledgers } = repository(t, 'epic', 'busy');
+  const lib = otherRepository(home, 'repos/lib', 'parser');
+  addBacklogTask(home, lib.main, 'idea');
+  ok(home, main, 'add', 'epic', 'busy');
+  ok(home, main, 'add', 'epic', `parser@${lib.main}`);
+  ok(home, main, 'add', 'epic', `idea@${lib.main}`);
+  utimesSync(ledgers.busy ?? '', new Date(2026, 9, 9), new Date(2026, 9, 9));
+  utimesSync(lib.ledgers.parser ?? '', new Date(2026, 9, 8), new Date(2026, 9, 8));
+
+  assert.equal(
+    ok(home, main, 'show', 'epic').stdout,
+    [
+      'epic\tGoal of epic.',
+      'busy\tactive\tNext step of busy.',
+      `parser@${lib.main}\tactive\tNext step of parser.`,
+      `idea@${lib.main}\tbacklog\tNext step of idea.`,
+      '',
+    ].join('\n'),
+  );
+  assert.deepEqual((JSON.parse(ok(home, main, 'show', 'epic', '--json').stdout) as Shown).children, [
+    { slug: 'busy', status: 'active', next: 'Next step of busy.' },
+    { slug: 'parser', status: 'active', next: 'Next step of parser.', main: lib.main },
+    { slug: 'idea', status: 'backlog', next: 'Next step of idea.', main: lib.main },
+  ]);
+});
+
+test('start marks a child in another repository and keeps its main checkout on the line', (t) => {
+  const { home, main, ledgers } = repository(t, 'epic');
+  const lib = otherRepository(home, 'repos/lib', 'parser');
+  ok(home, main, 'add', 'epic', `parser@${lib.main}`);
+  const epic = ledgers.epic ?? '';
+  const before = read(epic);
+
+  const result = ok(home, main, 'start', 'epic', `parser@${lib.main}`);
+
+  assert.equal(read(epic), before.replace(`- parser @ ${lib.main}\n`, `- parser @ ${lib.main} (started ${today()})\n`));
+  assert.equal(result.stdout, `started parser@${lib.main} in ${epic}\n`);
+});
+
+test('start of a bare slug does not match a child of that slug in another repository', (t) => {
+  const { home, main, ledgers } = repository(t, 'epic');
+  const lib = otherRepository(home, 'repos/lib', 'parser');
+  ok(home, main, 'add', 'epic', `parser@${lib.main}`);
+  const before = read(ledgers.epic ?? '');
+
+  const result = parent(home, main, 'start', 'epic', 'parser');
+
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /^[^\n]*parser[^\n]*epic[^\n]*\n$/);
+  assert.equal(read(ledgers.epic ?? ''), before);
+});
+
+test('next prints a picked child in another repository, and its own children there, as slug@main', (t) => {
+  const { home, main, ledgers } = repository(t, 'epic');
+  const lib = otherRepository(home, 'repos/lib');
+  const phase = addBacklogTask(home, lib.main, 'phase');
+  addBacklogTask(home, lib.main, 'leaf');
+  setChildren(ledgers.epic ?? '', `- phase @ ${lib.main}\n`);
+  setChildren(phase, '- leaf\n');
+
+  assert.equal(ok(home, main, 'next', 'epic').stdout, `epic phase@${lib.main} leaf@${lib.main}\n`);
+});
+
+test('next looks up the children of a child in another repository in that repository, not in this one', (t) => {
+  const { home, main, ledgers } = repository(t, 'epic');
+  const lib = otherRepository(home, 'repos/lib', 'leaf');
+  const phase = addBacklogTask(home, lib.main, 'phase');
+  addBacklogTask(home, main, 'leaf');
+  addBacklogTask(home, main, 'later');
+  setChildren(ledgers.epic ?? '', `- phase @ ${lib.main}\n- later\n`);
+  setChildren(phase, '- leaf\n');
+
+  assert.equal(ok(home, main, 'next', 'epic').stdout, 'epic later\n');
+});
+
+test('add refuses a cycle across repositories with one line and changes nothing', (t) => {
+  const { home, main, ledgers } = repository(t, 'epic');
+  const lib = otherRepository(home, 'repos/lib', 'parser');
+  ok(home, main, 'add', 'epic', `parser@${lib.main}`);
+  const files = [ledgers.epic ?? '', lib.ledgers.parser ?? ''];
+  const before = files.map(read);
+
+  for (const [cwd, args] of [
+    [main, [`parser@${lib.main}`, 'epic']],
+    [lib.main, ['parser', `epic@${main}`]],
+  ] as const) {
+    const result = parent(home, cwd, 'add', ...args);
+
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /^[^\n]*epic[^\n]*parser[^\n]*cycle[^\n]*\n$/);
+    assert.deepEqual(files.map(read), before);
+  }
+});
+
+test('add refuses a retired child in another repository, and takes a task of the same slug in this repository', (t) => {
+  const { home, main, ledgers } = repository(t, 'epic', 'parser');
+  const lib = otherRepository(home, 'repos/lib', 'parser');
+  setChildren(ledgers.epic ?? '', `- parser @ ${lib.main} (retired 2026-10-01)\n`);
+  const before = read(lib.ledgers.parser ?? '');
+
+  const refused = parent(home, main, 'add', 'epic', `parser@${lib.main}`);
+
+  assert.equal(refused.status, 1);
+  assert.match(refused.stderr, /retired/);
+  assert.equal(read(lib.ledgers.parser ?? ''), before);
+  ok(home, main, 'add', 'epic', 'parser');
+  assert.match(read(ledgers.epic ?? ''), new RegExp(`^- parser @ ${lib.main} \\(retired 2026-10-01\\)\\n- parser$`, 'm'));
+});
+
+test('add refuses a child whose parent is in another repository, and names the remove command that works from here', (t) => {
+  const { home, main } = repository(t, 'epic', 'other');
+  const lib = otherRepository(home, 'repos/lib', 'parser');
+  ok(home, main, 'add', 'epic', `parser@${lib.main}`);
+
+  const result = parent(home, lib.main, 'add', `other@${main}`, 'parser');
+
+  assert.equal(result.status, 1);
+  assert.ok(result.stderr.includes(`cc-ledger-parent remove epic@${main} parser`), result.stderr);
+});
+
+test('add refuses a main checkout path with whitespace in one line, and changes nothing', (t) => {
+  const { home, main, ledgers } = repository(t, 'epic');
+  const spaced = otherRepository(home, 'repos/my lib', 'parser');
+  const files = [ledgers.epic ?? '', spaced.ledgers.parser ?? ''];
+  const before = files.map(read);
+
+  for (const [cwd, args] of [
+    [main, ['epic', `parser@${spaced.main}`]],
+    [spaced.main, [`epic@${main}`, 'parser']],
+  ] as const) {
+    const result = parent(home, cwd, 'add', ...args);
+
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /^[^\n]*whitespace[^\n]*\n$/);
+    assert.ok(result.stderr.includes(spaced.main), result.stderr);
+    assert.deepEqual(files.map(read), before);
+  }
+});
+
+for (const [name, folder] of [
+  ['a folder outside any git repository', 'plain'],
+  ['a folder that does not exist', 'nowhere'],
+] as const) {
+  test(`a slug@path argument that names ${name} fails with one line that names the folder`, (t) => {
+    const { home, main, ledgers } = repository(t, 'epic');
+    mkdirSync(path.join(home, 'plain'));
+    const target = path.join(home, folder);
+    const before = read(ledgers.epic ?? '');
+
+    const result = parent(home, main, 'add', 'epic', `parser@${target}`);
+
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /^[^\n]+\n$/);
+    assert.ok(result.stderr.includes(target), result.stderr);
+    assert.equal(read(ledgers.epic ?? ''), before);
+  });
+}
+
+test('a slug@ argument with no path is refused with one line', (t) => {
+  const { home, main } = repository(t, 'epic');
+
+  const result = parent(home, main, 'add', 'epic', 'parser@');
+
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /^[^\n]+\n$/);
+});
+
+// A bare repository's main checkout, the folder that holds it, is not a git folder, so its worktrees are listed from a folder in it.
+function bareRepository(home: string, ...slugs: string[]) {
+  const source = path.join(home, 'repos/source');
+  mkdirSync(source, { recursive: true });
+  git(home, source, 'init', '--quiet', '-b', 'main');
+  git(home, source, 'commit', '--quiet', '--allow-empty', '-m', 'first');
+  const bare = path.join(home, 'bare/app.git');
+  git(home, home, 'clone', '--quiet', '--bare', source, bare);
+  const worktrees: Record<string, string> = {};
+  const ledgers: Record<string, string> = {};
+  for (const slug of slugs) {
+    const worktree = path.join(home, 'bare/worktrees', slug);
+    git(home, bare, 'worktree', 'add', '--quiet', '-b', `me/${slug}`, worktree);
+    const ledger = path.join(worktree, '.claude/ledger.md');
+    mkdirSync(path.dirname(ledger));
+    writeFileSync(ledger, ledgerText(slug, worktree));
+    worktrees[slug] = worktree;
+    ledgers[slug] = ledger;
+  }
+  return { worktrees, ledgers };
+}
+
+test('a bare slug in a worktree of a bare repository finds the tasks of its worktrees', (t) => {
+  const home = realpathSync(freshHome(t));
+  const { worktrees, ledgers } = bareRepository(home, 'epic', 'parser');
+
+  ok(home, worktrees.epic ?? '', 'add', 'epic', 'parser');
+
+  assert.match(read(ledgers.parser ?? ''), /^- parent: epic$/m);
+  assert.match(read(ledgers.epic ?? ''), /^## Children\n- parser$/m);
+});
+
+test('a slug@path argument finds a task in a worktree of a bare repository', (t) => {
+  const { home, main, ledgers } = repository(t, 'epic');
+  const bare = bareRepository(home, 'parser');
+
+  ok(home, main, 'add', 'epic', `parser@${bare.worktrees.parser}`);
+
+  assert.match(read(bare.ledgers.parser ?? ''), new RegExp(`^- parent: epic @ ${main}$`, 'm'));
+  assert.match(read(ledgers.epic ?? ''), /^## Children\n- parser @ \S+$/m);
+});
+
+test('with every task named by slug@path, the current folder need not be in a git repository; a bare slug there fails', (t) => {
+  const { home, main, ledgers } = repository(t, 'epic');
+  const lib = otherRepository(home, 'repos/lib', 'parser');
+  const outside = path.join(home, 'plain');
+  mkdirSync(outside);
+
+  ok(home, outside, 'add', `epic@${main}`, `parser@${lib.main}`);
+
+  assert.match(read(ledgers.epic ?? ''), new RegExp(`^## Children\\n- parser @ ${lib.main}$`, 'm'));
+  assert.equal(ok(home, outside, 'show', `epic@${main}`).stdout.split('\n')[1], `parser@${lib.main}\tactive\tNext step of parser.`);
+  const bare = parent(home, outside, 'show', 'epic');
+  assert.equal(bare.status, 1);
+  assert.match(bare.stderr, /^not inside a git repository: [^\n]+\n$/);
+});
+
+test('two repositories with the same folder name keep their backlog tasks apart', (t) => {
+  const { home, main, ledgers } = repository(t, 'epic');
+  const fork = otherRepository(home, 'forks/app');
+  const idea = addBacklogTask(home, fork.main, 'idea');
+
+  const bare = parent(home, main, 'add', 'epic', 'idea');
+  assert.equal(bare.status, 1);
+  assert.equal(bare.stderr, 'no task ledger with the slug idea in this repository\n');
+
+  ok(home, main, 'add', 'epic', `idea@${fork.main}`);
+
+  assert.match(read(ledgers.epic ?? ''), new RegExp(`^## Children\\n- idea @ ${fork.main}$`, 'm'));
+  assert.match(read(idea), new RegExp(`^- parent: epic @ ${main}$`, 'm'));
+  assert.equal(ok(home, main, 'next', 'epic').stdout, `epic idea@${fork.main}\n`);
 });

@@ -1,5 +1,5 @@
 ---
-description: Show a parent task and each child's status and next step. Without a slug, it shows this task when it has children, or this task's parent. `<slug> add <child>` and `<slug> remove <child>` change a parent's children.
+description: Show a parent task and each child's status and next step. Without a slug, it shows this task when it has children, or this task's parent. `<slug> add <child>` and `<slug> remove <child>` change a parent's children. Write `<slug>@<path>` for a task in the repository that holds `<path>`.
 argument-hint: "[<slug> [add <child> | remove <child>]]"
 ---
 

@@ -3,8 +3,11 @@ import type { EngineInterface, ProcessRunResult } from 'claude-code'
 import { message, run, sessionFolder } from './lookup'
 import { basename } from './worktrees'
 
-/** One entry of ~/.claude/ledgers.json, as `cc-ledgers list --json` prints it. `parent` is the slug of its parent task. `main` is the main checkout of a backlog task. */
-export type Entry = { repo: string; slug: string; status: string; updated: string; path: string; archivePath?: string; parent?: string; main?: string }
+/**
+ * One entry of ~/.claude/ledgers.json, as `cc-ledgers list --json` prints it. `parent` is the slug of its parent task, and
+ * `parentMain` the main checkout of that task when it is in another repository. `main` is the main checkout of a backlog task.
+ */
+export type Entry = { repo: string; slug: string; status: string; updated: string; path: string; archivePath?: string; parent?: string; parentMain?: string; main?: string }
 
 const optionalString = (value: unknown): boolean => value === undefined || typeof value === 'string'
 
@@ -12,7 +15,7 @@ function isEntry(value: unknown): value is Entry {
   if (typeof value !== 'object' || value === null) return false
   const fields: Record<string, unknown> = { ...value }
   const strings = ['repo', 'slug', 'status', 'updated', 'path'].every(key => typeof fields[key] === 'string')
-  return strings && ['archivePath', 'parent', 'main'].every(key => optionalString(fields[key]))
+  return strings && ['archivePath', 'parent', 'parentMain', 'main'].every(key => optionalString(fields[key]))
 }
 
 export function parseEntries(stdout: string): Entry[] | null {
@@ -67,15 +70,17 @@ export function otherRepositoryTask(tasks: Entry[], main: string | null): (Entry
 
 /**
  * Gives the backlog task `slug` its branch and worktree, and moves its ledger there. Runs in `cwd`, because cc-task-new
- * promotes only a task of the repository it runs in. Returns the ledger's new path, or the script's reason for refusing.
- * `isMissing` means the script found no backlog ledger named `slug`.
+ * promotes only a task of the repository it runs in, or of `repo` when given. Returns the ledger's new path, or the
+ * script's reason for refusing. `isMissing` means the script found no backlog ledger named `slug`.
  */
 export async function promoteBacklogTask(
   $: EngineInterface,
   slug: string,
   cwd: string,
+  repo?: string,
 ): Promise<{ ledger: string } | { error: string; isMissing: boolean }> {
-  const { stdout, stderr, failure, exitCode } = await run($, [scriptPath($, 'cc-task-new'), '--promote', slug], cwd)
+  const argv = [scriptPath($, 'cc-task-new'), ...(repo === undefined ? [] : ['--repo', repo]), '--promote', slug]
+  const { stdout, stderr, failure, exitCode } = await run($, argv, cwd)
   if (failure !== undefined) return { error: stderr.trim().replace(/\s*\n\s*/g, ' ') || `cc-task-new ${failure}`, isMissing: exitCode === 2 }
   const ledger = stdout.match(/^ledger\s+(\S.*)$/m)?.[1]?.trim()
   return ledger ? { ledger } : { error: `cc-task-new printed no ledger path: ${stdout.trim()}`, isMissing: false }

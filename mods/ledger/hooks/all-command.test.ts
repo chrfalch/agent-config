@@ -7,7 +7,7 @@ const exit = (exitCode: number, stdout: string, stderr = ''): Reply => ({
   value: { exitCode, stdout, stderr, isStdoutTruncated: false, isStderrTruncated: false },
 })
 
-type Entry = { repo: string; slug: string; path: string; branch: string; status: string; created: string; updated: string; archivePath?: string; parent?: string }
+type Entry = { repo: string; slug: string; path: string; branch: string; status: string; created: string; updated: string; archivePath?: string; parent?: string; parentMain?: string }
 
 const entry = (slug: string, updated: string, extra: Partial<Entry> = {}): Entry => ({
   repo: 'app',
@@ -206,6 +206,24 @@ test('/ledger:all shows a child under its parent in the same repo, and any other
       `| web | web-child (parent: epic) | active | ${local(elsewhere.updated)} | Ship it. |`,
     ].join('\n'),
   )
+})
+
+test('/ledger:all never nests a child whose parent is in another repository under a task of that slug here', async ($, on) => {
+  const child = entry('child', '2026-10-05T09:30:00.000Z', { parent: 'epic', parentMain: '/work/web' })
+  const epic = entry('epic', '2026-10-03T09:30:00.000Z')
+  const all = [child, epic]
+  world(
+    on,
+    { 'bin/cc-ledgers list --json': exit(0, JSON.stringify(all)) },
+    Object.fromEntries(all.map(({ path }) => [path, ledgerText('Ship it.')])),
+  )
+
+  const { text } = await $.command.run({ command: 'ledger:all' })
+
+  expect(text.split('\n').slice(4)).toEqual([
+    `| app | child (parent: epic @ /work/web) | active | ${local(child.updated)} | Ship it. |`,
+    `| app | epic | active | ${local(epic.updated)} | Ship it. |`,
+  ])
 })
 
 test('/ledger:all indents a grandchild one step further than its parent', async ($, on) => {

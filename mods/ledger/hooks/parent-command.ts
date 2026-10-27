@@ -1,6 +1,6 @@
 import type { EngineInterface } from 'claude-code'
 
-import { folderSlug, summarize, type ChildStatus, type Family, type LedgerSummary } from './ledger'
+import { folderSlug, summarize, taskArgument, taskName, type ChildStatus, type Family, type LedgerSummary } from './ledger'
 import { findLedgers, message, run, sessionFolder, sessionLedger, type SessionFolder } from './lookup'
 
 const USAGE =
@@ -11,7 +11,7 @@ type Shown = { parent: string; goal: string; children: ChildStatus[] }
 function isChildStatus(value: unknown): value is ChildStatus {
   if (typeof value !== 'object' || value === null) return false
   const fields: Record<string, unknown> = { ...value }
-  return ['slug', 'status', 'next'].every(key => typeof fields[key] === 'string')
+  return ['slug', 'status', 'next'].every(key => typeof fields[key] === 'string') && ['undefined', 'string'].includes(typeof fields.main)
 }
 
 function parseShown(stdout: string): Shown | null {
@@ -73,7 +73,7 @@ function formatShown({ parent, goal, children }: Shown): string {
     `**Parent task ${parent}** · ${count}, ${active} active`,
     ...(goal ? [goal] : []),
     '',
-    ...children.map(({ slug, status, next }) => `- **${slug}** · ${status}${next ? ` — ${next}` : ''}`),
+    ...children.map(child => `- **${taskName(child)}** · ${child.status}${child.next ? ` — ${child.next}` : ''}`),
   ].join('\n')
 }
 
@@ -112,7 +112,7 @@ export async function parentCommand($: EngineInterface, args: string): Promise<s
   if (parent === undefined) {
     const own = await ownFamily($, folder)
     if ('text' in own) return own.text
-    return own.parent === undefined ? USAGE : show($, own.parent, cwd)
+    return own.parent === undefined ? USAGE : show($, taskArgument(own.parent), cwd)
   }
   if (words.length === 1) return show($, parent, cwd)
   if (words.length === 3 && child !== undefined && (verb === 'add' || verb === 'remove')) return change($, verb, parent, child, cwd)

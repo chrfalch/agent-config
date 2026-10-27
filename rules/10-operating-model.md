@@ -131,6 +131,12 @@ transcript is re-billed on every turn; the ledger is read once per fresh session
   `bin/cc-ledger-parent add <parent> <child>` from a folder inside the task's
   repo. The operator can also type `/ledger:parent <parent> add <child>`.
   `/ledger:parent <parent>` shows the parent task and its child tasks.
+- **A child task in another repo.** Name it as `<child>@<path>`, where the
+  path is a folder in that repo. Write its backlog ledger with
+  `bin/cc-task-new --repo <path>`. `/ledger:go <parent>` promotes it in that
+  repo and names its worktree. The session does not move there. For now, tell
+  the operator to open a session in that worktree. Retiring it does not mark
+  the parent ledger: change its line there by hand, as the warning says.
 - **Keep the parent ledger current.** The parent ledger holds the overall goal,
   the split into child tasks, the decisions that cross child tasks, and their
   order. Each child ledger holds its own plan and state. After each child

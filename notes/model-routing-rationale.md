@@ -2,7 +2,9 @@
 
 Kept out of the rule files to save context. Update when the routing table changes.
 
-## Published rates, checked 2026-09-30
+## Published rates, OpenAI re-checked 2026-10-27
+
+Anthropic rates are unchanged since 2026-10-09.
 
 US dollars per million tokens. Anthropic cache write is the five-minute rate.
 
@@ -21,13 +23,15 @@ Anthropic (source: platform.claude.com pricing page):
 | haiku-4.5 | 1 | 5 | 0.10 | 1.25 |
 
 OpenAI API list prices (sources: OpenAI launch posts for GPT-6 Sol/Luna and
-GPT-6.1 Sol; OpenRouter for cached rates and Astra). These models run here
+GPT-6.1 Sol; OpenRouter for cached rates and Astra; the OpenAI model page for
+GPT-6.1 Terra, 2026-10-27). These models run here
 through the Codex plan, so list price is what the usage would cost on the API,
 not what the plan charges.
 
 | model | input | cached input | output | context |
 |---|---|---|---|---|
 | gpt-6-astra | 10 | 1 | 50 | 1.05M |
+| gpt-6.1-terra | 1 | 0.05 | 5 | 1.05M |
 | gpt-6.1-sol | 2 | 0.10 | 10 | 1.1M |
 | gpt-6-sol | 2 | 0.20 | 10 | 1.1M |
 | gpt-6-luna | 0.10 | 0.01 | 0.50 | 1.1M |
@@ -37,10 +41,39 @@ Codex's model list (learn.chatgpt.com/docs/models, 2026-09-30) recommends
 that list. Plan coverage for the GPT-6 family is assumed from the launch posts
 ("available in Codex for Plus, Pro, Business, Enterprise, Edu"), not measured.
 
+On 2026-10-27 the same list recommends `gpt-6-astra`, `gpt-6.1-sol`,
+`gpt-6.1-terra` and `gpt-6-luna`.
+
 **Cache read is the number that matters here**, not the headline rate: the
 eight-week measurement put cache reads at 61.5% of the bill and generation at
 13.6%. Opus 5.5 and Sonnet 5 charge $0.20/M for a cache read. Sonnet 5.5 charges
 $0.10/M (pricing page, checked 2026-10-09; the 2026-09-30 table had $0.20).
+
+## Changes on 2026-10-27
+
+- **gpt-6.1-terra** (26 Oct 2026) added to the table. $1/$5, cached $0.05/M.
+  Cache write is $1.25/M for 30 minutes or $2.50/M for 12 hours. A prompt over
+  272K input tokens pays 2x input and cache, and 1.5x output, for the whole
+  request. 1.05M context, 922K input at most, 128K output. Effort none to max.
+  Needs Codex CLI 0.159.0 or later. Sources:
+  developers.openai.com/api/docs/models/gpt-6.1-terra, learn.chatgpt.com/docs/models.
+- **Vendor figures** at max effort, Terra / 6.1 Sol / Astra: Terminal-Bench 4.0
+  50.3 / 55.9 / 58.2; OSWorld 2.1 74.2 / 78.0 / 80.9; Agents' Last Exam v1
+  60.0 / 58.6 / 59.3. Cost per task on that exam: $1.01 / $2.00 / $7.24 (Opus
+  5.5 $8.82). kingy.ai copied these from OpenAI's charts. The launch post
+  returned 403, so the figures are secondary.
+- **Artificial Analysis:** Intelligence Index Terra 48, 6.1 Sol 52, Astra 53,
+  Opus 5.5 58. Coding Agent Index Terra 48, 6.1 Sol 54, Luna 31.
+- **Injection:** the system card (deploymentsafety.openai.com/gpt-6-1-terra)
+  says Terra is similar to Astra and 6.1 Sol on hierarchy evaluations. The
+  number is in a figure only and is not confirmed. The unauthorized-action rate
+  is 13.75%, against 1.25% for 6.1 Sol.
+- **Scores:** cost 7 (plan-covered, like Sol). Intelligence 6: AA 48 is between
+  Haiku 5.5 (43) and 6.1 Sol (52). Taste not scored.
+- **No lane.** The Codex plan covers OpenAI models, so a lower price saves
+  little. 6.1 Sol is stronger for code. Astra keeps long UI runs because of
+  Terra's unauthorized-action rate.
+- **Anthropic:** no model or price change since 2026-10-09.
 
 ## Changes on 2026-10-09
 

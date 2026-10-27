@@ -12,6 +12,9 @@ design, copy. Rationale and benchmarks: `~/.claude/notes/model-routing-rationale
 <!-- needs: haiku-5.5 -->
 | haiku-5.5   | 8    | 5            | —     | trusted text only; >100k prompt = 5x   |
 <!-- /needs -->
+<!-- needs: gpt-6.1-terra -->
+| gpt-6.1-terra | 7  | 6            | —     | Codex plan; no lane yet                |
+<!-- /needs -->
 <!-- needs: gpt-6.1-sol -->
 | gpt-6.1-sol | 7    | 8            | 6     | Codex plan; injection not measured     |
 <!-- /needs -->
@@ -72,6 +75,10 @@ Rules:
 <!-- /needs -->
 <!-- needs: argent, gpt-6-astra -->
 - Long end-to-end UI runs where budget matters → gpt-6-astra through the Codex CLI.
+<!-- /needs -->
+<!-- needs: argent, gpt-6-astra, gpt-6.1-terra -->
+- gpt-6.1-terra has no lane yet. Its unauthorized-action rate is 13.75% (6.1 Sol
+  1.25%), so long UI runs stay on gpt-6-astra.
 <!-- /needs -->
 - ⚠ Every model here **expands scope and fills gaps** if allowed. Complete specs;
   scope review is mandatory. Never add "verify your work".

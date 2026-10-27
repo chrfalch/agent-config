@@ -62,6 +62,10 @@ test('--agents and --models keep the order of the source lists', () => {
     answersToArgs(deployAnswers({}, undefined, ['opus-5.5', 'gpt-6-luna'])),
     ['--models', 'gpt-6-luna,opus-5.5'],
   );
+  assert.deepEqual(
+    answersToArgs(deployAnswers({}, undefined, ['gpt-6.1-sol', 'gpt-6.1-terra'])),
+    ['--models', 'gpt-6.1-terra,gpt-6.1-sol'],
+  );
 });
 
 test('force and the preview add --force and --dry-run', () => {

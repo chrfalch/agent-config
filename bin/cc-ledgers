@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Keeps ~/.claude/ledgers.json: one entry for every task ledger on this machine, backlog, active or archived.
-// Usage: cc-ledgers upsert <ledger>... [--repo <name>] [--slug <slug>] [--branch <name>] [--parent <slug>] [--replaces <ledger>]  (flags with one ledger only)
+// Usage: cc-ledgers upsert <ledger>... [--repo <name>] [--slug <slug>] [--branch <name>] [--parent <slug>[@<main>]] [--replaces <ledger>]  (flags with one ledger only)
 //        cc-ledgers archive <ledger> <archive-copy>
 //        cc-ledgers list [--json]
 //        cc-ledgers scan [--json] [<folder>...]
@@ -15,7 +15,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const usage = [
-  'usage: cc-ledgers upsert <ledger>... [--repo <name>] [--slug <slug>] [--branch <name>] [--parent <slug>] [--replaces <ledger>]  (flags with one ledger only)',
+  'usage: cc-ledgers upsert <ledger>... [--repo <name>] [--slug <slug>] [--branch <name>] [--parent <slug>[@<main>]] [--replaces <ledger>]  (flags with one ledger only)',
   '       cc-ledgers archive <ledger> <archive-copy>',
   '       cc-ledgers list [--json]',
   '       cc-ledgers scan [--json] [<folder>...]',
@@ -88,13 +88,22 @@ function print(entries, json) {
   }
 }
 
-function entry({ repo, slug, path: ledger, branch, parent, status, main, created, updated, archivePath }) {
+// `- parent: <slug> @ <main>` names a parent in another repository, and so does --parent <slug>@<main>.
+function parentLink(value) {
+  const [, slug, main] = value?.match(/^([^\s@]+) ?@ ?(\/\S*)$/) ?? [];
+  return slug ? { parent: slug, parentMain: main } : { parent: value };
+}
+
+function entry({ repo, slug, path: ledger, branch, parent, parentMain: storedMain, status, main, created, updated, archivePath }) {
+  // A stored entry, as archive rebuilds it, has its parent already split.
+  const { parent: parentSlug, parentMain } = storedMain ? { parent, parentMain: storedMain } : parentLink(parent);
   return {
     repo,
     slug,
     path: ledger,
     branch,
-    ...(parent ? { parent } : {}),
+    ...(parentSlug ? { parent: parentSlug } : {}),
+    ...(parentMain ? { parentMain } : {}),
     status,
     ...(main ? { main } : {}),
     created,

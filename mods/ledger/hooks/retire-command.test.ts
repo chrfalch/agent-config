@@ -517,6 +517,14 @@ test('/ledger:retire <slug> --dry-run of a worktree parent with an active child 
   )
 })
 
+test('/ledger:retire <slug> --dry-run counts a child in another repository not yet retired, and names it with its main checkout', async ($, on) => {
+  world(on, { cwd: REPO, files: { [ledgerOf(FIX_LOGIN)]: withChildren('fast-steps', '- parser @ /lib (started 2026-10-02)\n- old @ /lib (retired 2026-10-01)\n') } })
+  const { text } = await $.command.run({ command: 'ledger:retire', args: 'fast-steps --dry-run' })
+  expect(text.split('\n').at(-1)).toBe(
+    'Retiring it needs --force: it has an active child (parser @ /lib). Run `/ledger:retire fast-steps --force` to retire it anyway.',
+  )
+})
+
 test('/ledger:retire <slug> --dry-run of a parent whose children are all retired needs no --force', async ($, on) => {
   world(on, { cwd: REPO, files: { [ledgerOf(FIX_LOGIN)]: withChildren('fast-steps', '- child-a (retired 2026-10-01)\n') } })
   const { text } = await $.command.run({ command: 'ledger:retire', args: 'fast-steps --dry-run' })

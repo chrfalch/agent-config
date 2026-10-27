@@ -511,7 +511,7 @@ test('an archived row with the slug of an active task opens the archive copy, an
   assert.equal(readFileSync(ledgerOf(fixLogin), 'utf8'), FIX_LOGIN);
 });
 
-type Registered = { repo: string; slug: string; status: string; updated: string; path: string; parent?: string };
+type Registered = { repo: string; slug: string; status: string; updated: string; path: string; parent?: string; parentMain?: string };
 
 function editRegistry(home: string, edit: (entry: Registered) => Registered): void {
   const registry = path.join(home, '.claude/ledgers.json');
@@ -625,6 +625,22 @@ test('a parent is looked up in the repo of its child only, though another repo h
   assert.deepEqual(app, ['fix-login', '↳ child-a', 'epic', '↳ child-b', 'waiting', 'old-task']);
   const appFixLogin = rows.findIndex(row => row.id === ledgerOf(fixLogin));
   assert.equal(rows[appFixLogin + 1]?.slug, 'child-a');
+});
+
+test('a child whose parent is in another repository is never nested under a task of that slug here, and names the parent with its main checkout', async t => {
+  const { home, stubBin, epic } = family(t);
+  editRegistry(home, entry => ({
+    ...entry,
+    ...FAMILY[`${entry.repo}/${entry.slug}`],
+    ...(entry.slug === 'child-a' && { parent: 'epic', parentMain: '/work/web' }),
+  }));
+  const server = await startForeground(t, home, stubBin);
+  const rows = (await list(server, '?repo=app')).ledgers;
+  const childA = rows.find(row => row.slug === 'child-a');
+  assert.equal(childA?.parent, 'epic @ /work/web');
+  assert.equal(childA?.parentId, undefined);
+  assert.equal(childA?.nested, false);
+  assert.equal(rows.find(row => row.slug === 'child-b')?.parentId, epic);
 });
 
 test('a parent resolves to the task that is not archived before an archived one of that slug, else to the archived one', async t => {

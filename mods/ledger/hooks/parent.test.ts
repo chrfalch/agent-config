@@ -92,7 +92,7 @@ function world(
   }
 }
 
-const shown = (children: { slug: string; status: string; next: string }[]): Reply =>
+const shown = (children: { slug: string; status: string; next: string; main?: string }[]): Reply =>
   exit(0, JSON.stringify({ parent: 'epic', goal: 'Goal of epic.', children }, null, 2))
 
 const FAMILY = [
@@ -644,4 +644,96 @@ test('/ledger:go <parent> still switches when the children cannot be listed, wit
   await $.command.run({ command: 'ledger:go', args: 'epic' })
 
   expect(markdownArgs()).toBe('task: epic\nledger: none')
+})
+
+test('summarize reads a parent and children in another repository, each with its main checkout', () => {
+  const child = summarize(ledgerText('child-a', { parent: 'epic @ /app' }), 'folder', 0)
+  const parent = summarize(
+    ledgerText('epic', { children: ['- child-a', '- child-a @ /lib', '- old @ /lib (retired 2026-10-01)', '- begun @ /lib (started 2026-10-02)'] }),
+    'folder',
+    0,
+  )
+  expect(child.parent).toBe('epic @ /app')
+  expect(parent.children).toEqual([
+    { slug: 'child-a' },
+    { slug: 'child-a', main: '/lib' },
+    { slug: 'old', main: '/lib', retired: '2026-10-01' },
+    { slug: 'begun', main: '/lib', started: '2026-10-02' },
+  ])
+})
+
+test('formatAll never puts a child under a listed task that only shares the slug of its parent in another repository', () => {
+  const ledgers = [summarize(ledgerText('child-a', { parent: 'epic @ /app' }), '', 2000), summarize(ledgerText('epic'), '', 1000)]
+  expect(formatAll(ledgers)).toBe(
+    [
+      '**Task ledgers** · 2 ledgers, newest first',
+      '',
+      `#### child-a · edited ${at(2000)}`,
+      '- **Goal:** Goal of child-a.',
+      '- **Next:** Next of child-a.',
+      '- **Parent:** epic @ /app',
+      '',
+      `#### epic · edited ${at(1000)}`,
+      '- **Goal:** Goal of epic.',
+      '- **Next:** Next of epic.',
+    ].join('\n'),
+  )
+})
+
+test('/ledger looks up a parent in another repository neither in the backlog nor in the other worktrees of this one', async ($, on) => {
+  const { calls } = world(
+    on,
+    '/repo',
+    { [pathOf('child-a')]: ledgerText('child-a', { parent: 'epic @ /app' }) },
+    {},
+    { [backlogPathOf('epic')]: ledgerText('epic', { children: ['- child-a'] }) },
+  )
+
+  const { text } = await $.command.run({ command: 'ledger', args: '' })
+
+  expect(calls).toEqual([])
+  expect(text).toContain('- **Parent:** epic @ /app')
+  expect(text).not.toContain('epic (backlog)')
+})
+
+test('/ledger:parent <slug> names a child in another repository with its main checkout', async ($, on) => {
+  world(on, '/repo', {}, { [SHOW_EPIC]: shown([{ slug: 'parser', status: 'backlog', next: 'Write it.', main: '/lib' }]) })
+
+  const { text } = await $.command.run({ command: 'ledger:parent', args: 'epic' })
+
+  expect(text.split('\n').at(-1)).toBe('- **parser @ /lib** · backlog — Write it.')
+})
+
+test('/ledger:parent without a slug in a child task shows its parent in another repository', async ($, on) => {
+  const show = 'bin/cc-ledger-parent show epic@/app --json'
+  const { calls } = world(on, `${WORKTREES}/child-a`, { [pathOf('child-a')]: ledgerText('child-a', { parent: 'epic @ /app' }) }, { [show]: shown(FAMILY) })
+
+  const { text } = await $.command.run({ command: 'ledger:parent' })
+
+  expect(text.split('\n')[0]).toBe('**Parent task epic** · 4 children, 1 active')
+  expect(calls).toEqual([show])
+})
+
+test('/ledger:go <child> marks it started in its parent in another repository, and names that parent with its main checkout', async ($, on) => {
+  const start = 'bin/cc-ledger-parent start epic@/app child-a'
+  const { calls, markdownArgs } = world(on, '/repo', { [pathOf('child-a')]: ledgerText('child-a', { parent: 'epic @ /app' }) }, { [start]: exit(0, '') })
+
+  await $.command.run({ command: 'ledger:go', args: 'child-a' })
+
+  expect(markdownArgs()).toBe('task: child-a\nledger: none\nparent: epic @ /app')
+  expect(withoutWorktreeList(calls)).toEqual([start])
+})
+
+test('/ledger:go <parent> lists a child in another repository with its main checkout', async ($, on) => {
+  const { markdownArgs } = world(on, '/repo', FAMILY_LEDGERS, {
+    [NEXT_EPIC]: exit(0, ''),
+    [SHOW_EPIC]: shown([
+      { slug: 'child-a', status: 'active', next: '' },
+      { slug: 'parser', status: 'active', next: '', main: '/lib' },
+    ]),
+  })
+
+  await $.command.run({ command: 'ledger:go', args: 'epic' })
+
+  expect(markdownArgs()).toBe('task: epic\nledger: none\nchildren: child-a (active), parser @ /lib (active)')
 })

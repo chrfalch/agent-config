@@ -21,6 +21,7 @@ import {
   park,
   parkArgs,
   parkMarker,
+  parseTaskArgument,
   pickFailedMessage,
   pickFailedWarning,
   promotedThenFailedMessage,
@@ -30,7 +31,10 @@ import {
   severalLedgersMessage,
   sharedSlugMessage,
   slugExpectedMessage,
+  startedElsewhereMessage,
   summarize,
+  taskArgument,
+  taskName,
   unknownTaskMessage,
   unpark,
   unparkFailedMessage,
@@ -116,9 +120,23 @@ async function showRetireHint($: EngineInterface, ledger: string): Promise<void>
 }
 
 /**
+ * Promotes `slug`, a backlog task of the repository at `main` that /ledger:go picked, in that repository, and marks it
+ * started in `parent`, named as `cc-ledger-parent next` prints it. EnterWorktree cannot leave this repository, so the
+ * session stays: the text says where the task was started.
+ */
+async function startElsewhere($: EngineInterface, parent: string, { slug, main }: { slug: string; main: string }, cwd: string): Promise<{ text: string }> {
+  const promoted = await promoteBacklogTask($, slug, cwd, main)
+  if ('error' in promoted) return { text: promoteFailedMessage(taskName({ slug, main }), promoted.error) }
+  const parentName = taskName(parseTaskArgument(parent))
+  const mark = await markStarted($, parent, `${slug}@${main}`, cwd)
+  const outcome = 'error' in mark ? { warnings: [markFailedWarning(slug, parentName, mark.error)] } : { marked: mark.marked, warnings: [] }
+  return { text: startedElsewhereMessage({ child: slug, parent: parentName, main, worktree: worktreeOf(promoted.ledger), ...outcome }) }
+}
+
+/**
  * Everything /ledger:go does before go.md runs: find the task, pick a parent's next child, promote a backlog task, unpark,
- * mark it started, and arm the clear. A text says why the task was not started; then the clear is not armed, and a clear
- * this turn already armed stays.
+ * mark it started, and arm the clear. A text says why the task was not started, or where a picked child task in another
+ * repository was started; then the clear is not armed, and a clear this turn already armed stays.
  */
 async function startGo($: EngineInterface, input: string): Promise<{ target: string; fields: GoFields; args: string; arm: GoArm } | { text: string }> {
   let promotedWorktree: string | undefined
@@ -158,7 +176,10 @@ async function startGo($: EngineInterface, input: string): Promise<{ target: str
         warnings.push(pickFailedWarning(target, chain.error))
       } else if (chain.length > 0) {
         picked = chain
+        const parentOfPicked = chain.at(-2) ?? target
         target = chain.at(-1) ?? target
+        const { slug, main } = parseTaskArgument(target)
+        if (main !== undefined) return await startElsewhere($, parentOfPicked, { slug, main }, cwd)
         place = await placeOf($, target, found, tasks, cwd)
         if ('text' in place) return place
         const refusedChild = await otherRepository(target, place)
@@ -193,7 +214,7 @@ async function startGo($: EngineInterface, input: string): Promise<{ target: str
     const task = tasks.find(({ slug }) => slug === target) ?? summarize(text, target, 0)
     let marked: string | undefined
     if (task.parent) {
-      const mark = await markStarted($, task.parent, target, cwd)
+      const mark = await markStarted($, taskArgument(task.parent), target, cwd)
       if ('error' in mark) warnings.push(markFailedWarning(target, task.parent, mark.error))
       else marked = mark.marked
     }

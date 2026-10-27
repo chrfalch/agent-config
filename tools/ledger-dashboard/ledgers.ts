@@ -22,7 +22,7 @@ type Engine = {
   plugin: { root: string };
 };
 
-type Entry = { repo: string; slug: string; status: string; updated: string; path: string; archivePath?: string; branch?: unknown; parent?: string };
+type Entry = { repo: string; slug: string; status: string; updated: string; path: string; archivePath?: string; branch?: unknown; parent?: string; parentMain?: string };
 type WorktreeState = { path: string; mainCheckout: string };
 type Pr = { state: string; number: number };
 
@@ -91,7 +91,7 @@ const ok = (body: object): Reply => ({ status: 200, body });
 const fail = (status: number, error: string): Reply => ({ status, body: { error } });
 const isReply = <T extends object>(value: T | Reply): value is Reply => 'body' in value;
 
-/** `parent` is the slug of the parent task, and `parentId` the id of its row, when the registry holds that task. */
+/** `parent` is the slug of the parent task, `<slug> @ <main>` when it is in another repository. `parentId` is the id of its row, when the registry holds that task. */
 export type Row = { id: string; repo: string; slug: string; status: string; updated: string; next: string; branch: string; parent?: string; parentId?: string };
 /** A row of the task list. `nested` is true for a child row listed right under the row of its parent. */
 export type ListedRow = Row & { nested: boolean };
@@ -118,7 +118,7 @@ const branchOf = (entry: Entry): string => (typeof entry.branch === 'string' ? e
 
 const taskKey = (repo: string, slug: string): string => `${repo}\0${slug}`;
 
-// A parent is in the repo of its child. A retired slug can be given again, and then the task that is not archived is the parent.
+// A parent with no parentMain is in the repo of its child. A retired slug can be given again, and then the task that is not archived is the parent.
 function parentIdOf(newestFirst: Entry[]): (entry: Entry) => string | undefined {
   const tasks = new Map<string, Entry>();
   for (const entry of newestFirst) {
@@ -127,7 +127,7 @@ function parentIdOf(newestFirst: Entry[]): (entry: Entry) => string | undefined 
     if (known === undefined || (isArchived(known) && !isArchived(entry))) tasks.set(key, entry);
   }
   return entry => {
-    const parent = entry.parent === undefined ? undefined : tasks.get(taskKey(entry.repo, entry.parent));
+    const parent = entry.parent === undefined || entry.parentMain !== undefined ? undefined : tasks.get(taskKey(entry.repo, entry.parent));
     return parent && idOf(parent);
   };
 }
@@ -187,7 +187,8 @@ function ledgersOf(mod: Mod) {
       entries.map(async entry => {
         const [status, next] = await mod.statusAndNext(home, entry);
         const row: Row = { id: idOf(entry), repo: entry.repo, slug: entry.slug, status, updated: entry.updated, next, branch: branchOf(entry) };
-        return entry.parent === undefined ? row : { ...row, parent: entry.parent, parentId: parentId(entry) };
+        if (entry.parent === undefined) return row;
+        return { ...row, parent: entry.parentMain ? `${entry.parent} @ ${entry.parentMain}` : entry.parent, parentId: parentId(entry) };
       }),
     );
   }

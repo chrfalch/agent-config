@@ -1,6 +1,6 @@
 import type { EngineInterface } from 'claude-code'
 
-import { backlogUncheckedMessage, folderSlug, severalLedgersMessage, sharedSlugMessage, summarize, unknownTaskMessage } from './ledger'
+import { backlogUncheckedMessage, folderSlug, severalLedgersMessage, sharedSlugMessage, summarize, taskName, unknownTaskMessage } from './ledger'
 import { findBacklogLedgers, findLedgers, readBranch, run, sessionFolder, sessionLedger, titleSlug, type SessionFolder } from './lookup'
 import { scriptPath } from './registry'
 import {
@@ -109,7 +109,7 @@ type RetireFlags = { dryRun: boolean; forced: boolean }
 // Only for the plan: an unreadable ledger shows no children, and cc-worktree-retire still refuses a parent with active ones.
 async function activeChildrenOf($: EngineInterface, ledgerPath: string): Promise<string[]> {
   const text = await $.fs.read(ledgerPath).catch(() => '')
-  return (summarize(text, '', 0).children ?? []).filter(({ retired }) => retired === undefined).map(({ slug }) => slug)
+  return (summarize(text, '', 0).children ?? []).filter(({ retired }) => retired === undefined).map(taskName)
 }
 
 // Only for the plan: cc-worktree-retire checks the folder again when it archives it.

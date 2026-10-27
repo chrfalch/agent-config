@@ -8,8 +8,10 @@
 # 2 when there is no such backlog task, 3 when the task belongs to another main
 # checkout with the same folder name, and 4 when its ledger names no main checkout.
 # --stack makes the worktree task at once, on top of the current branch.
-# Usage: cc-task-new <slug> [--goal <text>] [--branch <name>] [--base <ref> | --stack]
-#        cc-task-new --promote <slug>
+# --repo <path> acts as if run in the repository that holds <path>, its main checkout or any
+# worktree. It takes no --here or --stack, which build on the current worktree.
+# Usage: cc-task-new <slug> [--goal <text>] [--branch <name>] [--base <ref> | --stack] [--repo <path>]
+#        cc-task-new [--repo <path>] --promote <slug>
 #        cc-task-new --here [<slug>] [--goal <text>]
 # Works from the main checkout or from inside any linked worktree. Every check runs
 # before the worktree is created, and a later failure removes the worktree and
@@ -19,8 +21,8 @@
 # cc-worktree-retire names the archive.
 set -eu
 
-usage="usage: cc-task-new <slug> [--goal <text>] [--branch <name>] [--base <ref> | --stack]
-       cc-task-new --promote <slug>
+usage="usage: cc-task-new <slug> [--goal <text>] [--branch <name>] [--base <ref> | --stack] [--repo <path>]
+       cc-task-new [--repo <path>] --promote <slug>
        cc-task-new --here [<slug>] [--goal <text>]"
 
 fail() {
@@ -33,15 +35,16 @@ is_slug() (
   [[ $1 =~ ^[a-z0-9][a-z0-9-]*$ ]]
 )
 
-slug="" goal="" branch="" base="" stack="" here="" promote=""
+slug="" goal="" branch="" base="" stack="" here="" promote="" repo=""
 while [ $# -gt 0 ]; do
   case "$1" in
-    --goal|--branch|--base)
+    --goal|--branch|--base|--repo)
       [ $# -ge 2 ] || fail "$1 needs a value"
       case "$1" in
         --goal) goal="$2" ;;
         --branch) branch="$2" ;;
         --base) base="$2" ;;
+        --repo) repo="$2" ;;
       esac
       shift 2
       ;;
@@ -63,6 +66,7 @@ done
 [ -z "$slug" ] || is_slug "$slug" || fail "slug must match ^[a-z0-9][a-z0-9-]*\$: $slug"
 [ -z "$base" ] || [ -z "$stack" ] || fail "use --base or --stack, not both"
 [ -z "$here" ] || [ -z "$base$stack$branch" ] || fail "--here keeps this worktree's branch and HEAD, so it takes no --base, --stack or --branch"
+[ -z "$repo" ] || [ -z "$here$stack" ] || fail "--here and --stack build on this worktree, so they take no --repo"
 
 self="$0"
 while [ -L "$self" ]; do
@@ -74,6 +78,12 @@ while [ -L "$self" ]; do
 done
 template="$(cd -P "$(dirname "$self")/.." && pwd)/ledger.template.md"
 [ -f "$template" ] || fail "no ledger template at $template"
+
+if [ -n "$repo" ]; then
+  # Made absolute first, because register_ledger runs cc-ledgers from this script's folder.
+  self="$(cd -P "$(dirname "$self")" && pwd)/$(basename "$self")"
+  cd "$repo" 2>/dev/null || fail "no such folder: $repo"
+fi
 
 common=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || fail "not inside a git repository: $(pwd)"
 main=$(dirname "$common")

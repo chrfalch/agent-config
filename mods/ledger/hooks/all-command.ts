@@ -1,6 +1,6 @@
 import type { EngineInterface, ProcessRunResult } from 'claude-code'
 
-import { childOrder, formatTime, groupByParent, summarize, type Grouped } from './ledger'
+import { childOrder, formatTime, groupByParent, summarize, taskName, type Grouped } from './ledger'
 import { message, sessionFolder } from './lookup'
 import { type Entry, parseEntries, scriptPath } from './registry'
 
@@ -32,7 +32,7 @@ function familyOrder<T extends Task>(newestFirst: T[]): (T & { name: string })[]
   const groups = groupByParent(
     newestFirst,
     ({ entry }) => taskKey(entry.repo, entry.slug),
-    ({ entry }) => (entry.parent === undefined ? undefined : taskKey(entry.repo, entry.parent)),
+    ({ entry }) => (entry.parent === undefined || entry.parentMain !== undefined ? undefined : taskKey(entry.repo, entry.parent)),
     childOrder(({ status }) => status === 'active', ({ entry }) => Date.parse(entry.updated)),
   )
   const descendants = (children: Grouped<T>[], depth: number): (T & { name: string })[] =>
@@ -41,7 +41,10 @@ function familyOrder<T extends Task>(newestFirst: T[]): (T & { name: string })[]
       ...descendants(grandchildren, depth + 1),
     ])
   return groups.flatMap(({ item, children }) => [
-    { ...item, name: item.entry.parent ? `${item.entry.slug} (parent: ${item.entry.parent})` : item.entry.slug },
+    {
+      ...item,
+      name: item.entry.parent ? `${item.entry.slug} (parent: ${taskName({ slug: item.entry.parent, main: item.entry.parentMain })})` : item.entry.slug,
+    },
     ...descendants(children, 0),
   ])
 }

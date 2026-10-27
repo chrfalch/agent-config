@@ -844,3 +844,88 @@ test('a backlog task leaves info/exclude alone: it has no worktree yet', (t) => 
   backlogged(home, main, 'fix-login');
   assert.equal(readFileSync(excludeFile(main), 'utf8'), before);
 });
+
+function secondCheckout(home: string, folder = 'lib') {
+  const lib = path.join(home, folder);
+  mkdirSync(lib);
+  git(home, lib, 'init', '--quiet', '-b', 'main');
+  git(home, lib, 'commit', '--quiet', '--allow-empty', '-m', 'first');
+  return lib;
+}
+
+test('--repo makes the backlog task in that repository, run from another one', (t) => {
+  const { home, main } = checkout(t);
+  const lib = secondCheckout(home);
+
+  const result = taskNew(home, main, 'parser', '--repo', lib, '--goal', 'Parse it.', '--branch', 'me/parser', '--base', 'main');
+  assert.equal(result.status, 0, result.stderr);
+
+  const backlog = backlogFile(home, 'parser', 'lib');
+  assert.equal(readFileSync(backlog, 'utf8'), expectedBacklog('parser', 'Parse it.', lib, 'me/parser', 'main'));
+  assert.equal(result.stdout, [`ledger:  ${backlog}`, 'status:  backlog', 'start:   /ledger:go parser', ''].join('\n'));
+  assert.deepEqual(
+    registry(home).map(({ repo, slug, main }) => ({ repo, slug, main })),
+    [{ repo: 'lib', slug: 'parser', main: lib }],
+  );
+  assert.equal(existsSync(backlogFile(home, 'parser')), false);
+});
+
+test('--repo takes a path relative to the current folder, and a linked worktree stands for its main checkout', (t) => {
+  const { home, main } = checkout(t);
+  const lib = secondCheckout(home);
+  linkedWorktree(home, lib, 'other-task');
+
+  const result = taskNew(home, main, 'parser', '--repo', '../lib/.claude/worktrees/other-task');
+  assert.equal(result.status, 0, result.stderr);
+
+  assert.equal(readFileSync(backlogFile(home, 'parser', 'lib'), 'utf8'), expectedBacklog('parser', null, lib));
+});
+
+test('--promote with --repo promotes a backlog task of that repository, run from another one', (t) => {
+  const { home, main } = checkout(t);
+  const lib = secondCheckout(home);
+  assert.equal(taskNew(home, lib, 'parser').status, 0);
+  const caller = linkedWorktree(home, main, 'epic');
+
+  const result = taskNew(home, caller, '--repo', lib, '--promote', 'parser');
+  assert.equal(result.status, 0, result.stderr);
+
+  const worktree = path.join(lib, '.claude/worktrees/parser');
+  const ledger = path.join(worktree, '.claude/ledger.md');
+  assert.match(result.stdout, new RegExp(`^worktree ${worktree}\nbranch   parser\nbase     main @ \\w+\nledger   ${ledger}\n$`));
+  assert.equal(git(home, worktree, 'branch', '--show-current'), 'parser');
+  assert.equal(existsSync(backlogFile(home, 'parser', 'lib')), false);
+  assert.equal(branches(home, main), 'refs/heads/epic\nrefs/heads/main');
+  assert.equal(existsSync(path.join(main, '.claude/worktrees/parser')), false);
+  assert.deepEqual(
+    registry(home).map(({ repo, slug, path, status }) => ({ repo, slug, path, status })),
+    [{ repo: 'lib', slug: 'parser', path: ledger, status: 'active' }],
+  );
+});
+
+const BUILDS_HERE = '--here and --stack build on this worktree, so they take no --repo\n';
+
+const repoFailures: { name: string; args: (lib: string) => string[]; stderr?: string }[] = [
+  { name: '--repo with --here', args: (lib) => ['--here', 'parser', '--repo', lib], stderr: BUILDS_HERE },
+  { name: '--repo with --stack', args: (lib) => ['parser', '--stack', '--repo', lib], stderr: BUILDS_HERE },
+  { name: '--repo without a value', args: () => ['parser', '--repo'] },
+  { name: '--repo that names no git repository', args: (lib) => ['parser', '--repo', path.dirname(lib)] },
+  { name: '--repo that names a missing folder', args: (lib) => ['parser', '--repo', path.join(lib, 'nowhere')] },
+];
+
+for (const { name, args, stderr } of repoFailures) {
+  test(`fails and creates nothing on ${name}`, (t) => {
+    const { home, main } = checkout(t);
+    const lib = secondCheckout(home);
+    const caller = linkedWorktree(home, main, 'epic');
+
+    const result = taskNew(home, caller, ...args(lib));
+    assert.equal(result.status, 1, result.stderr);
+    if (stderr === undefined) assert.notEqual(result.stderr.trim(), '');
+    else assert.equal(result.stderr, stderr);
+    assert.equal(result.stdout, '');
+    assert.equal(existsSync(path.join(home, '.claude/ledger-backlog')), false);
+    assert.equal(existsSync(path.join(caller, '.claude/ledger.md')), false);
+    assert.equal(branches(home, lib), 'refs/heads/main');
+  });
+}

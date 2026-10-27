@@ -1,5 +1,5 @@
 ---
-description: Write the latest results to this task's ledger, clear the session, and continue in the task named <slug>. A backlog task of this repository first gets its own git worktree and branch. A parent task continues in its first child task not yet started.
+description: Write the latest results to this task's ledger, clear the session, and continue in the task named <slug>. A backlog task of this repository first gets its own git worktree and branch. A parent task continues in its first child task not yet started. A child task in another repository is promoted there, and the session stays here.
 argument-hint: <slug>
 ---
 

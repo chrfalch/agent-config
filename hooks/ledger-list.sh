@@ -173,18 +173,27 @@ task_status() {
   fi
 }
 
+# A task in another repository, `<slug> @ <main>`, is shown as its line names it: its status is not looked up here.
 relations() {
-  local parent child mark date
-  parent=$(section "$1" Location | sed -n -E '/^- parent:[[:space:]]*</d; s/^- parent:[[:space:]]*([^[:space:]]+)[[:space:]]*$/\1/p' | head -n 1)
-  [ -n "$parent" ] && echo "Parent task: $parent ($(task_status "$parent"))."
-  section "$1" Children | sed -n -E 's/^- ([A-Za-z0-9._-]+)( \((retired|started) ([0-9]{4}-[0-9]{2}-[0-9]{2})\))?[[:space:]]*$/\1 \3 \4/p' |
-    while read -r child mark date; do
-      if [ "$mark" = retired ]; then
-        echo "Child task: $child (retired $date)."
-      else
-        echo "Child task: $child ($(task_status "$child"))."
-      fi
-    done
+  local parent line child elsewhere mark date
+  local child_line='^- ([A-Za-z0-9._-]+)( @ /[^[:space:]]*)?( \((retired|started) ([0-9]{4}-[0-9]{2}-[0-9]{2})\))?[[:space:]]*$'
+  parent=$(section "$1" Location | sed -n -E '/^- parent:[[:space:]]*</d; s/^- parent:[[:space:]]*([^[:space:]]+( @ \/[^[:space:]]*)?)[[:space:]]*$/\1/p' | head -n 1)
+  case "$parent" in
+    "") ;;
+    *" @ "*) echo "Parent task: $parent." ;;
+    *) echo "Parent task: $parent ($(task_status "$parent"))." ;;
+  esac
+  section "$1" Children | while IFS= read -r line; do
+    [[ $line =~ $child_line ]] || continue
+    child=${BASH_REMATCH[1]} elsewhere=${BASH_REMATCH[2]} mark=${BASH_REMATCH[4]} date=${BASH_REMATCH[5]}
+    if [ -n "$elsewhere" ]; then
+      echo "Child task: $child$elsewhere${mark:+ ($mark $date)}."
+    elif [ "$mark" = retired ]; then
+      echo "Child task: $child (retired $date)."
+    else
+      echo "Child task: $child ($(task_status "$child"))."
+    fi
+  done
 }
 
 session_start_text() {

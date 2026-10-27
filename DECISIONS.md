@@ -534,3 +534,25 @@ refuses a cycle: a task that is already the parent of `<parent>`, or of one of
 its parents, cannot become its child. A child task still has one parent at
 most. `/ledger` and `/ledger:all` indent each level. `/ledger:parent`,
 `--force` and the `parent of <n>` count still look at direct child tasks only.
+
+## 2026-10-27 — New model: GPT-6.1 Terra, no lane
+
+**`gpt-6.1-terra` enters the routing table without a lane.** Released 26 Oct at
+$1/$5, cached $0.05/M. The Codex plan covers OpenAI models, so a lower list price
+saves little. 6.1 Sol is stronger for code: Artificial Analysis gives Terra 48 and
+6.1 Sol 52. No agent uses Terra, and no route sends work to it.
+
+**Long UI runs stay on `gpt-6-astra`.** Terra's system card gives an
+unauthorized-action rate of 13.75%. 6.1 Sol has 1.25%. A UI run acts on a device
+for a long time, so that rate matters most there.
+
+**New gate name: `gpt-6.1-terra`.** It needs `codex`, like the other OpenAI
+models.
+
+**Kept, on purpose.** The ban on untrusted input for Sol stays. No Anthropic model
+or price changed since 2026-10-09.
+
+**Prices verified** from the OpenAI model page. Index scores come from Artificial
+Analysis.
+Benchmark figures are secondary: kingy.ai copied them from OpenAI's charts, and the
+launch post returned 403.

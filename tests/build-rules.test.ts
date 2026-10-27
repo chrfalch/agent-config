@@ -5,7 +5,7 @@ import test, { type TestContext } from 'node:test';
 import { freshHome, run } from './helpers.js';
 
 const BUILD_RULES = [process.execPath, '--import', 'tsx', 'tools/build-rules.ts'] as const;
-const VOCABULARY = 'argent astra-implementer astra-reviewer codex fable-5 gh-stack gpt-6-astra gpt-6-luna gpt-6.1-sol haiku-5.5 opus-5.5 opus-implementer researcher reviewer runner sol-implementer sonnet-5.5 ui-runner\n';
+const VOCABULARY = 'argent astra-implementer astra-reviewer codex fable-5 gh-stack gpt-6-astra gpt-6-luna gpt-6.1-sol gpt-6.1-terra haiku-5.5 opus-5.5 opus-implementer researcher reviewer runner sol-implementer sonnet-5.5 ui-runner\n';
 
 function fixture(t: TestContext, files: Record<string, string> = {}) {
   const home = freshHome(t);
@@ -59,16 +59,16 @@ test('build-rules suppresses a satisfied inner block when its parent is absent',
 });
 
 test('build-rules requires codex for every codex-only model', (t) => {
-  const models = ['gpt-6-luna', 'gpt-6.1-sol', 'gpt-6-astra'];
+  const models = ['gpt-6-luna', 'gpt-6.1-terra', 'gpt-6.1-sol', 'gpt-6-astra'];
   const { build, out } = fixture(t, Object.fromEntries(models.map((model) => [`${model}.md`, `---\nneeds: ${model}\n---\n${model}\n`])));
   const absent = build('--features', models.join(','));
   assert.equal(absent.status, 0, absent.stderr);
-  assert.equal(absent.stdout, 'rules    not written: gpt-6-astra.md, gpt-6-luna.md, gpt-6.1-sol.md\n');
+  assert.equal(absent.stdout, 'rules    not written: gpt-6-astra.md, gpt-6-luna.md, gpt-6.1-sol.md, gpt-6.1-terra.md\n');
   assert.deepEqual(readdirSync(out), []);
   const present = build('--features', [...models, 'codex'].join(','));
   assert.equal(present.status, 0, present.stderr);
   assert.equal(present.stdout, '');
-  assert.equal(readdirSync(out).length, 3);
+  assert.equal(readdirSync(out).length, 4);
 });
 
 test('build-rules replaces output symlinks without changing their sources', (t) => {

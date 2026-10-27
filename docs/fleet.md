@@ -54,6 +54,7 @@ unsupervised. Taste covers UI and UX, code quality, API design, and copy.
 |---|---|---|---|---|
 | gpt-6-luna | 8 | 4 | — | Codex plan; trivial batch only |
 | haiku-5.5 | 8 | 5 | — | trusted text only; a prompt over 100k tokens costs 5x |
+| gpt-6.1-terra | 7 | 6 | — | Codex plan; no lane yet |
 | gpt-6.1-sol | 7 | 8 | 6 | Codex plan; injection not measured |
 | sonnet-5.5 | 7 | 7 | 7 | |
 | opus-5.5 | 5 | 9 | 9 | the orchestrator; default for anything judged |

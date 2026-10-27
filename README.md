@@ -211,6 +211,46 @@ examples.
 [docs/usage.md](docs/usage.md) walks through a full task, with the ledger at
 each stage.
 
+### Short examples
+
+The repository in these examples is `expo/expo`. The tasks are made up.
+[docs/examples.md](docs/examples.md) has two longer ones: starting a new task,
+and putting a second task in the backlog.
+
+**Stop for the day, continue the next morning.** Two tasks are open.
+
+**You:** `/ledger:close`
+
+The ledger is updated and the session clears. The next morning you open a new
+session in the main checkout.
+
+**You:** go
+
+**Agent:** Two tasks have a ledger: `image-clear-disk-cache` (next: check iOS)
+and `router-modal-e2e-flake` (next: investigate the CI failure). Which one?
+
+**You:** go image-clear-disk-cache
+
+**Agent:** (moves into that task's worktree and continues from the next step in
+its ledger)
+
+The agent does not read files or run tests again to find out where it was. The
+ledger is the state.
+
+**The PR is merged, retire the task.**
+
+**You:** `/ledger:retire image-clear-disk-cache`
+
+```
+archived ~/.claude/ledger-archive/expo/2026-10-26-image-clear-disk-cache.md
+archived evidence ~/.claude/ledger-archive/expo/2026-10-26-image-clear-disk-cache/
+removed  ~/repos/expo/expo/.claude/worktrees/image-clear-disk-cache
+deleted  branch image-clear-disk-cache
+```
+
+The worktree is gone, and the ledger is kept. Months later,
+`/ledger:archive glide` finds it again.
+
 ### Commands
 
 The ledger mod adds these commands. Claude Code puts the plugin name in front
@@ -266,6 +306,7 @@ it archives that ledger, then deletes it.
 | Document | What it covers |
 |---|---|
 | [docs/usage.md](docs/usage.md) | The daily loop, a worked example, the ledger, clear points |
+| [docs/examples.md](docs/examples.md) | Two longer examples: a new task with `/ledger:next`, and a backlog task |
 | [docs/installation.md](docs/installation.md) | Prerequisites, every flag, what deploy owns, revert |
 | [docs/fleet.md](docs/fleet.md) | The eight agents, their models, and the routing rules |
 | [docs/customizing.md](docs/customizing.md) | Changing models, gating rules, adding an agent, tests |

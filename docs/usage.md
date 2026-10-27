@@ -400,14 +400,22 @@ child's worktree through subagents.
 
 `/ledger:parent`, `/ledger` at session start and `bin/cc-ledger-parent next`
 show such a child task as `<child> @ <main checkout>` or `<child>@<main checkout>`.
-The other repository's status is not looked up at session start.
+At session start, the status of a parent or child task in another repository
+is looked up in that repository. A lookup that takes more than 3 seconds shows
+`unknown`.
 
-Retire is cautious for now:
+`/ledger:all` and the dashboard group a family by main checkout. A child task
+comes right after its parent task, also when the parent is in another
+repository. Two repositories with the same folder name are two families.
 
-- `/ledger:retire <child>` in the other repository does not edit the parent
-  ledger. It prints a warning with the line to change by hand.
-- A parent task with a child task in another repository that is not marked
-  retired counts that child task as active.
+Retire works across the two repositories:
+
+- `/ledger:retire <child>` in the other repository marks the child task
+  retired in the parent ledger. When the parent ledger does not list the child
+  task, retire prints a warning with the line to add and the command to run.
+- `/ledger:retire <parent>` looks up each child task in another repository.
+  A child task that is active, in the backlog, parked or missing there blocks
+  the retire. Only a retired child task does not. `--force` overrides.
 
 ### The dashboard
 

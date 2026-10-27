@@ -136,6 +136,19 @@ export function groupByParent<T>(
   return items.filter(isTop).map(group)
 }
 
+/** A registry entry as far as its family goes. `main` is its main checkout, which older registry entries lack. */
+export type FamilyEntry = { repo: string; slug: string; main?: string; parent?: string; parentMain?: string }
+
+/**
+ * Whether `task` is the parent `child` names. A parent with `parentMain` is in that main checkout; any other is in the
+ * child's own: the same main checkout, or the same repo name when either entry has none recorded.
+ */
+export function isParentOf(task: FamilyEntry, child: FamilyEntry): boolean {
+  if (child.parent === undefined || task.slug !== child.parent) return false
+  if (child.parentMain !== undefined) return task.main === child.parentMain
+  return task.main !== undefined && child.main !== undefined ? task.main === child.main : task.repo === child.repo
+}
+
 /** The order of a parent's child tasks: the active ones first, then the others, each newest first. */
 export const childOrder =
   <T>(isActive: (item: T) => boolean, time: (item: T) => number) =>
@@ -440,9 +453,9 @@ export const HELP = [
   "- `/ledger:park [<slug>] <reason>` — Mark a task parked. Without a slug it writes this task's ledger, parks it, then clears the session.",
   "- `/ledger:parent [<slug>]` — Show a parent task and each child's status and next step; without a slug, this task or its parent. `<slug> add <child>` and `<slug> remove <child>` change its children. `<slug>@<path>` names a task in the repository that holds <path>.",
   "- `/ledger:worktrees` — Show each linked git worktree's size, last commit, dirty files, ledger and PR.",
-  "- `/ledger:retire [<slug>]` — Archive a task's ledger, remove its worktree, and delete its branch when all of its commits are merged. A backlog task of this repo has no worktree or branch: its ledger is archived, then deleted. `--dry-run` only shows what it would do. Uncommitted changes, unmerged work and active child tasks need `--force`.",
+  "- `/ledger:retire [<slug>]` — Archive a task's ledger, remove its worktree, and delete its branch when all of its commits are merged. A backlog task of this repo has no worktree or branch: its ledger is archived, then deleted. `--dry-run` only shows what it would do. Uncommitted changes, unmerged work and active child tasks need `--force`. A child task is marked retired in its parent ledger, also in another repo; a child task in another repo blocks its parent until it is retired there.",
   "- `/ledger:archive [<term>]` — List this repo's archived ledgers, newest first; a term keeps those that contain it, and `--all` lists every repo.",
-  '- `/ledger:all` — Show every task ledger on this machine, active, backlog and archived; `--scan` rebuilds the list from disk.',
+  '- `/ledger:all` — Show every task ledger on this machine, active, backlog and archived, each child task under its parent, also across repos; `--scan` rebuilds the list from disk.',
   '- `/ledger:dashboard` — Start a web page on this machine that lists every task ledger, with search, details, park and retire. It keeps running after the session ends; `stop` stops it.',
   '- `/ledger:help` — Show this list.',
 ].join('\n')

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { chmodSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import test, { type TestContext } from 'node:test';
 import { freshHome, REPO, run } from './helpers.js';
@@ -1201,3 +1201,177 @@ test('two repositories with the same folder name keep their backlog tasks apart'
   assert.match(read(idea), new RegExp(`^- parent: epic @ ${main}$`, 'm'));
   assert.equal(ok(home, main, 'next', 'epic').stdout, `epic idea@${fork.main}\n`);
 });
+
+// An archive copy as cc-worktree-retire writes it: ~/.claude/ledger-archive/<main checkout folder>/<date>-<slug>.md.
+function archiveTask(home: string, main: string, slug: string): string {
+  const copy = path.join(home, '.claude/ledger-archive', path.basename(main), `2026-10-01-${slug}.md`);
+  mkdirSync(path.dirname(copy), { recursive: true });
+  writeFileSync(copy, ledgerText(slug, path.join(main, '.claude/worktrees', slug)));
+  return copy;
+}
+
+const status = (home: string, cwd: string, ...args: string[]) => ok(home, cwd, 'status', ...args).stdout;
+
+test('status prints the state of a task in this repository: active, parked, backlog, retired or missing', (t) => {
+  const { home, main } = repository(t, 'busy');
+  const parked = addTask(home, main, 'parked');
+  writeFileSync(parked, ledgerText('parked', path.dirname(path.dirname(parked)), 'Parked: 2026-10-01 — Waiting for the API.'));
+  addBacklogTask(home, main, 'idea');
+  archiveTask(home, main, 'old');
+
+  assert.deepEqual(
+    ['busy', 'parked', 'idea', 'old', 'nope'].map((slug) => status(home, main, slug)),
+    ['active\n', 'parked\n', 'backlog\n', 'retired\n', 'missing\n'],
+  );
+});
+
+test('status --main looks up a task in that repository only, from any folder', (t) => {
+  const { home, main } = repository(t, 'parser');
+  const lib = otherRepository(home, 'repos/lib', 'parser');
+  addBacklogTask(home, lib.main, 'idea');
+  archiveTask(home, lib.main, 'old');
+  addBacklogTask(home, main, 'local-only');
+
+  assert.deepEqual(
+    ['parser', 'idea', 'old', 'local-only'].map((slug) => status(home, home, slug, '--main', lib.main)),
+    ['active\n', 'backlog\n', 'retired\n', 'missing\n'],
+  );
+});
+
+test('status takes a live ledger over an archive copy of the same slug', (t) => {
+  const { home, main } = repository(t, 'reused');
+  archiveTask(home, main, 'reused');
+
+  assert.equal(status(home, main, 'reused'), 'active\n');
+});
+
+test('status does not take the archive copy of a repository with the same folder name as retired', (t) => {
+  const { home, main } = repository(t);
+  const fork = otherRepository(home, 'forks/app');
+  archiveTask(home, fork.main, 'old');
+
+  assert.equal(status(home, home, 'old', '--main', main), 'missing\n');
+  assert.equal(status(home, home, 'old', '--main', fork.main), 'retired\n');
+});
+
+test('status --main of a main checkout that is gone prints missing', (t) => {
+  const { home } = repository(t);
+
+  assert.equal(status(home, home, 'parser', '--main', path.join(home, 'gone')), 'missing\n');
+});
+
+test('mark marks a child in another repository retired in its parent there, in place of its started mark, and a rerun changes nothing', (t) => {
+  const { home, main, ledgers } = repository(t, 'epic');
+  const lib = otherRepository(home, 'repos/lib', 'parser');
+  ok(home, main, 'add', 'epic', `parser@${lib.main}`);
+  ok(home, main, 'start', 'epic', `parser@${lib.main}`);
+  const epic = ledgers.epic ?? '';
+  const before = read(epic);
+
+  const result = ok(home, lib.main, 'mark', 'epic', '--main', main, 'parser', 'retired');
+
+  const after = before.replace(`- parser @ ${lib.main} (started ${today()})\n`, `- parser @ ${lib.main} (retired ${today()})\n`);
+  assert.equal(read(epic), after);
+  assert.equal(result.stdout, `retired parser in ${epic}\n`);
+  assert.equal(result.stderr, '');
+  assert.equal(ok(home, lib.main, 'mark', 'epic', '--main', main, 'parser', 'retired').stdout, '');
+  assert.equal(read(epic), after);
+});
+
+test('mark finds a backlog parent, and without --main a parent in this repository', (t) => {
+  const { home, main } = repository(t, 'child-a');
+  const epic = addBacklogTask(home, main, 'epic');
+  setChildren(epic, '- child-a\n');
+
+  const result = ok(home, main, 'mark', 'epic', 'child-a', 'retired');
+
+  assert.match(read(epic), new RegExp(`^- child-a \\(retired ${today()}\\)$`, 'm'));
+  assert.equal(result.stdout, `retired child-a in ${epic}\n`);
+});
+
+test('mark matches the whole slug and the repository of the child, and changes no other line', (t) => {
+  const { home, main, ledgers } = repository(t, 'epic');
+  const lib = otherRepository(home, 'repos/lib');
+  const epic = ledgers.epic ?? '';
+  setChildren(epic, `- parser-two @ ${lib.main}\n- parser\n- parser @ ${lib.main}\n`);
+
+  ok(home, lib.main, 'mark', 'epic', '--main', main, 'parser', 'retired');
+
+  assert.match(read(epic), new RegExp(`^## Children\\n- parser-two @ ${lib.main}\\n- parser\\n- parser @ ${lib.main} \\(retired ${today()}\\)\\n`, 'm'));
+});
+
+test('mark keeps CRLF line endings', (t) => {
+  const { home, main, ledgers } = repository(t, 'epic');
+  const lib = otherRepository(home, 'repos/lib');
+  const epic = ledgers.epic ?? '';
+  setChildren(epic, `- parser @ ${lib.main}\n`);
+  writeFileSync(epic, crlf(read(epic)));
+
+  ok(home, lib.main, 'mark', 'epic', '--main', main, 'parser', 'retired');
+
+  assert.equal(read(epic), crlf(read(epic).replace(/\r\n/g, '\n')));
+  assert.match(read(epic), new RegExp(`^- parser @ ${lib.main} \\(retired ${today()}\\)\\r$`, 'm'));
+});
+
+test('mark finds a child line whose main checkout ends in a slash or is a symbolic link to it', (t) => {
+  const { home, main, ledgers } = repository(t, 'epic');
+  const lib = otherRepository(home, 'repos/lib');
+  const link = path.join(home, 'lib-link');
+  symlinkSync(lib.main, link);
+  const epic = ledgers.epic ?? '';
+  const before = read(epic);
+
+  for (const named of [`${lib.main}/`, link]) {
+    writeFileSync(epic, before);
+    setChildren(epic, `- parser @ ${named} (started 2026-10-01)\n`);
+
+    const result = ok(home, lib.main, 'mark', 'epic', '--main', main, 'parser', 'retired');
+
+    assert.equal(result.stdout, `retired parser in ${epic}\n`, named);
+    assert.match(read(epic), new RegExp(`^- parser @ ${lib.main} \\(retired ${today()}\\)$`, 'm'), named);
+  }
+});
+
+test('mark of a child not under the parent Children says so on stderr and succeeds', (t) => {
+  const { home, main, ledgers } = repository(t, 'epic');
+  const lib = otherRepository(home, 'repos/lib');
+  setChildren(ledgers.epic ?? '', '- parser\n');
+
+  const result = ok(home, lib.main, 'mark', 'epic', '--main', main, 'parser', 'retired');
+
+  assert.equal(result.stderr, `parser@${lib.main} is not listed under ## Children of epic in ${ledgers.epic}\n`);
+});
+
+test('mark of a child not under the parent Children prints nothing, changes nothing and succeeds', (t) => {
+  const { home, main, ledgers } = repository(t, 'epic');
+  const lib = otherRepository(home, 'repos/lib');
+  const epic = ledgers.epic ?? '';
+  setChildren(epic, '- parser\n');
+  const before = read(epic);
+
+  const result = ok(home, lib.main, 'mark', 'epic', '--main', main, 'parser', 'retired');
+
+  assert.equal(result.stdout, '');
+  assert.equal(read(epic), before);
+});
+
+test('mark of a parent with no ledger in that repository fails with one line', (t) => {
+  const { home } = repository(t);
+  const lib = otherRepository(home, 'repos/lib');
+
+  const result = parent(home, home, 'mark', 'epic', '--main', lib.main, 'parser@' + lib.main, 'retired');
+
+  assert.equal(result.status, 1);
+  assert.equal(result.stderr, `no task ledger with the slug epic in the repository at ${lib.main}\n`);
+});
+
+for (const args of [['status'], ['status', 'a', 'b'], ['status', 'a', '--main'], ['mark', 'epic', 'child'], ['mark', 'epic', 'child', 'started'], ['mark', 'epic', '--main']]) {
+  test(`${args.join(' ')} is a usage error`, (t) => {
+    const { home, main } = repository(t, 'epic');
+
+    const result = parent(home, main, ...args);
+
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /^usage: cc-ledger-parent /);
+  });
+}

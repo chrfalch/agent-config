@@ -13,6 +13,7 @@
 const { spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
+const { archivedMain } = require('./lib/archived-main.js');
 
 const usage = [
   'usage: cc-ledgers upsert <ledger>... [--repo <name>] [--slug <slug>] [--branch <name>] [--parent <slug>[@<main>]] [--replaces <ledger>]  (flags with one ledger only)',
@@ -147,13 +148,14 @@ function gitInfo(folder) {
   });
   const [common, head] = result.status === 0 ? result.stdout.split('\n') : [];
   if (!common) return { repo: path.basename(folder), branch: '' };
-  return { repo: path.basename(path.dirname(common)), branch: head === 'HEAD' ? '' : head ?? '' };
+  const main = path.dirname(common);
+  return { repo: path.basename(main), branch: head === 'HEAD' ? '' : head ?? '', main };
 }
 
 function activeEntry(ledger, given, previous) {
   const stat = fs.statSync(ledger);
   const worktree = path.dirname(path.dirname(ledger));
-  const git = given.repo !== undefined && given.branch !== undefined ? {} : gitInfo(worktree);
+  const git = gitInfo(worktree);
   const text = fs.readFileSync(ledger, 'utf8');
   return entry({
     repo: given.repo ?? git.repo,
@@ -162,6 +164,7 @@ function activeEntry(ledger, given, previous) {
     branch: given.branch ?? git.branch,
     parent: given.parent ?? location(text).parent,
     status: 'active',
+    main: git.main,
     created: previous?.created ?? bornAt(stat),
     updated: stat.mtime.toISOString(),
   });
@@ -194,6 +197,7 @@ function archivedEntry(copy, fallbackLedger, previous) {
     branch: branch ?? '',
     parent,
     status: 'archived',
+    main: previous?.main ?? archivedMain(text),
     created: previous?.created ?? bornAt(stat),
     updated: stat.mtime.toISOString(),
     archivePath: copy,
@@ -241,10 +245,11 @@ function archive(args) {
   const active = entries.find(isRetired);
   const archived = entries.find(isArchived(copy));
   const base = archived ?? active ?? archivedEntry(copy, ledger);
+  const main = base.main ?? archivedMain(fs.readFileSync(copy, 'utf8'));
   const updated = new Date().toISOString();
   writeRegistry([
     ...entries.filter((e) => e !== active && e !== archived),
-    entry({ ...base, status: 'archived', archivePath: copy, updated }),
+    entry({ ...base, status: 'archived', main, archivePath: copy, updated }),
   ]);
 }
 

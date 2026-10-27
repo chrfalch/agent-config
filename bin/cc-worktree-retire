@@ -7,10 +7,10 @@
 # to git. A branch that moved since is kept, and retiring still succeeds.
 # Given a backlog ledger, ~/.claude/ledger-backlog/<repo>/<slug>.md, it archives the ledger and deletes
 # it: a backlog task has no worktree, branch or build folders.
-# A parent ledger with children not yet retired needs --force, children in another repository too.
+# A parent ledger with children not yet retired needs --force. A child in another repository counts
+# unless cc-ledger-parent status finds it retired there.
 # A retired child is marked retired in its parent's ## Children section (see cc-ledger-parent), in a
-# worktree or in the backlog. A parent in another repository is not changed: a warning names the
-# line to mark there by hand.
+# worktree or in the backlog, of this repository or of another.
 # Usage: cc-worktree-retire <worktree-path> [--delete-branch <sha>] [git worktree remove flags]
 #        cc-worktree-retire <backlog-ledger> [--force]
 set -eu
@@ -61,7 +61,16 @@ section() {
 # The format cc-ledger-parent writes: `- <slug>`, `- <slug> (started YYYY-MM-DD)`, or `- <slug> (retired YYYY-MM-DD)`,
 # with ` @ <main>` after the slug for a child in another repository.
 active_children() {
-  section "$1" Children | sed -n -E 's/^- ([A-Za-z0-9._-]+( @ \/[^[:space:]]*)?)( \(started [0-9]{4}-[0-9]{2}-[0-9]{2}\))?[[:space:]]*$/\1/p'
+  local child status
+  while IFS= read -r child; do
+    case "$child" in
+      *" @ "*)
+        status=$("$(dirname "$self")/cc-ledger-parent" status "${child%% @ *}" --main "${child#* @ }" 2>/dev/null) || status=""
+        [ "$status" = retired ] && continue
+        ;;
+    esac
+    echo "$child"
+  done < <(section "$1" Children | sed -n -E 's/^- ([A-Za-z0-9._-]+( @ \/[^[:space:]]*)?)( \(started [0-9]{4}-[0-9]{2}-[0-9]{2}\))?[[:space:]]*$/\1/p')
 }
 
 # The ledger titled $1 in a worktree of this repository, or in its backlog.
@@ -138,7 +147,7 @@ if [ -f "$ledger" ]; then
       ;;
   esac
 fi
-# A parent in another repository is left to a session there; its slug may name another task here.
+# A parent in another repository is found there by cc-ledger-parent mark; its slug may name another task here.
 if [ -n "$parent" ] && [ -z "$parent_main" ]; then
   parent_ledger=$(ledger_titled "$parent")
 fi
@@ -232,7 +241,22 @@ if [ -n "$parent_ledger" ]; then
     echo "warning: could not update $parent_ledger; under ## Children, end the line '- $task' with '(retired ${today:-YYYY-MM-DD})' by hand, in place of its started mark if it has one" >&2
   fi
 elif [ -n "$parent_main" ]; then
-  echo "warning: parent $parent is in the repository at $parent_main, so its Children section is not updated. There, under ## Children of $parent, end the line '- $task @ $main' with '(retired $(date +%F 2>/dev/null || echo YYYY-MM-DD))' by hand, in place of its started mark if it has one." >&2
+  # Run in this task's main checkout, so cc-ledger-parent names it by the path git reports, as the parent's line does.
+  if marking=$(cd "$main" 2>&1 && "$(dirname "$self")/cc-ledger-parent" mark "$parent" --main "$parent_main" "$task" retired 2>&1); then
+    # Nothing printed: the line was marked retired already.
+    case "$marking" in
+      "") ;;
+      "retired $task in "*)
+        marked=1
+        parent_ledger="${marking#retired "$task" in }"
+        ;;
+      *)
+        echo "warning: ${marking//$'\n'/ }, so it is not marked retired. If it belongs there, add the line '- $task @ $main' under ## Children of $parent, then run: cd '$main' && '$(dirname "$self")/cc-ledger-parent' mark $parent --main '$parent_main' $task retired" >&2
+        ;;
+    esac
+  else
+    echo "warning: could not mark $task retired in parent $parent in the repository at $parent_main (${marking//$'\n'/ }). There, under ## Children of $parent, end the line '- $task @ $main' with '(retired $(date +%F 2>/dev/null || echo YYYY-MM-DD))' by hand, in place of its started mark if it has one." >&2
+  fi
 elif [ -n "$parent" ]; then
   echo "warning: no ledger for parent $parent in this repository, so its Children section is not updated" >&2
 fi
@@ -265,5 +289,9 @@ if [ -n "$delete_sha" ]; then
 fi
 
 if [ -n "$marked" ] && [ -z "$(active_children "$parent_ledger")" ]; then
-  echo "Parent $parent has no active children left. Retire it with /ledger:retire $parent."
+  if [ -n "$parent_main" ]; then
+    echo "Parent $parent @ $parent_main has no active children left. Retire it from a session in $parent_main with /ledger:retire $parent."
+  else
+    echo "Parent $parent has no active children left. Retire it with /ledger:retire $parent."
+  fi
 fi

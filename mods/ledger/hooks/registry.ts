@@ -5,7 +5,8 @@ import { basename } from './worktrees'
 
 /**
  * One entry of ~/.claude/ledgers.json, as `cc-ledgers list --json` prints it. `parent` is the slug of its parent task, and
- * `parentMain` the main checkout of that task when it is in another repository. `main` is the main checkout of a backlog task.
+ * `parentMain` the main checkout of that task when it is in another repository. `main` is the task's own main checkout, on every
+ * entry whose repository cc-ledgers could tell.
  */
 export type Entry = { repo: string; slug: string; status: string; updated: string; path: string; archivePath?: string; parent?: string; parentMain?: string; main?: string }
 

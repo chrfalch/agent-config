@@ -348,35 +348,72 @@ function backlogLedger(root: string, folder: string, slug: string, owner: string
   return ledger;
 }
 
-test('session-start in a child task names a parent in another repository with that repository, and no local ledger of its slug', (t) => {
+test('session-start in a child task names a parent in another repository with that repository and its status there, not that of a local ledger of its slug', (t) => {
+  const root = scratch(t);
+  const main = repository(root, 'main');
+  const child = worktree(root, main, path.join(root, 'child'));
+  const other = repository(root, 'app');
+  const ledger = ledgerIn(child, familyLedger('child', [`- parent: epic @ ${other}`]));
+  ledgerIn(worktree(root, main, path.join(root, 'epic')), familyLedger('epic', [], '## Children\n- child\n\n## Next step\nA step.\n'));
+  ledgerIn(worktree(root, other, path.join(root, 'app-epic')), familyLedger('epic', [], '## Next step\nParked: 2026-10-02 — later.\n'));
+
+  assert.equal(sessionStart(root, child).additionalContext, relationText(ledger, `Parent task: epic @ ${other} (parked).`));
+});
+
+test('session-start in a child task names a parent in a repository that is gone as missing', (t) => {
   const root = scratch(t);
   const main = repository(root, 'main');
   const child = worktree(root, main, path.join(root, 'child'));
   const other = path.join(root, 'elsewhere/app');
   const ledger = ledgerIn(child, familyLedger('child', [`- parent: epic @ ${other}`]));
-  ledgerIn(worktree(root, main, path.join(root, 'epic')), familyLedger('epic', [], '## Children\n- child\n\n## Next step\nA step.\n'));
 
-  assert.equal(sessionStart(root, child).additionalContext, relationText(ledger, `Parent task: epic @ ${other}.`));
+  assert.equal(sessionStart(root, child).additionalContext, relationText(ledger, `Parent task: epic @ ${other} (missing).`));
 });
 
-test('session-start in a parent task names each child in another repository with that repository and its mark, and no local status', (t) => {
+test('session-start names a task in another repository with an unknown status when cc-ledger-parent does not answer in time', (t) => {
+  const root = scratch(t);
+  const main = repository(root, 'main');
+  const child = worktree(root, main, path.join(root, 'child'));
+  const other = repository(root, 'app');
+  const ledger = ledgerIn(child, familyLedger('child', [`- parent: epic @ ${other}`], `## Children\n- part @ ${other}\n\n## Next step\nA step.\n`));
+  const hooks = path.join(root, 'tools/hooks');
+  mkdirSync(hooks, { recursive: true });
+  mkdirSync(path.join(root, 'tools/bin'));
+  writeFileSync(path.join(hooks, 'ledger-list.sh'), readFileSync(LEDGER_LIST));
+  writeFileSync(path.join(root, 'tools/bin/cc-ledger-parent'), '#!/bin/bash\nexec sleep 60\n', { mode: 0o755 });
+
+  const started = Date.now();
+  const result = spawnSync('bash', [path.join(hooks, 'ledger-list.sh'), 'session-start'], { cwd: child, env: environment(root), encoding: 'utf8' });
+
+  assert.ok(Date.now() - started < 15_000, `took ${Date.now() - started} ms`);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(
+    (JSON.parse(result.stdout) as SessionStartOutput).hookSpecificOutput.additionalContext,
+    relationText(ledger, `Parent task: epic @ ${other} (unknown).`, `Child task: part @ ${other} (unknown).`),
+  );
+});
+
+test('session-start in a parent task names each child in another repository with that repository and its status there', (t) => {
   const root = scratch(t);
   const main = repository(root, 'main');
   const epic = worktree(root, main, path.join(root, 'epic'));
-  const lib = path.join(root, 'lib');
-  const children = `## Children\n- child-a\n- child-a @ ${lib}\n- begun @ ${lib} (started 2026-10-20)\n- old @ ${lib} (retired 2026-10-01)\n\n## Next step\nA step.\n`;
+  const lib = repository(root, 'lib');
+  const children = `## Children\n- child-a\n- child-a @ ${lib}\n- begun @ ${lib} (started 2026-10-20)\n- old @ ${lib} (retired 2026-10-01)\n- gone @ ${lib}\n\n## Next step\nA step.\n`;
   const ledger = ledgerIn(epic, familyLedger('epic', [], children).replace(/\n/g, '\r\n'));
   ledgerIn(worktree(root, main, path.join(root, 'child-a')), familyLedger('child-a', ['- parent: epic']));
   backlogLedger(root, 'main', 'begun', main);
+  backlogLedger(root, 'lib', 'child-a', lib);
+  ledgerIn(worktree(root, lib, path.join(root, 'lib-begun')), familyLedger('begun', [`- parent: epic @ ${main}`]));
 
   assert.equal(
     sessionStart(root, epic).additionalContext,
     relationText(
       ledger,
       'Child task: child-a (active).',
-      `Child task: child-a @ ${lib}.`,
-      `Child task: begun @ ${lib} (started 2026-10-20).`,
+      `Child task: child-a @ ${lib} (backlog).`,
+      `Child task: begun @ ${lib} (active).`,
       `Child task: old @ ${lib} (retired 2026-10-01).`,
+      `Child task: gone @ ${lib} (missing).`,
     ),
   );
 });

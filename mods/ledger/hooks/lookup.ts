@@ -1,6 +1,7 @@
 import type { EngineInterface, ProcessRunResult } from 'claude-code'
 
 import { activeLedger, folderSlug, ledgerPaths, summarize, type ActiveLedger, type BranchState, type LedgerSummary } from './ledger'
+import { mainCheckout } from './registry'
 import { defaultBranchOf, dirname, isInside, parseCount, stateFailedMessage } from './retire'
 import { basename, parseWorktrees, type Worktree } from './worktrees'
 import { lookUpPrs } from './worktrees-command'
@@ -45,9 +46,14 @@ export async function sessionFolder($: EngineInterface): Promise<SessionFolder> 
 export const sessionLedger = (found: Found[], folder: SessionFolder): ActiveLedger =>
   folder.removed === undefined ? activeLedger(found.map(({ path }) => path), folder.path) : { kind: 'none' }
 
-async function listLedgers($: EngineInterface, mode: 'paths' | 'backlog', slugOf: (path: string) => string): Promise<Found[] | { error: string }> {
+async function listLedgers(
+  $: EngineInterface,
+  mode: 'paths' | 'backlog',
+  slugOf: (path: string) => string,
+  cwd?: string,
+): Promise<Found[] | { error: string }> {
   const script = `${$.plugin.root}/../../hooks/ledger-list.sh`
-  const { path: cwd } = await sessionFolder($)
+  cwd ??= (await sessionFolder($)).path
   let result: ProcessRunResult
   try {
     result = await $.process.run(['bash', script, mode], { cwd })
@@ -65,9 +71,11 @@ export function findLedgers($: EngineInterface): Promise<Found[] | { error: stri
   return listLedgers($, 'paths', folderSlug)
 }
 
+const backlogSlug = (path: string): string => basename(path).replace(/\.md$/, '')
+
 /** The backlog ledgers of the repository the session is in, matched on its main checkout as cc-task-new and cc-ledger-parent do. */
 export function findBacklogLedgers($: EngineInterface): Promise<Found[] | { error: string }> {
-  return listLedgers($, 'backlog', path => basename(path).replace(/\.md$/, ''))
+  return listLedgers($, 'backlog', backlogSlug)
 }
 
 function summarizeAll($: EngineInterface, found: Found[]): Promise<LedgerSummary[]> {
@@ -86,28 +94,77 @@ async function otherWorktreeLedgers($: EngineInterface): Promise<Map<string, Led
   return new Map(summaries.filter(summary => summary !== undefined).map(summary => [summary.slug, summary]))
 }
 
-/**
- * The unlisted ledgers that are the parent of a listed task, the parent of that parent, and so on. A parent is looked up
- * in the backlog, marked as backlog, then in the other worktrees, whose ledgers findLedgers does not list from a linked
- * worktree. Each walk up stops at a parent that is listed or seen before, that has no ledger in either place, or that is
- * in another repository.
- */
-export async function unlistedAncestors($: EngineInterface, listed: LedgerSummary[]): Promise<LedgerSummary[] | { error: string }> {
-  const seen = new Set(listed.map(({ slug }) => slug))
-  const parentHere = ({ parent }: LedgerSummary) => (parent?.includes(' @ ') ? undefined : parent)
-  if (listed.map(parentHere).every(parent => parent === undefined || seen.has(parent))) return []
+async function backlogSummaries($: EngineInterface): Promise<Map<string, LedgerSummary> | { error: string }> {
   const found = await findBacklogLedgers($)
   if ('error' in found) return found
   const backlog = new Map<string, LedgerSummary>()
   for (const summary of await summarizeAll($, found)) if (!backlog.has(summary.slug)) backlog.set(summary.slug, { ...summary, isBacklog: true })
-  let active: Map<string, LedgerSummary> | undefined
+  return backlog
+}
+
+/** The ledgers ledger-list.sh lists in the main checkout `main` of another repository; none when it cannot, as when that is gone. */
+async function ledgersElsewhere($: EngineInterface, main: string, mode: 'paths' | 'backlog'): Promise<Map<string, LedgerSummary>> {
+  const found = await listLedgers($, mode, mode === 'backlog' ? backlogSlug : folderSlug, main).catch(() => [])
+  if ('error' in found) return new Map()
+  const summaries = await Promise.all(found.map(({ path, slug, mtimeMs }) => $.fs.read(path).then(text => summarize(text, slug, mtimeMs), () => undefined)))
+  return new Map(summaries.filter(summary => summary !== undefined).map(summary => [summary.slug, mode === 'backlog' ? { ...summary, isBacklog: true } : summary]))
+}
+
+function once<T>(load: () => Promise<T>): () => Promise<T> {
+  let loaded: Promise<T> | undefined
+  return () => (loaded ??= load())
+}
+
+/**
+ * The unlisted ledgers that are the parent of a listed task, the parent of that parent, and so on. A parent is looked up
+ * in the backlog, marked as backlog, then in the other worktrees, whose ledgers findLedgers does not list from a linked
+ * worktree. A parent in another repository, `<slug> @ <main>`, is looked up the same way from that main checkout, and
+ * keeps that name, as does its own parent, so that each matches the name its child here gives it. Each walk up stops at
+ * a parent that is listed or seen before, or that has no ledger in either place.
+ */
+export async function unlistedAncestors($: EngineInterface, listed: LedgerSummary[]): Promise<LedgerSummary[] | { error: string }> {
+  const seen = new Set(listed.map(({ slug }) => slug))
+  if (listed.every(({ parent }) => parent === undefined || seen.has(parent))) return []
+  const backlog = once(() => backlogSummaries($))
+  const active = once(() => otherWorktreeLedgers($))
+  const thisMain = once(async () => mainCheckout($, (await sessionFolder($)).path))
+  const repositories = new Map<string, { backlog: () => Promise<Map<string, LedgerSummary>>; active: () => Promise<Map<string, LedgerSummary>> }>()
+  const repository = (main: string) => {
+    const known = repositories.get(main)
+    if (known) return known
+    const loaded = { backlog: once(() => ledgersElsewhere($, main, 'backlog')), active: once(() => ledgersElsewhere($, main, 'paths')) }
+    repositories.set(main, loaded)
+    return loaded
+  }
+
+  // A parent that a ledger in the repository at `main` names, as a ledger in this repository names it.
+  const nameFrom = async (main: string, parent: string): Promise<string> => {
+    const [slug = '', other] = parent.split(' @ ')
+    if (other === undefined) return `${parent} @ ${main}`
+    return other === (await thisMain()) ? slug : parent
+  }
+
+  const find = async (name: string): Promise<LedgerSummary | undefined | { error: string }> => {
+    const [slug = '', main] = name.split(' @ ')
+    if (main === undefined) {
+      const here = await backlog()
+      return 'error' in here ? here : (here.get(slug) ?? (await active()).get(slug))
+    }
+    const there = repository(main)
+    const found = (await there.backlog()).get(slug) ?? (await there.active()).get(slug)
+    if (found === undefined) return undefined
+    const { parent, ...summary } = found
+    return { ...summary, slug: name, ...(parent !== undefined && { parent: await nameFrom(main, parent) }) }
+  }
+
   const ancestors: LedgerSummary[] = []
   for (const ledger of listed) {
-    for (let parent = parentHere(ledger); parent !== undefined && !seen.has(parent); ) {
+    for (let parent = ledger.parent; parent !== undefined && !seen.has(parent); ) {
       seen.add(parent)
-      const ancestor = backlog.get(parent) ?? (active ??= await otherWorktreeLedgers($)).get(parent)
+      const ancestor = await find(parent)
+      if (ancestor !== undefined && 'error' in ancestor) return ancestor
       if (ancestor) ancestors.push(ancestor)
-      parent = ancestor && parentHere(ancestor)
+      parent = ancestor?.parent
     }
   }
   return ancestors

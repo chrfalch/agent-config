@@ -643,6 +643,25 @@ test('a child whose parent is in another repository is never nested under a task
   assert.equal(rows.find(row => row.slug === 'child-b')?.parentId, epic);
 });
 
+test('a child row follows its parent row in another repository, whose main checkout the child names', async t => {
+  const { home, stubBin, app, epic } = family(t);
+  backlogLedger(home, 'web', 'child-w', path.join(home, 'repos/web'));
+  assert.equal(run(home, [CC_LEDGERS], 'scan').status, 0);
+  editRegistry(home, entry => ({
+    ...entry,
+    ...FAMILY[`${entry.repo}/${entry.slug}`],
+    ...(entry.repo === 'web' && entry.slug === 'child-w' && { updated: '2026-10-20T07:00:00.000Z', parent: 'epic', parentMain: app }),
+  }));
+  const server = await startForeground(t, home, stubBin);
+  const rows = (await list(server)).ledgers;
+  const childW = rows.find(row => row.slug === 'child-w');
+  assert.equal(childW?.parent, `epic @ ${app}`);
+  assert.equal(childW?.parentId, epic);
+  assert.equal(childW?.nested, true);
+  const epicRow = rows.findIndex(row => row.id === epic);
+  assert.deepEqual(shape(rows.slice(epicRow, epicRow + 4)), ['epic', '↳ child-w', '↳ child-b', '↳ child-a']);
+});
+
 test('a parent resolves to the task that is not archived before an archived one of that slug, else to the archived one', async t => {
   const { home, stubBin, epic, oldTask } = family(t);
   const archivedEpic = path.join(home, '.claude/ledger-archive/app/2026-10-02-epic.md');

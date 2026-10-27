@@ -7,7 +7,7 @@ const exit = (exitCode: number, stdout: string, stderr = ''): Reply => ({
   value: { exitCode, stdout, stderr, isStdoutTruncated: false, isStderrTruncated: false },
 })
 
-type Entry = { repo: string; slug: string; path: string; branch: string; status: string; created: string; updated: string; archivePath?: string; parent?: string; parentMain?: string }
+type Entry = { repo: string; slug: string; path: string; branch: string; status: string; created: string; updated: string; archivePath?: string; parent?: string; parentMain?: string; main?: string }
 
 const entry = (slug: string, updated: string, extra: Partial<Entry> = {}): Entry => ({
   repo: 'app',
@@ -223,6 +223,82 @@ test('/ledger:all never nests a child whose parent is in another repository unde
   expect(text.split('\n').slice(4)).toEqual([
     `| app | child (parent: epic @ /work/web) | active | ${local(child.updated)} | Ship it. |`,
     `| app | epic | active | ${local(epic.updated)} | Ship it. |`,
+  ])
+})
+
+test('/ledger:all nests a child under its parent in another repository, not under a task of that slug in its own', async ($, on) => {
+  const child = entry('child', '2026-10-05T09:30:00.000Z', { main: '/work/app', parent: 'epic', parentMain: '/work/web' })
+  const localEpic = entry('epic', '2026-10-04T09:30:00.000Z', { main: '/work/app' })
+  const webEpic = entry('epic', '2026-10-03T09:30:00.000Z', { repo: 'web', main: '/work/web', path: '/work/web/.claude/worktrees/epic/.claude/ledger.md' })
+  const all = [child, localEpic, webEpic]
+  world(
+    on,
+    { 'bin/cc-ledgers list --json': exit(0, JSON.stringify(all)) },
+    Object.fromEntries(all.map(({ path }) => [path, ledgerText('Ship it.')])),
+  )
+
+  const { text } = await $.command.run({ command: 'ledger:all' })
+
+  expect(text.split('\n').slice(4)).toEqual([
+    `| app | epic | active | ${local(localEpic.updated)} | Ship it. |`,
+    `| web | epic | active | ${local(webEpic.updated)} | Ship it. |`,
+    `| app | ↳ child | active | ${local(child.updated)} | Ship it. |`,
+  ])
+})
+
+test('/ledger:all nests a child under the parent in its own main checkout, not under one of another repo with the same name', async ($, on) => {
+  const child = entry('child', '2026-10-05T09:30:00.000Z', { main: '/a/app', parent: 'epic' })
+  const otherEpic = entry('epic', '2026-10-04T09:30:00.000Z', { main: '/b/app', path: '/b/app/.claude/worktrees/epic/.claude/ledger.md' })
+  const ownEpic = entry('epic', '2026-10-03T09:30:00.000Z', { main: '/a/app' })
+  const all = [child, otherEpic, ownEpic]
+  world(
+    on,
+    { 'bin/cc-ledgers list --json': exit(0, JSON.stringify(all)) },
+    Object.fromEntries(all.map(({ path }) => [path, ledgerText('Ship it.')])),
+  )
+
+  const { text } = await $.command.run({ command: 'ledger:all' })
+
+  expect(text.split('\n').slice(4)).toEqual([
+    `| app | epic | active | ${local(otherEpic.updated)} | Ship it. |`,
+    `| app | epic | active | ${local(ownEpic.updated)} | Ship it. |`,
+    `| app | ↳ child | active | ${local(child.updated)} | Ship it. |`,
+  ])
+})
+
+test('/ledger:all nests a child under its parent by repo name when either entry has no main checkout', async ($, on) => {
+  const child = entry('child', '2026-10-05T09:30:00.000Z', { main: '/work/app', parent: 'epic' })
+  const epic = entry('epic', '2026-10-03T09:30:00.000Z', { status: 'archived', archivePath: '/home/.claude/ledger-archive/app/2026-10-03-epic.md' })
+  const all = [child, epic]
+  world(
+    on,
+    { 'bin/cc-ledgers list --json': exit(0, JSON.stringify(all)) },
+    Object.fromEntries(all.map(entry => [entry.archivePath ?? entry.path, ledgerText('Ship it.')])),
+  )
+
+  const { text } = await $.command.run({ command: 'ledger:all' })
+
+  expect(text.split('\n').slice(4)).toEqual([
+    `| app | epic | archived | ${local(epic.updated)} | Ship it. |`,
+    `| app | ↳ child | active | ${local(child.updated)} | Ship it. |`,
+  ])
+})
+
+test('/ledger:all nests a backlog child under its backlog parent in another repository', async ($, on) => {
+  const child = { ...backlogEntry('child', '2026-10-05T09:30:00.000Z'), parent: 'epic', parentMain: '/work/web' }
+  const epic = { ...backlogEntry('epic', '2026-10-03T09:30:00.000Z'), repo: 'web', main: '/work/web', path: '/home/.claude/ledger-backlog/web/epic.md' }
+  const all = [child, epic]
+  world(
+    on,
+    { 'bin/cc-ledgers list --json': exit(0, JSON.stringify(all)) },
+    Object.fromEntries(all.map(({ path }) => [path, ledgerText('Ship it.')])),
+  )
+
+  const { text } = await $.command.run({ command: 'ledger:all' })
+
+  expect(text.split('\n').slice(-2)).toEqual([
+    `| web | epic | ${local(epic.updated)} | A goal. |`,
+    `| app | ↳ child | ${local(child.updated)} | A goal. |`,
   ])
 })
 

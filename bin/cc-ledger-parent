@@ -5,6 +5,8 @@
 //        cc-ledger-parent show <parent> [--json]
 //        cc-ledger-parent start <parent> <child>
 //        cc-ledger-parent next <parent>
+//        cc-ledger-parent status <slug> [--main <folder>]
+//        cc-ledger-parent mark <parent> [--main <folder>] <child> retired
 // A task is `<slug>`, in the repository that holds the current folder, or `<slug>@<path>`, in the
 // repository that holds <path>, its main checkout or any worktree, relative paths allowed. A slug is
 // a ledger's title slug, looked up in the ledgers of every worktree of that repository, and in the
@@ -15,11 +17,15 @@
 // child that next prints. When parent and child are in two repositories, each line names the other
 // task's main checkout: `- parent: <slug> @ <main>` and `- <slug> @ <main>`. show prints such a
 // child as `<slug>@<main>`, and next every task outside the current repository.
+// status prints one word for a task: active, parked, backlog, retired (archived in ~/.claude/ledger-archive) or missing.
+// mark ends the parent's line for a retired child with `(retired YYYY-MM-DD)`, for cc-worktree-retire. --main names the
+// repository of the first task by a folder in it, or by a main checkout a ledger line names, which may be gone.
 'use strict';
 const { spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { archivedMain } = require('./lib/archived-main.js');
 
 const usage = [
   'usage: cc-ledger-parent add <parent> <child>',
@@ -27,10 +33,14 @@ const usage = [
   '       cc-ledger-parent show <parent> [--json]',
   '       cc-ledger-parent start <parent> <child>',
   '       cc-ledger-parent next <parent>',
+  '       cc-ledger-parent status <slug> [--main <folder>]',
+  '       cc-ledger-parent mark <parent> [--main <folder>] <child> retired',
   'A task is <slug> in this repository, or <slug>@<path> in the repository that holds <path>.',
+  '--main <folder> puts the first task in the repository that holds <folder>, or whose main checkout was <folder>.',
 ].join('\n');
 
 const backlogRoot = path.join(os.homedir(), '.claude', 'ledger-backlog');
+const archiveRoot = path.join(os.homedir(), '.claude', 'ledger-archive');
 const inBacklog = (ledger) => path.dirname(path.dirname(ledger)) === backlogRoot;
 
 const SLUG = /^[A-Za-z0-9._-]+$/;
@@ -71,17 +81,29 @@ let cwdRepository;
 const thisRepository = () => (cwdRepository ??= { main: mainCheckout(process.cwd()) }).main;
 
 // The Children line format and cc-worktree-retire read a slug as one word of these characters.
+function checkedSlug(slug) {
+  return SLUG.test(slug) ? slug : fail(`unsupported slug ${JSON.stringify(slug)}: a slug must match ^[A-Za-z0-9._-]+$`);
+}
+
 function parseTask(arg) {
   const at = arg.indexOf('@');
-  const slug = at === -1 ? arg : arg.slice(0, at);
-  if (!SLUG.test(slug)) fail(`unsupported slug ${JSON.stringify(slug)}: a slug must match ^[A-Za-z0-9._-]+$`);
+  const slug = checkedSlug(at === -1 ? arg : arg.slice(0, at));
   if (at === -1) return { slug, main: thisRepository() ?? fail(`not inside a git repository: ${process.cwd()}`) };
   const folder = arg.slice(at + 1);
   if (folder === '') fail(`no folder after the @ in ${arg}`);
   return { slug, main: mainCheckout(folder) ?? fail(`not inside a git repository: ${path.resolve(folder)}`) };
 }
 
-const same = (a, b) => a.slug === b.slug && a.main === b.main;
+// A ledger line can name a main checkout with a trailing slash or through a symbolic link; one that is gone is compared without the slash.
+function realMain(main) {
+  try {
+    return fs.realpathSync(main);
+  } catch {
+    return path.resolve(main);
+  }
+}
+
+const same = (a, b) => a.slug === b.slug && (a.main === b.main || realMain(a.main) === realMain(b.main));
 const repositoryName = (main) => (main === thisRepository() ? 'this repository' : `the repository at ${main}`);
 // A task as a command run in the repository at `main` names it: by its slug alone when it is there.
 const taskNameFrom = (main, { slug, main: own }) => (own === main ? slug : `${slug}@${own}`);
@@ -277,18 +299,42 @@ function remove(parentArg, childArg) {
   register(child.file);
 }
 
+function liveStatus(task) {
+  return inBacklog(task.file) ? 'backlog' : PARKED.test(firstText(body(task.lines, 'Next step'))) ? 'parked' : 'active';
+}
+
 // A child in another repository is looked up there, and shown with its main checkout.
 function childStatus(parent, line) {
   const named = { slug: line.slug, ...(line.main !== parent.main && { main: line.main }) };
   if (line.retired) return { ...named, status: 'retired', next: '' };
   const child = lookup(line);
   if (!child) return { ...named, status: 'missing', next: '' };
-  const next = body(child.lines, 'Next step');
-  return {
-    ...named,
-    status: inBacklog(child.file) ? 'backlog' : PARKED.test(firstText(next)) ? 'parked' : 'active',
-    next: firstText(next.filter((text) => !PARKED.test(text.trim()))),
-  };
+  return { ...named, status: liveStatus(child), next: firstText(body(child.lines, 'Next step').filter((text) => !PARKED.test(text.trim()))) };
+}
+
+// cc-worktree-retire archives to ~/.claude/ledger-archive/<main checkout folder>/, which another repository with the same
+// folder name shares; the copy's own Location tells them apart.
+function isArchived({ slug, main }) {
+  const folder = path.join(archiveRoot, path.basename(main));
+  let names;
+  try {
+    names = fs.readdirSync(folder);
+  } catch (error) {
+    if (error.code === 'ENOENT') return false;
+    throw error;
+  }
+  return names
+    .filter((name) => name.endsWith('.md'))
+    .some((name) => {
+      const text = fs.readFileSync(path.join(folder, name), 'utf8');
+      return titleSlug(text) === slug && archivedMain(text) === main;
+    });
+}
+
+// A live ledger comes first: a retired slug can belong to a new task.
+function status(ref) {
+  const task = lookup(ref);
+  console.log(task ? liveStatus(task) : isArchived(ref) ? 'retired' : 'missing');
 }
 
 // A retired slug can belong to a new task, so its ledger is not the child's.
@@ -338,11 +384,35 @@ function start(parentArg, childArg) {
     children(parent).find((listed) => same(listed, child)) ??
     fail(`${taskName(child)} is not listed under ## Children of ${taskName(parent)}; add it with /ledger:parent ${taskName(parent)} add ${taskName(child)}`);
   if (line.retired || line.started) return;
-  const text = parent.lines[line.index];
-  parent.lines[line.index] = `${text.match(/^\s*/)[0]}- ${linkFrom(parent, child)} (started ${today()})${text.endsWith('\r') ? '\r' : ''}`;
-  save(parent);
-  console.log(`started ${taskName(child)} in ${parent.file}`);
+  markLine(parent, line, child, 'started');
 }
+
+function markLine(parent, { index }, child, mark) {
+  const text = parent.lines[index];
+  parent.lines[index] = `${text.match(/^\s*/)[0]}- ${linkFrom(parent, child)} (${mark} ${today()})${text.endsWith('\r') ? '\r' : ''}`;
+  save(parent);
+  console.log(`${mark} ${taskName(child)} in ${parent.file}`);
+}
+
+// No line to mark is no error: retire marks a parent that may have dropped the child. The note on stderr lets retire
+// tell that apart from a line already marked retired.
+function markRetired(parentRef, childArg) {
+  const child = parseTask(childArg);
+  const parent = resolve(parentRef);
+  const line = children(parent).find((listed) => same(listed, child));
+  if (!line) console.error(`${taskNameFrom(parent.main, child)} is not listed under ## Children of ${parent.slug} in ${parent.file}`);
+  else if (!line.retired) markLine(parent, line, child, 'retired');
+}
+
+function mainOption(args) {
+  const at = args.indexOf('--main');
+  if (at === -1) return { words: args };
+  const folder = args[at + 1];
+  if (folder === undefined || folder.startsWith('-')) return undefined;
+  return { words: [...args.slice(0, at), ...args.slice(at + 2)], main: mainCheckout(folder) ?? path.resolve(folder) };
+}
+
+const taskIn = (main, arg) => (main === undefined ? parseTask(arg) : { slug: checkedSlug(arg), main });
 
 // A marked child, or one no longer in the backlog, has been started already. A child with children of its own is not
 // started itself, its children are; once none of them is left, its later siblings still get their turn.
@@ -373,7 +443,12 @@ try {
   if (Object.hasOwn(changes, command) && args.length === 2 && !json) changes[command](...args);
   else if (command === 'show' && names.length === 1) show(names[0], json);
   else if (command === 'next' && args.length === 1 && !json) next(args[0]);
-  else fail(usage);
+  else if (command === 'status' || command === 'mark') {
+    const { words, main } = mainOption(args) ?? fail(usage);
+    if (command === 'status' && words.length === 1) status(taskIn(main, words[0]));
+    else if (command === 'mark' && words.length === 3 && words[2] === 'retired') markRetired(taskIn(main, words[0]), words[1]);
+    else fail(usage);
+  } else fail(usage);
 } catch (error) {
   fail(`cc-ledger-parent ${command}: ${error.message}`);
 }

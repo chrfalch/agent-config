@@ -22,6 +22,19 @@ linked worktree this session is in, not a new worktree:
 
 Otherwise, if that request is empty, ask what the task is and stop.
 
+If the request clearly holds two or more parts that ship separately, as
+separate PRs or separate merges, it needs a parent task. Write the parent
+task's backlog ledger first, then the ledger of each child task, each with
+steps 1 to 4 and without `--stack`. Then attach each child task in the order
+they ship: run `bin/cc-ledger-parent add <parent> <child>` from the
+agent-config repo, as in step 4. Write the split and the order into the parent
+ledger. Never promote the parent task. Steps 5 to 7 do not apply, except that
+a current ledger gets one line under its Decisions that names the parent task.
+Reply with `/ledger:go <parent>` as the start line: it starts the first child
+task. If the split shows up while you plan the current ledger's task, the Plan
+gate applies instead: the current task becomes the first child task of a new
+parent task.
+
 1. Pick a short kebab-case slug for the task, such as `fix-login`.
 2. Write a one-paragraph goal. State the problem first, then what done looks
    like.

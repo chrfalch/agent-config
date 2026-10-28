@@ -264,8 +264,9 @@ backlog file. A backlog task of another repo is not found.
 
 A parent task ties together two or more tasks that ship separately: one
 feature split into stacked PRs, or a group of related fixes. Each of those
-tasks is a child task. Do not make a parent task for a single PR, or for a task
-that only has many steps.
+tasks is a child task. Work with two or more parts that ship separately needs
+a parent task, made before any child work starts. Do not make a parent task for
+a single PR, or for a task that only has many steps.
 
 A parent task is a normal task. Start it with `/ledger:task`, and start each
 child task with its own `/ledger:task`. Then attach each child task:

@@ -141,3 +141,38 @@ test('/ledger:help no longer says /ledger:update starts a task', () => {
 test('the installation guide no longer says /ledger:update starts a task', () => {
   assert.doesNotMatch(read('docs/installation.md'), /When there is no ledger, it starts a task/);
 });
+
+const planGate = () => read('rules/10-operating-model.md').match(/### Plan gate.*?### /)?.[0] ?? '';
+
+test('the Plan gate requires a parent task for two or more separately shipped parts, before child work', () => {
+  const gate = planGate();
+  assert.match(gate, /two or more parts that ship separately/);
+  assert.match(gate, /make the parent task and each child task/);
+  assert.match(gate, /attach each child task to the parent task/);
+  assert.match(gate, /split and the order .*parent ledger/);
+  assert.match(gate, /before any child work starts/);
+});
+
+test('the Plan gate makes the current task the first child task', () => {
+  const gate = planGate();
+  assert.match(gate, /current task already has a worktree, it becomes the first child task/);
+  assert.match(gate, /new parent task with `\/ledger:task`/);
+  assert.match(gate, /parent task stays in the backlog, with no worktree/);
+});
+
+test('the parent task rule states both directions', () => {
+  const bullet = read('rules/10-operating-model.md').match(/\*\*Parent tasks are for big work only\.\*\*.*? - \*\*/)?.[0] ?? '';
+  assert.match(bullet, /two or more tasks that ship separately.*a parent task is required/);
+  assert.match(bullet, /Never make a parent task for small work, for a single-PR task/);
+  assert.match(bullet, /This is a hard rule, not a preference\./);
+});
+
+test('/ledger:task makes the parent task first for a request with separately shipped parts', () => {
+  const split = read('mods/ledger/commands/task.md').match(/two or more parts that ship separately.*? 1\. Pick/)?.[0] ?? '';
+  assert.match(split, /parent task's backlog ledger first, then the ledger of each child task/);
+  assert.match(split, /attach each child task in the order they ship/);
+  assert.match(split, /Write the split and the order into the parent ledger/);
+  assert.match(split, /`bin\/cc-ledger-parent add <parent> <child>`/);
+  assert.match(split, /Never promote the parent task/);
+  assert.match(split, /`\/ledger:go <parent>`/);
+});

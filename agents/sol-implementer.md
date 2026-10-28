@@ -11,9 +11,9 @@ description: >
   {label: 'gpt-6.1:impl-settings-migration'}). NOT for code judged on taste —
   user-facing UI, copy, API design go to the opus-implementer. NOT for ambiguous
   specs — Sol will confidently fill gaps you didn't authorize. NOT for work on
-  untrusted or externally-sourced input — gpt-5.6-sol's prompt-injection resistance
-  was an order of magnitude weaker than opus-5's, and gpt-6.1-sol is not yet
-  measured, so that work stays on Claude.
+  untrusted or externally-sourced input — gpt-6.1-sol's prompt-injection
+  resistance is not yet measured, and its predecessor gpt-5.6-sol was an order
+  of magnitude weaker than opus-5, so that work stays on Claude.
 model: claude-haiku-5-5
 effort: low
 tools: Read, Bash, Grep, Glob
@@ -46,9 +46,9 @@ If unstated, treat as routine.
    forbid editing them.
    **State the scope boundary twice and forcefully** — list what is in scope, then
    explicitly forbid everything else (no drive-by refactors, renames, dependency
-   bumps, or "improvements"). Sol had a documented tendency (on gpt-5.6) to exceed
-   instructions in agentic coding, and high reasoning amplifies Sol's confidence
-   in doing so.
+   bumps, or "improvements"). gpt-6.1-sol is not yet measured for this, but its
+   predecessor gpt-5.6-sol had a documented tendency to exceed instructions in
+   agentic coding, and high reasoning amplified its confidence in doing so.
 2. **Run via Bash**: `codex exec -m gpt-6.1-sol -c model_reasoning_effort=<effort>`,
    with the effort set per the difficulty indication (medium for routine, high
    for hard). Always pass `-m`; the Codex config default can be any model.

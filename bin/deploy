@@ -4,7 +4,7 @@
 // would never run.
 'use strict';
 const { spawnSync } = require('node:child_process');
-const { existsSync } = require('node:fs');
+const { existsSync, readSync } = require('node:fs');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 
@@ -19,6 +19,39 @@ if (major < 20 || (major === 20 && minor < 12)) {
 // and the CLAUDE.md retirement check must use the caller's path.
 const repo = path.dirname(path.dirname(process.argv[1]));
 process.chdir(repo);
+
+function checkUpstream() {
+  const args = process.argv.slice(2);
+  if ((!process.stdin.isTTY && process.env.DEPLOY_PULL_CHECK !== '1') || args.includes('-h') || args.includes('--help')) return;
+  const upstreamResult = spawnSync('git', ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'], { encoding: 'utf8' });
+  if (upstreamResult.status !== 0) return;
+  const upstream = upstreamResult.stdout.trim();
+  const remote = upstream.split('/')[0];
+  const fetch = spawnSync('git', ['fetch', '--quiet', remote], { stdio: 'ignore' });
+  if (fetch.status !== 0) {
+    console.error(`deploy: could not fetch ${upstream}; deploying without checking for new commits`);
+    return;
+  }
+  const countResult = spawnSync('git', ['rev-list', '--count', 'HEAD..@{u}'], { encoding: 'utf8' });
+  const count = Number(countResult.stdout.trim());
+  if (!(count > 0)) return;
+  if (args.includes('--dry-run')) {
+    console.log(`deploy: ${upstream} has ${count} new commit(s) not pulled`);
+    return;
+  }
+  process.stdout.write(`${upstream} has ${count} new commit(s). Pull before deploying? [Y/n] `);
+  const byte = Buffer.alloc(1);
+  let answer = '';
+  while (readSync(0, byte, 0, 1, null) > 0 && byte[0] !== 10) answer += byte.toString();
+  if (!['', 'y', 'yes'].includes(answer.trim().toLowerCase())) return;
+  const pull = spawnSync('git', ['pull', '--ff-only'], { stdio: ['inherit', process.stderr, 'inherit'] });
+  if (pull.status !== 0) {
+    console.error('deploy: git pull --ff-only failed; nothing deployed');
+    process.exit(1);
+  }
+}
+
+checkUpstream();
 
 // npm writes this file last, so its absence also catches an interrupted install.
 if (!existsSync(path.join(repo, 'node_modules/.package-lock.json'))) {

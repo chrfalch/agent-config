@@ -170,3 +170,112 @@ for (const state of Object.keys(install) as (keyof typeof install)[]) {
     assert.deepEqual({ status, stdout, stderr }, expected);
   });
 }
+
+function pullCheckRepo(t: TestContext, ahead = true) {
+  const home = freshHome(t);
+  const origin = path.join(home, 'origin.git');
+  const repo = path.join(home, 'repo with spaces');
+  const peer = path.join(home, 'peer');
+  const env = {
+    ...process.env,
+    HOME: home,
+    GIT_CONFIG_GLOBAL: path.join(home, '.gitconfig'),
+    GIT_CONFIG_NOSYSTEM: '1',
+    GIT_AUTHOR_NAME: 'Deploy Test',
+    GIT_AUTHOR_EMAIL: 'deploy@example.test',
+    GIT_COMMITTER_NAME: 'Deploy Test',
+    GIT_COMMITTER_EMAIL: 'deploy@example.test',
+    DEPLOY_PULL_CHECK: '1',
+  };
+  const git = (cwd: string, ...args: string[]) => {
+    const result = spawnSync('git', args, { cwd, env, encoding: 'utf8' });
+    assert.ifError(result.error);
+    assert.equal(result.status, 0, result.stderr);
+    return result.stdout.trim();
+  };
+  git(home, 'init', '--bare', '--initial-branch=main', origin);
+  git(home, 'clone', origin, repo);
+  mkdirSync(path.join(repo, 'bin'));
+  mkdirSync(path.join(repo, 'tools'));
+  for (const file of ['package.json', 'bin/package.json', 'bin/deploy']) {
+    writeFileSync(path.join(repo, file), readFileSync(path.join(REPO, file)), { mode: 0o755 });
+  }
+  writeFileSync(path.join(repo, 'tools/deploy.ts'), 'export function main(argv: string[]): void {\n  console.log([process.cwd(), process.env.DEPLOY_REPO, ...argv].join(\'\\n\'));\n}\n');
+  symlinkSync(path.join(REPO, 'node_modules'), path.join(repo, 'node_modules'));
+  git(repo, 'add', 'package.json', 'bin', 'tools');
+  git(repo, 'commit', '-m', 'Initial deploy stub');
+  git(repo, 'push', '-u', 'origin', 'main');
+  const initialHead = git(repo, 'rev-parse', 'HEAD');
+  git(home, 'clone', origin, peer);
+  if (ahead) {
+    writeFileSync(path.join(peer, 'remote.txt'), 'remote commit\n');
+    git(peer, 'add', 'remote.txt');
+    git(peer, 'commit', '-m', 'Remote commit');
+    git(peer, 'push');
+  }
+  const deploy = (input: string, args: string[] = [], enabled = true) => {
+    const result = spawnSync(path.join(repo, 'bin/deploy'), args, {
+      cwd: home,
+      env: { ...env, DEPLOY_PULL_CHECK: enabled ? '1' : undefined },
+      input,
+      encoding: 'utf8',
+    });
+    assert.ifError(result.error);
+    return result;
+  };
+  const deployed = `${realpathSync(repo)}\n${repo}\n`;
+  return { repo, origin, git, initialHead, deploy, deployed };
+}
+
+test('bin/deploy pulls new upstream commits on an empty answer', (t) => {
+  const { repo, origin, git, deploy, deployed } = pullCheckRepo(t);
+  const result = deploy('\n');
+  assert.equal(result.status, 0, result.stderr);
+  assert.ok(result.stdout.includes('origin/main has 1 new commit(s). Pull before deploying? [Y/n] '), result.stdout);
+  assert.equal(git(repo, 'rev-parse', 'HEAD'), git(origin, 'rev-parse', 'HEAD'));
+  assert.ok(result.stdout.includes(deployed), result.stdout);
+});
+
+test('bin/deploy continues without pulling when declined', (t) => {
+  const { repo, git, initialHead, deploy, deployed } = pullCheckRepo(t);
+  const result = deploy('n\n');
+  assert.equal(result.status, 0, result.stderr);
+  assert.ok(result.stdout.includes('origin/main has 1 new commit(s). Pull before deploying? [Y/n] '), result.stdout);
+  assert.equal(git(repo, 'rev-parse', 'HEAD'), initialHead);
+  assert.ok(result.stdout.includes(deployed), result.stdout);
+});
+
+test('bin/deploy does not prompt when upstream has no new commits', (t) => {
+  const { deploy, deployed } = pullCheckRepo(t, false);
+  const result = deploy('\n');
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, deployed);
+});
+
+test('bin/deploy reports new upstream commits without pulling in dry run', (t) => {
+  const { repo, git, initialHead, deploy, deployed } = pullCheckRepo(t);
+  const result = deploy('', ['--dry-run']);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, `deploy: origin/main has 1 new commit(s) not pulled\n${deployed}--dry-run\n`);
+  assert.equal(git(repo, 'rev-parse', 'HEAD'), initialHead);
+  assert.doesNotMatch(result.stdout, /Pull before deploying\?/);
+});
+
+test('bin/deploy skips upstream check with non-TTY stdin unless enabled', (t) => {
+  const { repo, git, initialHead, deploy, deployed } = pullCheckRepo(t);
+  const result = deploy('', [], false);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, deployed);
+  assert.equal(git(repo, 'rev-parse', 'HEAD'), initialHead);
+});
+
+test('bin/deploy aborts without deploying when fast-forward pull fails', (t) => {
+  const { repo, git, deploy, deployed } = pullCheckRepo(t);
+  writeFileSync(path.join(repo, 'local.txt'), 'local commit\n');
+  git(repo, 'add', 'local.txt');
+  git(repo, 'commit', '-m', 'Local commit');
+  const result = deploy('y\n');
+  assert.equal(result.status, 1, result.stderr);
+  assert.ok(result.stderr.includes('deploy: git pull --ff-only failed; nothing deployed\n'), result.stderr);
+  assert.ok(!result.stdout.includes(deployed), result.stdout);
+});

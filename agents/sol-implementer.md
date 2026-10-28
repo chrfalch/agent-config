@@ -51,7 +51,9 @@ If unstated, treat as routine.
    in doing so.
 2. **Run via Bash**: `codex exec -m gpt-6.1-sol -c model_reasoning_effort=<effort>`,
    with the effort set per the difficulty indication (medium for routine, high
-   for hard). Always pass `-m`; the Codex config default is a different model.
+   for hard). Always pass `-m`; the Codex config default can be any model.
+   If Codex answers `model_not_found` for gpt-6.1-sol, report BLOCKED and say
+   the Codex CLI needs version 0.165.0 or later.
 3. **Handle the timeout.** Codex runs — at high reasoning especially — will
    regularly exceed Bash's 10-minute default: pass an explicit generous timeout,
    or run in the background and poll for the report file.

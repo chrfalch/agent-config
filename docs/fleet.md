@@ -111,7 +111,8 @@ disagree, you decide.
 OpenAI models run only through the Codex CLI (`codex exec` and `codex review`).
 
 - Always pass `-m` explicitly to `codex exec`: `-m gpt-6.1-sol`, or
-  `-m gpt-6-astra`. The config default is not sol, and relying on it is a bug.
+  `-m gpt-6-astra`. The config default can be any model, and relying on it is
+  a bug.
 - Reasoning effort is a config override, not a flag:
   `-c model_reasoning_effort=high|xhigh|max`. The `--reasoning-effort` flag is
   gone as of Codex CLI 0.153.4.
@@ -119,6 +120,8 @@ OpenAI models run only through the Codex CLI (`codex exec` and `codex review`).
   `-c model="gpt-6-astra"`. Use `codex exec -s read-only` when the sandbox must
   be pinned.
 - Read-only work runs `codex exec -s read-only` with a self-contained prompt.
+- Sol needs Codex CLI 0.165.0 or later. On 0.153.4, `-m gpt-6.1-sol` fails
+  with `model_not_found`.
 - Astra needs Codex CLI 0.153.1 or later. Astra wrappers never run below high
   effort.
 - Astra runs with `approval_policy = "on-request"`. Never `--full-auto`, never

@@ -5,12 +5,16 @@
   → 400; `max_tokens` caps thinking plus response.
 <!-- needs: codex -->
 - OpenAI models run only through the Codex CLI (`codex exec` / `codex review`).
-  `~/.codex/config.toml` sets its own default model, and it is not sol. Always
+  `~/.codex/config.toml` sets its own default model, which can be any model. Always
   pass `-m` explicitly to `codex exec`: `-m gpt-6.1-sol`, or `-m gpt-6-astra`.
   Never rely on the config default. Reasoning effort is a config override, not a
   flag: `-c model_reasoning_effort=high|xhigh|max`. `codex review` accepts
   neither `-m` nor `-s`; set its model with `-c model="gpt-6-astra"`. Read-only
   work: `codex exec -s read-only` with a self-contained prompt.
+<!-- /needs -->
+<!-- needs: gpt-6.1-sol -->
+- Sol needs Codex CLI ≥ 0.165.0. On 0.153.4, `-m gpt-6.1-sol` fails with
+  `model_not_found`. Upgrade with `brew upgrade codex`.
 <!-- /needs -->
 <!-- needs: gpt-6-astra -->
 - Astra needs Codex CLI ≥ 0.153.1. Astra wrappers never run below high.

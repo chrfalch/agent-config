@@ -684,3 +684,16 @@ child task that `/ledger:go <parent>` would start, or that none is left. The
 line is advice, like the retire line, so a failed lookup shows nothing. The
 Resume rule asks the agent to say the same. Nothing starts the next child task
 by itself; the operator decides.
+
+## 2026-10-28 — Sol needs Codex CLI 0.165.0
+
+**Codex CLI 0.153.4 cannot run `gpt-6.1-sol`.** It printed "Model metadata for
+gpt-6.1-sol not found", then the server answered `model_not_found` (HTTP 400)
+for a ChatGPT account. The account could use Sol: a 0.165.0 client had listed
+it in `~/.codex/models_cache.json` the same day. After `brew upgrade codex` to
+0.165.0, `codex exec -s read-only -m gpt-6.1-sol "Reply OK"` printed `OK`.
+0.165.0 is the minimum we name because it is the only newer version tested.
+
+**The config default is no longer "not sol".** This machine's
+`~/.codex/config.toml` now sets `gpt-6.1-sol`. The rule stays the same: always
+pass `-m`, because the default can be any model.

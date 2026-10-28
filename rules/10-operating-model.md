@@ -18,6 +18,16 @@ architectural work. State assumptions. **Ambiguity is yours**: a spec is ready w
 a Codex model could run it without filling a gap you did not authorise. Ambiguity
 about *intent* → ask; about technique → resolve at raised effort.
 
+**Split work gets a parent task first.** This is a hard rule. When the
+approved plan has two or more parts that ship separately, make the parent task
+and each child task. Then attach each child task to the parent task. Write the
+split and the order into the parent ledger. Do all of this before any child
+work starts. If the current task already has a worktree, it becomes the first
+child task. Make a new parent task with `/ledger:task` for the parent alone,
+and attach the current task and each other part to it. The parent task stays
+in the backlog, with no worktree. "Making a parent task" in the Checkpoint gate
+gives the commands.
+
 ### Test-first gate (red/green)
 Behavior-changing work runs red → green:
 1. Tests for the acceptance criteria are written and **seen failing** first.
@@ -120,9 +130,9 @@ transcript is re-billed on every turn; the ledger is read once per fresh session
   memory. If the ledger still grows past ~4k tokens, the work is too big for
   one task: split it into child tasks that ship separately, under a parent
   task.
-- **Parent tasks are for big work only.** Make a parent task only when the work
-  is two or more tasks that ship separately, as separate PRs or separate
-  merges. Examples: one feature split into stacked PRs, or a group of related
+- **Parent tasks are for big work only.** When the work is two or more tasks
+  that ship separately, as separate PRs or separate merges, a parent task is
+  required. Examples: one feature split into stacked PRs, or a group of related
   fixes. Never make a parent task for small work, for a single-PR task, or for
   a task that only has many steps. This is a hard rule, not a preference.
 - **Making a parent task.** Start the parent task with `/ledger:task`. Start
@@ -180,6 +190,10 @@ transcript is re-billed on every turn; the ledger is read once per fresh session
   and clears the session, the same as when the operator types it.
   Do not re-read files or rerun tests to re-establish state; the ledger is the
   state. If every step is done, say so and ask whether to commit or open a PR.
+  When every step is done and the task has a parent, also say which child
+  task starts next. Read it from `/ledger:parent <parent>`, and ask whether
+  to start it with `/ledger:go <parent>`. When no child task is left, say that the parent task
+  can be retired after its child tasks are.
 - The old session stays resumable after `/clear`. If the ledger turns out to be
   missing something, resume the old session to recover it, write it to the
   ledger, and clear again. Do not stay in the old session to finish the work.

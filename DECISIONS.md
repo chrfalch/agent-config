@@ -660,3 +660,27 @@ repository with `/ledger:go <parent>`. The alternative is
 `bin/cc-task-new --repo <path> --promote <slug>`. The subagent gets the absolute
 path of that worktree, works only there, and writes `## Report` when it is
 done.
+
+## 2026-10-28 — Split work needs a parent task at plan time
+
+**A plan with two or more parts that ship separately now requires a parent
+task.** Before, the rules only limited parent tasks, and asked for a split late,
+when a ledger grew past ~4k tokens. An orchestrator could split the work into
+separate PRs with no parent task. Then no ledger held the split and the order.
+
+**The parent task and its child tasks exist before any child work starts.** The
+Plan gate is where the split becomes known, so the rule sits there.
+`/ledger:task` makes the parent task first when the request already holds the
+split. It never promotes the parent task, and replies with `/ledger:go <parent>`.
+
+**The current task becomes the first child task.** Its worktree already exists
+and holds the plan, so it should hold real work. A new parent task in the
+backlog, with no worktree, ties it to the other parts.
+
+**A finished child task names the next child task.** Before, `/ledger:next`
+showed only the retire line, so the operator was not told that another child
+task was waiting. It now shows one more line, from `cc-ledger-parent next`: the
+child task that `/ledger:go <parent>` would start, or that none is left. The
+line is advice, like the retire line, so a failed lookup shows nothing. The
+Resume rule asks the agent to say the same. Nothing starts the next child task
+by itself; the operator decides.

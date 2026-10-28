@@ -168,6 +168,10 @@ in the fresh session on how to retire the task:
 A branch is merged when it has no commits ahead of the default branch on
 origin, or when a PR from it was merged. This is the rule `/ledger:retire` uses.
 
+For a child task, a second line names the parent's next child task that has not
+started and says to start it with `/ledger:go <parent>`, or says that the parent
+has no child task left to start.
+
 A session sees only the ledgers of its own repo. `/ledger:all` lists every task
 ledger on the machine, from every repo, with its next step. `/ledger:all --scan`
 rebuilds that list from the ledgers on disk. Backlog tasks have their own
@@ -264,8 +268,9 @@ backlog file. A backlog task of another repo is not found.
 
 A parent task ties together two or more tasks that ship separately: one
 feature split into stacked PRs, or a group of related fixes. Each of those
-tasks is a child task. Do not make a parent task for a single PR, or for a task
-that only has many steps.
+tasks is a child task. Work with two or more parts that ship separately needs
+a parent task, made before any child work starts. Do not make a parent task for
+a single PR, or for a task that only has many steps.
 
 A parent task is a normal task. Start it with `/ledger:task`, and start each
 child task with its own `/ledger:task`. Then attach each child task:

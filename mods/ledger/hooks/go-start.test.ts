@@ -884,3 +884,74 @@ test('/ledger:go <parent> says why a picked child in another repository could no
   expect(keys(w.commands)).toEqual([NEXT('epic'), PROMOTE_IN('/lib', 'parser')])
   await expectNothingChanged($, w)
 })
+
+const PLAN = '## Plan\n| # | step | status | owner | note |\n|---|------|--------|-------|------|\n| 1 | build | done | me | |\n\n'
+const childLedger = (parent: string, status = 'done'): string =>
+  ledgerText('child-a', { parent }).replace('## Next step', PLAN.replace('| done |', `| ${status} |`) + '## Next step')
+const RETIRE_LINE = 'Task child-a is finished. Run `/ledger:retire child-a --dry-run` to see what blocks retiring it.'
+const KID_LINE = 'Parent epic has a child task that has not started: kid. Start it with `/ledger:go epic`.'
+
+async function nextFromChild($: EngineInterface, on: On, ledger: string, replies: Record<string, Reply>) {
+  const w = world(on, `${WORKTREES}/child-a`, { [pathOf('child-a')]: ledger }, replies)
+  on('command.run', { command: 'ledger:next' }, async () => ({ text: '' }))
+  await $.command.run({ command: 'ledger:next', args: '' })
+  await $.turn.complete(turnEnd)
+  return w
+}
+
+const nextChildCases: [name: string, parent: string, next: Reply, line: string][] = [
+  ['names the child task that has not started', 'epic', exit(0, 'epic kid\n'), KID_LINE],
+  ['names the leaf under a nested parent', 'epic', exit(0, 'epic phase kid\n'), KID_LINE],
+  ['says when no child task is left to start', 'epic', exit(0, 'epic\n'), 'Parent epic has no child task left to start.'],
+  [
+    'names a parent in another repository as it is typed',
+    'epic @ /lib',
+    exit(0, 'epic@/lib kid@/lib\n'),
+    'Parent epic@/lib has a child task that has not started: kid@/lib. Start it with `/ledger:go epic@/lib`.',
+  ],
+]
+
+for (const [name, parent, next, line] of nextChildCases) {
+  test(`/ledger:next on a finished child task ${name}, after the retire line`, async ($, on) => {
+    const argument = parent.replace(' @ ', '@')
+    const w = await nextFromChild($, on, childLedger(parent), { [NEXT(argument)]: next })
+
+    expect(w.calls).toEqual(['clear', `log: ${RETIRE_LINE}`, `log: ${line}`, 'submit: go child-a'])
+    expect(w.commands.filter(({ key }) => key === NEXT(argument))).toEqual([{ key: NEXT(argument), cwd: `${WORKTREES}/child-a` }])
+  })
+}
+
+test('/ledger:next on a finished child task logs only the retire line when the parent lookup fails', async ($, on) => {
+  const w = await nextFromChild($, on, childLedger('epic'), { [NEXT('epic')]: exit(1, '', 'no parent epic\n') })
+
+  expect(w.calls).toEqual(['clear', `log: ${RETIRE_LINE}`, 'submit: go child-a'])
+})
+
+test('/ledger:next on a child task with open steps looks up no parent', async ($, on) => {
+  const w = await nextFromChild($, on, childLedger('epic', 'todo'), { [NEXT('epic')]: exit(0, 'epic kid\n') })
+
+  expect(w.calls).toEqual(['clear', 'submit: go child-a'])
+  expect(keys(w.commands)).not.toContain(NEXT('epic'))
+})
+
+test('/ledger:next on a finished task without a parent logs only the retire line', async ($, on) => {
+  const w = await nextFromChild($, on, childLedger('epic').replace('- parent: epic\n', ''), {})
+
+  expect(w.calls).toEqual(['clear', `log: ${RETIRE_LINE}`, 'submit: go child-a'])
+  expect(keys(w.commands).filter(key => key.startsWith('bin/cc-ledger-parent'))).toEqual([])
+})
+
+test('/ledger:go from a finished child task logs only the retire line and looks up no next child', async ($, on) => {
+  const w = world(
+    on,
+    `${WORKTREES}/child-a`,
+    { [pathOf('child-a')]: childLedger('epic'), [pathOf('other')]: ledgerText('other') },
+    { [NEXT('epic')]: exit(0, 'epic kid\n') },
+  )
+
+  await $.command.run({ command: 'ledger:go', args: 'other' })
+  await $.turn.complete(turnEnd)
+
+  expect(w.calls).toEqual(['clear', `log: ${RETIRE_LINE}`, 'submit: go other'])
+  expect(keys(w.commands)).not.toContain(NEXT('epic'))
+})

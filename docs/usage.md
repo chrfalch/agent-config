@@ -168,6 +168,10 @@ in the fresh session on how to retire the task:
 A branch is merged when it has no commits ahead of the default branch on
 origin, or when a PR from it was merged. This is the rule `/ledger:retire` uses.
 
+For a child task, a second line names the parent's next child task that has not
+started and says to start it with `/ledger:go <parent>`, or says that the parent
+has no child task left to start.
+
 A session sees only the ledgers of its own repo. `/ledger:all` lists every task
 ledger on the machine, from every repo, with its next step. `/ledger:all --scan`
 rebuilds that list from the ledgers on disk. Backlog tasks have their own

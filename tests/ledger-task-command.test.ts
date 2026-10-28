@@ -167,6 +167,20 @@ test('the parent task rule states both directions', () => {
   assert.match(bullet, /This is a hard rule, not a preference\./);
 });
 
+test('a finished child task names the next child task of its parent on resume', () => {
+  const bullet = read('rules/10-operating-model.md').match(/\*\*Resume from the ledger\.\*\*.*? - /)?.[0] ?? '';
+  assert.match(bullet, /If every step is done, say so and ask whether to commit or open a PR\./);
+  assert.match(bullet, /When every step is done and the task has a parent, .*`\/ledger:parent <parent>`/);
+  assert.match(bullet, /ask whether to start it with `\/ledger:go <parent>`/);
+  assert.match(bullet, /When no child task is left, say that the parent task can be retired after its child tasks are/);
+});
+
+test('/ledger:help says /ledger:next names the next child task of a finished child task', () => {
+  const line = HELP.split('\n').find(l => l.startsWith('- `/ledger:next`')) ?? '';
+  assert.match(line, /When every step is done, it first says how to retire the task\./);
+  assert.match(line, /For a child task, it also names the next child task of its parent/);
+});
+
 test('/ledger:task makes the parent task first for a request with separately shipped parts', () => {
   const split = read('mods/ledger/commands/task.md').match(/two or more parts that ship separately.*? 1\. Pick/)?.[0] ?? '';
   assert.match(split, /parent task's backlog ledger first, then the ledger of each child task/);

@@ -190,6 +190,10 @@ transcript is re-billed on every turn; the ledger is read once per fresh session
   and clears the session, the same as when the operator types it.
   Do not re-read files or rerun tests to re-establish state; the ledger is the
   state. If every step is done, say so and ask whether to commit or open a PR.
+  When every step is done and the task has a parent, also say which child
+  task starts next. Read it from `/ledger:parent <parent>`, and ask whether
+  to start it with `/ledger:go <parent>`. When no child task is left, say that the parent task
+  can be retired after its child tasks are.
 - The old session stays resumable after `/clear`. If the ledger turns out to be
   missing something, resume the old session to recover it, write it to the
   ledger, and clear again. Do not stay in the old session to finish the work.

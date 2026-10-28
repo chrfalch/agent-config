@@ -1,7 +1,7 @@
 import type { On } from 'claude-code'
 import { expect, test } from 'claude-code/testing'
 
-import { activeLedger, folderSlug, format, formatAll, ledgerPaths, lookupFailedMessage, noLedgerMessage, retireHint, summarize } from './ledger'
+import { activeLedger, folderSlug, format, formatAll, ledgerPaths, lookupFailedMessage, nextChildHint, noLedgerMessage, retireHint, summarize } from './ledger'
 
 const LEDGER = `# Task ledger — fast-steps
 
@@ -669,4 +669,17 @@ test('/ledger:close logs no retire line', async ($, on) => {
   await $.command.run({ command: 'ledger:close', args: '' })
   await $.turn.complete(turnEnd)
   expect(calls).toEqual(['clear'])
+})
+
+test('nextChildHint names the child task that /ledger:go <parent> starts', () => {
+  expect(nextChildHint('big-feature', 'part-two')).toBe(
+    'Parent big-feature has a child task that has not started: part-two. Start it with `/ledger:go big-feature`.',
+  )
+  expect(nextChildHint('big-feature@/other', 'part-two@/other')).toBe(
+    'Parent big-feature@/other has a child task that has not started: part-two@/other. Start it with `/ledger:go big-feature@/other`.',
+  )
+})
+
+test('nextChildHint says when a parent has no child task left to start', () => {
+  expect(nextChildHint('big-feature', null)).toBe('Parent big-feature has no child task left to start.')
 })

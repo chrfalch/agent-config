@@ -13,6 +13,7 @@ import {
   isGoArgs,
   lookupFailedMessage,
   markFailedWarning,
+  nextChildHint,
   noChildToStartMessage,
   noLedgerMessage,
   oneSwitchPerTurnMessage,
@@ -111,11 +112,21 @@ async function hasChildren($: EngineInterface, slug: string, place: Place, main:
   return summarize(text, '', 0).children !== undefined
 }
 
-// Read at the turn's end, because the model may have just finished the last step. The line is only advice, so a failure skips it.
-async function showRetireHint($: EngineInterface, ledger: string): Promise<void> {
+/**
+ * Read at the turn's end, because the model may have just finished the last step. The lines are only advice, so a failure
+ * skips them. `namesNextChild` is false after /ledger:go: it has already marked its target started, so the parent's next
+ * child would be the one after it.
+ */
+async function showRetireHint($: EngineInterface, ledger: string, namesNextChild: boolean): Promise<void> {
   try {
-    const { slug, current } = summarize(await $.fs.read(ledger), folderSlug(ledger), 0)
-    if (current === 'all done') $.ui.log(retireHint(slug, await lookUpBranch($, worktreeOf(ledger))))
+    const { slug, current, parent } = summarize(await $.fs.read(ledger), folderSlug(ledger), 0)
+    if (current !== 'all done') return
+    const worktree = worktreeOf(ledger)
+    $.ui.log(retireHint(slug, await lookUpBranch($, worktree)))
+    if (!parent || !namesNextChild) return
+    const parentArgument = taskArgument(parent)
+    const chain = await childToStart($, parentArgument, worktree)
+    if (!('error' in chain)) $.ui.log(nextChildHint(parentArgument, chain.at(-1) ?? null))
   } catch {}
 }
 
@@ -426,7 +437,7 @@ export const register: Register = on => {
       return next(e)
     }
     if (continues) {
-      if (continues.ledger) await showRetireHint($, continues.ledger)
+      if (continues.ledger) await showRetireHint($, continues.ledger, continues.mode === 'next')
       try {
         await $.prompt.submit({ text: go })
       } catch (error) {

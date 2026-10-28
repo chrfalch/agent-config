@@ -676,3 +676,11 @@ split. It never promotes the parent task, and replies with `/ledger:go <parent>`
 **The current task becomes the first child task.** Its worktree already exists
 and holds the plan, so it should hold real work. A new parent task in the
 backlog, with no worktree, ties it to the other parts.
+
+**A finished child task names the next child task.** Before, `/ledger:next`
+showed only the retire line, so the operator was not told that another child
+task was waiting. It now shows one more line, from `cc-ledger-parent next`: the
+child task that `/ledger:go <parent>` would start, or that none is left. The
+line is advice, like the retire line, so a failed lookup shows nothing. The
+Resume rule asks the agent to say the same. Nothing starts the next child task
+by itself; the operator decides.

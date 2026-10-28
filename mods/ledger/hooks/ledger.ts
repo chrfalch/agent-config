@@ -446,11 +446,17 @@ export function retireHint(slug: string, branch: BranchState | null): string {
   return `${finished}. Run \`/ledger:retire ${slug} --dry-run\` to see what blocks retiring it.`
 }
 
+/** The line shown after a finished child task's retire line. `parent` and `child` are named as the operator types them; `child` is `null` when none is left to start. */
+export function nextChildHint(parent: string, child: string | null): string {
+  if (child === null) return `Parent ${parent} has no child task left to start.`
+  return `Parent ${parent} has a child task that has not started: ${child}. Start it with \`/ledger:go ${parent}\`.`
+}
+
 export const HELP = [
   "- `/ledger` — Show each task ledger's goal, current step and next step. A parent task in this repo's backlog is shown too, marked (backlog). `/ledger <name>` shows one.",
   '- `/ledger:task` — Add a separate task to the backlog: a ledger only, with no branch or worktree yet. `/ledger:go <slug>` starts it. With no current ledger, it starts the task at once and continues in this session. `--here` adds a ledger to this worktree instead.',
   "- `/ledger:update` — Write the latest results to this task's ledger. Without one, it points to `/ledger:task`.",
-  "- `/ledger:next` — Write this task's ledger, clear the session, and continue from the next step. When every step is done, it first says how to retire the task.",
+  "- `/ledger:next` — Write this task's ledger, clear the session, and continue from the next step. When every step is done, it first says how to retire the task. For a child task, it also names the next child task of its parent that has not started.",
   "- `/ledger:close` — Write this task's ledger, then clear the session.",
   "- `/ledger:go <slug>` — Write this task's ledger, clear the session, and continue in the task named <slug>. A backlog task first gets its branch and worktree, which works only from a session in its repository. A child task is marked started in its parent ledger. A parent task starts its first child task not yet started instead; a parent task in the backlog with none left stays there. A child task in another repository gets its worktree there, and the session stays here. When every step of this task is done, it first says how to retire it.",
   "- `/ledger:park [<slug>] <reason>` — Mark a task parked. Without a slug it writes this task's ledger, parks it, then clears the session.",

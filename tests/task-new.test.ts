@@ -73,6 +73,10 @@ function expectedLedger(slug: string, goal: string | null, worktree: string, bra
   return lines.join('\n');
 }
 
+test('the template has a Report section with only a hint, directly before Next step', () => {
+  assert.match(TEMPLATE, /\n## Report\n<[^\n]*>\n\n## Next step\n/);
+});
+
 test('creates a worktree, branch and filled ledger from the main checkout', (t) => {
   const { home, main, second } = checkout(t);
   const result = taskNew(home, main, 'fix-login', '--stack', '--goal', 'Users can log in again.');

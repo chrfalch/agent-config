@@ -87,6 +87,7 @@ const registered = (home: string) =>
     ({ repo, slug, path, branch, status, archivePath }) => ({ repo, slug, path, branch, status, archivePath }),
   );
 const archivedPath = (stdout: string) => stdout.match(/^(?:already )?archived (.+)$/m)?.[1];
+const noReport = (stdout: string, parent = 'epic') => `warning: ${archivedPath(stdout)} has no report under ## Report, so none is copied to the parent ${parent}`;
 
 test('retire marks the registered ledger archived at the printed archive path', (t) => {
   const { home, worktree, ledger } = worktreeWithLedger(t);
@@ -450,8 +451,9 @@ test('retire only warns when date fails while it marks the parent', (t) => {
   assert.equal(existsSync(worktree), false);
   assert.equal(readFileSync(parent.ledger, 'utf8'), before);
   const lines = result.stderr.split('\n').filter(Boolean);
-  assert.equal(lines.length, 1, result.stderr);
+  assert.equal(lines.length, 2, result.stderr);
   assert.ok(lines[0]?.startsWith('warning: ') && lines[0].includes(parent.ledger) && lines[0].includes("'- wt-title'"), result.stderr);
+  assert.equal(lines[1], noReport(result.stdout));
 });
 
 test('retire only warns when rm fails to clean up after a failed parent write', (t) => {
@@ -469,8 +471,9 @@ test('retire only warns when rm fails to clean up after a failed parent write', 
   assert.equal(result.status, 0, result.stderr);
   assert.equal(existsSync(worktree), false);
   const lines = result.stderr.split('\n').filter(Boolean);
-  assert.equal(lines.length, 1, result.stderr);
+  assert.equal(lines.length, 2, result.stderr);
   assert.ok(lines[0]?.includes(parent.ledger), result.stderr);
+  assert.equal(lines[1], noReport(result.stdout));
 });
 
 test('retire finishes when the parent ledger cannot be written, and names the line to change by hand', (t) => {
@@ -493,7 +496,7 @@ test('retire finishes when the parent ledger cannot be written, and names the li
   assert.equal(registered(home)[0]?.status, 'archived');
   assert.equal(
     result.stderr,
-    `warning: could not update ${realpathSync(parent.ledger)}; under ## Children, end the line '- wt-title' with '(retired ${today()})' by hand, in place of its started mark if it has one\n`,
+    `warning: could not update ${realpathSync(parent.ledger)}; under ## Children, end the line '- wt-title' with '(retired ${today()})' by hand, in place of its started mark if it has one\n${noReport(result.stdout)}\n`,
   );
   assert.doesNotMatch(result.stdout, /^Parent /m);
 });
@@ -555,7 +558,7 @@ test('retire of a worktree child marks it retired in a backlog parent and names 
   const result = run(home, retire, worktree);
 
   assert.equal(result.status, 0, result.stderr);
-  assert.equal(result.stderr, '');
+  assert.equal(result.stderr, `${noReport(result.stdout)}\n`);
   assert.equal(readFileSync(parent, 'utf8'), before.replace('- wt-title\n', `- wt-title (retired ${today()})\n`));
   assert.deepEqual(parentLines(result.stdout), [HINT]);
 });
@@ -823,7 +826,7 @@ test('retire of a child whose parent is in another repository marks it retired t
   const result = run(home, retire, worktree);
 
   assert.equal(result.status, 0, result.stderr);
-  assert.equal(result.stderr, '');
+  assert.equal(result.stderr, `${noReport(result.stdout, `epic@${foreign.main}`)}\n`);
   assert.equal(existsSync(worktree), false);
   assert.deepEqual(
     [readFileSync(foreign.ledger, 'utf8'), readFileSync(local.ledger, 'utf8')],
@@ -842,7 +845,7 @@ test('retire of a backlog child whose parent is in another repository marks it t
   const result = run(home, retire, child);
 
   assert.equal(result.status, 0, result.stderr);
-  assert.equal(result.stderr, '');
+  assert.equal(result.stderr, `${noReport(result.stdout, `epic@${foreign.main}`)}\n`);
   assert.equal(existsSync(child), false);
   assert.equal(readFileSync(foreign.ledger, 'utf8'), before.replace(`- idea @ ${here}\n`, `- idea @ ${here} (retired ${today()})\n`));
   assert.deepEqual(parentLines(result.stdout), []);
@@ -875,7 +878,8 @@ test('retire of a child that its parent in another repository does not list fini
   assert.equal(existsSync(worktree), false);
   assert.equal(readFileSync(foreign.ledger, 'utf8'), before);
   const lines = result.stderr.split('\n');
-  assert.equal(lines.length, 2, result.stderr);
+  assert.equal(lines.length, 3, result.stderr);
+  assert.equal(lines[1], noReport(result.stdout, `epic@${foreign.main}`));
   assert.match(lines[0] ?? '', /^warning: /);
   assert.ok(lines[0]?.includes(`'- wt-title @ ${here}'`), result.stderr);
   assert.ok(lines[0]?.includes(`cd '${here}' && '${path.join(REPO, 'bin/cc-ledger-parent')}' mark epic --main '${foreign.main}' wt-title retired`), result.stderr);
@@ -891,7 +895,7 @@ test('retire of a child marks it in a parent in another repository whose line na
   const result = run(home, retire, worktree);
 
   assert.equal(result.status, 0, result.stderr);
-  assert.equal(result.stderr, '');
+  assert.equal(result.stderr, `${noReport(result.stdout, `epic@${foreign.main}`)}\n`);
   assert.match(readFileSync(foreign.ledger, 'utf8'), new RegExp(`^- wt-title @ ${here} \\(retired ${today()}\\)$`, 'm'));
 });
 
@@ -952,4 +956,166 @@ test('retire of a child marks its own line only, not a child of the same slug in
   assert.equal(result.status, 0, result.stderr);
   assert.equal(readFileSync(parent.ledger, 'utf8'), before.replace('- wt-title\n', `- wt-title (retired ${today()})\n`));
   assert.deepEqual(parentLines(result.stdout), []);
+});
+
+const withReport = (ledger: string, report: string) => writeFileSync(ledger, `${readFileSync(ledger, 'utf8')}\n## Report\n${report}`);
+
+test('retire of a child copies its report under Child reports of the parent', (t) => {
+  const { home, worktree, parent } = family(t, '- wt-title\n');
+  withReport(path.join(worktree, '.claude/ledger.md'), 'Shipped in PR #3.\n');
+  const before = readFileSync(parent.ledger, 'utf8');
+
+  const result = run(home, retire, worktree);
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stderr, '');
+  assert.equal(
+    readFileSync(parent.ledger, 'utf8'),
+    `${before.replace('- wt-title\n', `- wt-title (retired ${today()})\n`)}\n## Child reports\n\n### wt-title\nShipped in PR #3.\n`,
+  );
+  assert.ok(result.stdout.includes(`copied the report of wt-title to ${realpathSync(parent.ledger)}\n`), result.stdout);
+});
+
+test('retire of a backlog child copies its report to a worktree parent', (t) => {
+  const { home } = worktreeWithLedger(t);
+  const child = backlogTask(home, 'idea', '- parent: epic\n\n## Report\nNot needed after all.\n');
+  const parent = taskIn(home, 'wt-epic', 'epic', '\n## Children\n- idea\n');
+
+  const result = run(home, retire, child);
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(readFileSync(parent.ledger, 'utf8'), /\n## Child reports\n\n### idea\nNot needed after all\.\n$/);
+});
+
+test('retire of a child whose parent is in another repository copies its report there under its slug and main checkout', (t) => {
+  const { home, worktree, ledger } = worktreeWithLedger(t);
+  const here = realpathSync(mainOf(home));
+  const foreign = foreignParent(home, `- wt-title @ ${here}\n`);
+  writeFileSync(ledger, `${readFileSync(ledger, 'utf8')}- parent: epic @ ${foreign.main}\n`);
+  withReport(ledger, 'Forked and patched.\n');
+  const before = readFileSync(foreign.ledger, 'utf8');
+
+  const result = run(home, retire, worktree);
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stderr, '');
+  assert.equal(
+    readFileSync(foreign.ledger, 'utf8'),
+    `${before.replace(`- wt-title @ ${here}\n`, `- wt-title @ ${here} (retired ${today()})\n`)}\n## Child reports\n\n### wt-title@${here}\nForked and patched.\n`,
+  );
+});
+
+test('retire of a child with no report warns once and still retires it', (t) => {
+  const { home, worktree, parent } = family(t, '- wt-title\n');
+  withReport(path.join(worktree, '.claude/ledger.md'), '<3–5 lines for the parent task: outcome, PR link, what the parent must know>\n');
+
+  const result = run(home, retire, worktree);
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stderr, `${noReport(result.stdout)}\n`);
+  assert.equal(existsSync(worktree), false);
+  assert.match(readFileSync(parent.ledger, 'utf8'), new RegExp(`^- wt-title \\(retired ${today()}\\)$`, 'm'));
+  assert.doesNotMatch(readFileSync(parent.ledger, 'utf8'), /Child reports/);
+});
+
+test('retire of a child whose report is only a link in angle brackets copies it without a warning', (t) => {
+  const { home, worktree, parent } = family(t, '- wt-title\n');
+  withReport(path.join(worktree, '.claude/ledger.md'), '<https://github.com/o/r/pull/3>\n');
+
+  const result = run(home, retire, worktree);
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stderr, '');
+  assert.match(readFileSync(parent.ledger, 'utf8'), /\n## Child reports\n\n### wt-title\n<https:\/\/github\.com\/o\/r\/pull\/3>\n$/);
+});
+
+test('retire run by a path relative to the current folder copies the report and marks the child retired', (t) => {
+  const { home, worktree, parent } = family(t, '- wt-title\n');
+  withReport(path.join(worktree, '.claude/ledger.md'), 'Shipped in PR #3.\n');
+  const before = readFileSync(parent.ledger, 'utf8');
+
+  const result = run(home, ['bin/cc-worktree-retire'], worktree);
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stderr, '');
+  assert.equal(
+    readFileSync(parent.ledger, 'utf8'),
+    `${before.replace('- wt-title\n', `- wt-title (retired ${today()})\n`)}\n## Child reports\n\n### wt-title\nShipped in PR #3.\n`,
+  );
+});
+
+test('retire run by a relative path marks and reports a child whose parent is in another repository', (t) => {
+  const { home, worktree, ledger } = worktreeWithLedger(t);
+  const here = realpathSync(mainOf(home));
+  const foreign = foreignParent(home, `- wt-title @ ${here}\n`);
+  writeFileSync(ledger, `${readFileSync(ledger, 'utf8')}- parent: epic @ ${foreign.main}\n`);
+  withReport(ledger, 'Forked and patched.\n');
+  const before = readFileSync(foreign.ledger, 'utf8');
+
+  const result = run(home, ['bin/cc-worktree-retire'], worktree);
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stderr, '');
+  assert.equal(
+    readFileSync(foreign.ledger, 'utf8'),
+    `${before.replace(`- wt-title @ ${here}\n`, `- wt-title @ ${here} (retired ${today()})\n`)}\n## Child reports\n\n### wt-title@${here}\nForked and patched.\n`,
+  );
+});
+
+test('retire run by a relative path marks and reports a child whose parent is in the backlog', (t) => {
+  const { home, worktree, ledger } = worktreeWithLedger(t);
+  writeFileSync(ledger, `${readFileSync(ledger, 'utf8')}- parent: epic\n`);
+  withReport(ledger, 'Shipped in PR #3.\n');
+  const parent = backlogTask(home, 'epic', '\n## Children\n- wt-title\n');
+  const before = readFileSync(parent, 'utf8');
+
+  const result = run(home, ['bin/cc-worktree-retire'], worktree);
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stderr, '');
+  assert.equal(
+    readFileSync(parent, 'utf8'),
+    `${before.replace('- wt-title\n', `- wt-title (retired ${today()})\n`)}\n## Child reports\n\n### wt-title\nShipped in PR #3.\n`,
+  );
+});
+
+test('retire finishes when the report cannot be copied, and names the command that copies it', (t) => {
+  const { home, worktree, parent } = family(t, '- wt-title\n');
+  withReport(path.join(worktree, '.claude/ledger.md'), 'Shipped.\n');
+  const folder = path.dirname(parent.ledger);
+
+  chmodSync(folder, 0o555);
+  let result;
+  try {
+    result = run(home, retire, worktree);
+  } finally {
+    chmodSync(folder, 0o755);
+  }
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(existsSync(worktree), false);
+  const here = realpathSync(mainOf(home));
+  assert.ok(
+    result.stderr.includes(
+      `warning: could not copy the report of wt-title to its parent epic. Copy it with: cd '${here}' && '${path.join(REPO, 'bin/cc-ledger-parent')}' report epic --main '${here}' wt-title '${archivedPath(result.stdout)}'\n`,
+    ),
+    result.stderr,
+  );
+});
+
+test('retire of a backlog child whose parent is in another repository copies its report there', (t) => {
+  const { home } = worktreeWithLedger(t);
+  const here = realpathSync(mainOf(home));
+  const foreign = foreignParent(home, `- idea @ ${here}\n`);
+  const child = backlogTask(home, 'idea', `- parent: epic @ ${foreign.main}\n\n## Report\nNot needed after all.\n`);
+  const before = readFileSync(foreign.ledger, 'utf8');
+
+  const result = run(home, retire, child);
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stderr, '');
+  assert.equal(
+    readFileSync(foreign.ledger, 'utf8'),
+    `${before.replace(`- idea @ ${here}\n`, `- idea @ ${here} (retired ${today()})\n`)}\n## Child reports\n\n### idea@${here}\nNot needed after all.\n`,
+  );
 });

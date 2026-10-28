@@ -28,5 +28,8 @@ Facts, not narrative. Keep under ~4k tokens.
 ## Open questions
 - <question> — blocks step <#>?
 
+## Report
+<3–5 lines for the parent task: outcome, PR link, what the parent must know>
+
 ## Next step
 <exactly one action, with the agent and effort to use>

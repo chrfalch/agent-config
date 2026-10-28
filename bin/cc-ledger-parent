@@ -7,6 +7,7 @@
 //        cc-ledger-parent next <parent>
 //        cc-ledger-parent status <slug> [--main <folder>]
 //        cc-ledger-parent mark <parent> [--main <folder>] <child> retired
+//        cc-ledger-parent report <parent> [--main <folder>] <child> <child-ledger>
 // A task is `<slug>`, in the repository that holds the current folder, or `<slug>@<path>`, in the
 // repository that holds <path>, its main checkout or any worktree, relative paths allowed. A slug is
 // a ledger's title slug, looked up in the ledgers of every worktree of that repository, and in the
@@ -20,6 +21,9 @@
 // status prints one word for a task: active, parked, backlog, retired (archived in ~/.claude/ledger-archive) or missing.
 // mark ends the parent's line for a retired child with `(retired YYYY-MM-DD)`, for cc-worktree-retire. --main names the
 // repository of the first task by a folder in it, or by a main checkout a ledger line names, which may be gone.
+// A child's report is the text under its ## Report. report copies it to the parent's ## Child reports, under
+// `### <slug>`, or `### <slug>@<main>` for a child in another repository, for cc-worktree-retire. show prints the
+// report of a child with a ledger from that ledger, and of any other child from the parent's copy.
 'use strict';
 const { spawnSync } = require('node:child_process');
 const fs = require('node:fs');
@@ -35,6 +39,7 @@ const usage = [
   '       cc-ledger-parent next <parent>',
   '       cc-ledger-parent status <slug> [--main <folder>]',
   '       cc-ledger-parent mark <parent> [--main <folder>] <child> retired',
+  '       cc-ledger-parent report <parent> [--main <folder>] <child> <child-ledger>',
   'A task is <slug> in this repository, or <slug>@<path> in the repository that holds <path>.',
   '--main <folder> puts the first task in the repository that holds <folder>, or whose main checkout was <folder>.',
 ].join('\n');
@@ -213,11 +218,14 @@ function location(task) {
   return section(task.lines, 'Location') ?? fail(`${task.file} has no ## Location section`);
 }
 
-// A temporary file and a rename, so a failed write leaves the ledger as it was.
+// A temporary file and a rename, so a failed write leaves the ledger as it was. The umask narrows the mode a new file
+// gets, so chmod sets it again.
 function save(task) {
   const temporary = `${task.file}.tmp-${process.pid}`;
+  const { mode } = fs.statSync(task.file);
   try {
-    fs.writeFileSync(temporary, task.lines.join('\n'), { mode: fs.statSync(task.file).mode });
+    fs.writeFileSync(temporary, task.lines.join('\n'), { mode });
+    fs.chmodSync(temporary, mode);
     fs.renameSync(temporary, task.file);
   } catch (error) {
     fs.rmSync(temporary, { force: true });
@@ -303,13 +311,51 @@ function liveStatus(task) {
   return inBacklog(task.file) ? 'backlog' : PARKED.test(firstText(body(task.lines, 'Next step'))) ? 'parked' : 'active';
 }
 
+// The line under ## Report in ledger.template.md. It is a hint, which is no report.
+const REPORT_HINT = '<3–5 lines for the parent task: outcome, PR link, what the parent must know>';
+
+function reportLines(lines) {
+  return lines.map((line) => line.trimEnd()).filter((line) => line.trim() !== '' && line.trim() !== REPORT_HINT);
+}
+
+const REPORTED = /^### ([A-Za-z0-9._-]+)(?:@(\/\S*))?$/;
+
+// The heading index of the child's copy under the parent's ## Child reports, and the index after its last text.
+function findReportCopy(parent, child) {
+  const reports = section(parent.lines, 'Child reports');
+  if (!reports) return undefined;
+  for (let start = reports.start + 1; start < reports.end; start++) {
+    const [, slug, main] = parent.lines[start].trimEnd().match(REPORTED) ?? [];
+    if (slug === undefined || !same({ slug, main: main ?? parent.main }, child)) continue;
+    let end = start + 1;
+    while (end < reports.end && !parent.lines[end].startsWith('### ')) end++;
+    return { start, end: afterLastText(parent.lines, { start, end }) };
+  }
+  return undefined;
+}
+
+// A copied line that starts with # would be a heading of the parent, so the copy adds a \ in front, and reading it takes
+// the \ off. A line that starts with \# gets one too, so every copy reads back as the child wrote it.
+const escapeHeading = (line) => (/^\\*#/.test(line) ? `\\${line}` : line);
+const unescapeHeading = (line) => (/^\\+#/.test(line) ? line.slice(1) : line);
+
+function reportCopy(parent, child) {
+  const copy = findReportCopy(parent, child);
+  return copy ? reportLines(parent.lines.slice(copy.start + 1, copy.end)).map(unescapeHeading) : [];
+}
+
 // A child in another repository is looked up there, and shown with its main checkout.
 function childStatus(parent, line) {
   const named = { slug: line.slug, ...(line.main !== parent.main && { main: line.main }) };
-  if (line.retired) return { ...named, status: 'retired', next: '' };
+  if (line.retired) return { ...named, status: 'retired', next: '', report: reportCopy(parent, line) };
   const child = lookup(line);
-  if (!child) return { ...named, status: 'missing', next: '' };
-  return { ...named, status: liveStatus(child), next: firstText(body(child.lines, 'Next step').filter((text) => !PARKED.test(text.trim()))) };
+  if (!child) return { ...named, status: 'missing', next: '', report: reportCopy(parent, line) };
+  return {
+    ...named,
+    status: liveStatus(child),
+    next: firstText(body(child.lines, 'Next step').filter((text) => !PARKED.test(text.trim()))),
+    report: reportLines(body(child.lines, 'Report')),
+  };
 }
 
 // cc-worktree-retire archives to ~/.claude/ledger-archive/<main checkout folder>/, which another repository with the same
@@ -368,7 +414,10 @@ function show(parentArg, json) {
     return;
   }
   console.log([shown.parent, shown.goal].join('\t'));
-  for (const { slug, main, status, next } of shown.children) console.log([main ? `${slug}@${main}` : slug, status, next].join('\t'));
+  for (const { slug, main, status, next, report } of shown.children) {
+    console.log([main ? `${slug}@${main}` : slug, status, next].join('\t'));
+    for (const line of report) console.log(`  ${line}`);
+  }
 }
 
 // The local date, as `date +%F` in cc-worktree-retire writes it.
@@ -402,6 +451,33 @@ function markRetired(parentRef, childArg) {
   const line = children(parent).find((listed) => same(listed, child));
   if (!line) console.error(`${taskNameFrom(parent.main, child)} is not listed under ## Children of ${parent.slug} in ${parent.file}`);
   else if (!line.retired) markLine(parent, line, child, 'retired');
+}
+
+// A missing report or parent is only a warning. cc-worktree-retire runs this for every child it retires.
+function report(parentRef, childArg, file) {
+  const child = parseTask(childArg);
+  const lines = reportLines(body(fs.readFileSync(file, 'utf8').split('\n'), 'Report'));
+  if (lines.length === 0) {
+    console.error(`warning: ${file} has no report under ## Report, so none is copied to the parent ${taskName(parentRef)}`);
+    return;
+  }
+  const parent = lookup(parentRef);
+  if (!parent) {
+    console.error(`warning: no task ledger with the slug ${parentRef.slug} in ${repositoryName(parentRef.main)}, so the report of ${taskName(child)} is not copied`);
+    return;
+  }
+  const heading = `### ${child.main === parent.main ? child.slug : `${child.slug}@${child.main}`}`;
+  const copied = [heading, ...lines.map(escapeHeading)];
+  const copy = findReportCopy(parent, child);
+  if (copy) {
+    parent.lines.splice(copy.start, copy.end - copy.start);
+    insert(parent, copy.start, ...copied);
+  } else {
+    if (!section(parent.lines, 'Child reports')) insert(parent, afterLastText(parent.lines, { start: -1, end: parent.lines.length }), '', '## Child reports');
+    insert(parent, afterLastText(parent.lines, section(parent.lines, 'Child reports')), '', ...copied);
+  }
+  save(parent);
+  console.log(`copied the report of ${taskNameFrom(parent.main, child)} to ${parent.file}`);
 }
 
 function mainOption(args) {
@@ -443,10 +519,11 @@ try {
   if (Object.hasOwn(changes, command) && args.length === 2 && !json) changes[command](...args);
   else if (command === 'show' && names.length === 1) show(names[0], json);
   else if (command === 'next' && args.length === 1 && !json) next(args[0]);
-  else if (command === 'status' || command === 'mark') {
+  else if (command === 'status' || command === 'mark' || command === 'report') {
     const { words, main } = mainOption(args) ?? fail(usage);
     if (command === 'status' && words.length === 1) status(taskIn(main, words[0]));
     else if (command === 'mark' && words.length === 3 && words[2] === 'retired') markRetired(taskIn(main, words[0]), words[1]);
+    else if (command === 'report' && words.length === 3) report(taskIn(main, words[0]), words[1], words[2]);
     else fail(usage);
   } else fail(usage);
 } catch (error) {

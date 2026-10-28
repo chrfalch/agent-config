@@ -283,8 +283,11 @@ export function lookupFailedMessage(error: string): string {
   return `Could not check this task's ledger. ${error} ${UNCHANGED}`
 }
 
-/** A child task as `cc-ledger-parent show --json` reports it. `main` is set for a child in another repository than its parent. */
-export type ChildStatus = { slug: string; main?: string; status: string; next: string }
+/**
+ * A child task as `cc-ledger-parent show --json` reports it. `main` is set for a child in another repository than its parent.
+ * `report` is the child's ## Report, one entry per line; a script from before reports leaves it out.
+ */
+export type ChildStatus = { slug: string; main?: string; status: string; next: string; report?: string[] }
 
 export type Family = { parent?: string; children?: ChildStatus[] }
 
@@ -394,7 +397,7 @@ export function startedElsewhereMessage({ child, parent, main, worktree, marked,
     `Picked child task ${child} of ${parent}. It belongs to the repository at ${main}, so it was promoted there: its branch, worktree and ledger are at ${worktree}.`,
     ...(marked ? [`Marked ${child} started in ${marked}.`] : []),
     ...warnings,
-    `The session was not cleared and stays here, because a session cannot move to another repository. To continue in ${child}, open a session in ${worktree} and type go ${child}.`,
+    `The session was not cleared and stays here, because a session cannot move to another repository. To continue in ${child}, this session sends a subagent to work in ${worktree}, by its absolute path. The operator can also open a session there and type go ${child}.`,
   ].join(' ')
 }
 

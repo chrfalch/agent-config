@@ -134,10 +134,17 @@ transcript is re-billed on every turn; the ledger is read once per fresh session
 - **A child task in another repo.** Name it as `<child>@<path>`, where the
   path is a folder in that repo. Write its backlog ledger with
   `bin/cc-task-new --repo <path>`. `/ledger:go <parent>` promotes it in that
-  repo and names its worktree. The session does not move there. For now, tell
-  the operator to open a session in that worktree. Retiring it marks it
-  retired in the parent ledger in the other repo. If retire prints a warning,
-  do what the warning says. A child task in another repo that is not retired
+  repo and names its worktree. To make the worktree without `/ledger:go`, run
+  `bin/cc-task-new --repo <path> --promote <child>`. The session does not
+  move there: `EnterWorktree` cannot enter a worktree of another repo. Send
+  one subagent per child task instead. Give it the absolute path of the child
+  task's worktree, and tell it to work only in that path. When a child task
+  is done, it writes `## Report` in its ledger: a few lines for the parent
+  task. `/ledger:parent <parent>` prints the report of each child task.
+  Retiring a child task marks it retired in the parent ledger in the other
+  repo. Retire also copies its report under `## Child reports` in the parent
+  ledger. If retire prints a warning, do what the warning says. A child task
+  in another repo that is not retired
   there blocks the parent's retire, and so does one that is missing. Session
   start shows the status from the other repo, or `unknown` when the lookup is
   slow. `/ledger:all` and the dashboard show the child task under its parent.

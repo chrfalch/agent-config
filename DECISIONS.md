@@ -586,9 +586,8 @@ repository does not hold a path, so it is not refused.
 `EnterWorktree` enters only worktrees of the session's own repository. So when
 the next child task is in another repository, `/ledger:go` promotes it there
 with `cc-task-new --repo <main> --promote`, marks it started, and names its
-worktree. The session is not cleared. For now, the operator opens a session
-there. A follow-up change lets the parent session send work to the child's
-worktree through subagents.
+worktree. The session is not cleared. The entry of 2026-10-28 says how the
+parent session works in that worktree.
 
 **Retire is cautious for now.** Retiring a child task does not edit a parent
 ledger in another repository. It prints the line to change by hand. A parent
@@ -622,3 +621,42 @@ more than 3 seconds shows `unknown`, so a slow disk cannot stall the session.
 task goes under its parent in another repository. Two repositories with the
 same folder name are two families. A registry entry without a main checkout,
 from before this change, still finds its parent by repo name.
+
+## 2026-10-28 — A child task reports back to its parent task
+
+**This replaces one point of the 2026-10-27 entries: the parent session sends
+a subagent to the worktree of a child task in another repository. The operator
+no longer needs to open a session there, but still can.** The message of
+`/ledger:go <parent>` says so.
+
+**A ledger has a `## Report` section, directly before `## Next step`.** A
+child task writes three to five lines there when it is done. Both sections
+change when a task ends, so they sit together. The template's hint line in
+angle brackets is not a report, so a new ledger has none.
+
+**Retire copies the report under `## Child reports`, not under `## Children`.**
+`## Children` stays one line per child task, because `cc-worktree-retire` and
+`cc-ledger-parent` read it line by line. A report has several lines. Each copy
+gets a `### <child>` heading, or `### <child>@<main checkout>` for a child task
+in another repository. `cc-ledger-parent report` replaces the copy. `/ledger:parent`
+reads a retired child task's report from this copy, because its ledger is gone
+and a new task can have its slug.
+
+**Retire reads the report from the archive copy, after the removal.** This is
+the same point as the retired mark, so a refused removal leaves the parent as
+it was. The archive copy has the same text, also for a backlog task, whose
+ledger retire deletes.
+
+**Retire warns about a missing report, and never refuses.** A ledger from
+before this change has no `## Report`. A refusal would stop the cleanup of a
+merged task for a few lines of text. The operator can still write them in the
+parent ledger.
+
+**The parent session sends one subagent per child task, by the path of its
+worktree.** The session does not switch. `EnterWorktree` cannot enter a
+worktree of another repository, and a session per repository needs the
+operator for each one. The parent session promotes each child task in another
+repository with `/ledger:go <parent>`. The alternative is
+`bin/cc-task-new --repo <path> --promote <slug>`. The subagent gets the absolute
+path of that worktree, works only there, and writes `## Report` when it is
+done.

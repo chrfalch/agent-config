@@ -837,7 +837,7 @@ const promotedIn = (main: string, slug: string): Reply =>
   exit(0, `worktree ${main}/.claude/worktrees/${slug}\nbranch   ${slug}\nbase     origin/main @ abc1234\nledger   ${main}/.claude/worktrees/${slug}/.claude/ledger.md\n`)
 const EPIC_WITH_LIB_CHILD = { [pathOf('epic')]: ledgerText('epic', { children: '- busy\n- parser @ /lib' }) }
 const staysHere = (child: string, worktree: string) =>
-  `The session was not cleared and stays here, because a session cannot move to another repository. To continue in ${child}, open a session in ${worktree} and type go ${child}.`
+  `The session was not cleared and stays here, because a session cannot move to another repository. To continue in ${child}, this session sends a subagent to work in ${worktree}, by its absolute path. The operator can also open a session there and type go ${child}.`
 
 for (const via of ['typed', 'Skill'] as const) {
   test(`/ledger:go <parent> (${via}) promotes a picked child in another repository there, marks it started, and does not move the session`, async ($, on) => {

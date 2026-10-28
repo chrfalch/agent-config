@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { chmodSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import test, { type TestContext } from 'node:test';
 import { freshHome, REPO, run } from './helpers.js';
@@ -8,7 +8,7 @@ const PARENT = path.join(REPO, 'bin/cc-ledger-parent');
 const LEDGERS = [path.join(REPO, 'bin/cc-ledgers')] as const;
 
 type Entry = { slug: string; path: string; status: string; parent?: string; parentMain?: string };
-type Shown = { parent: string; goal: string; children: { slug: string; status: string; next: string; main?: string }[] };
+type Shown = { parent: string; goal: string; children: { slug: string; status: string; next: string; main?: string; report: string[] }[] };
 
 function git(home: string, directory: string, ...args: string[]): void {
   const result = run(home, ['git', '-C', directory, '-c', 'user.name=test', '-c', 'user.email=test@example.com'], ...args);
@@ -324,9 +324,9 @@ test('show --json prints the same as an object', (t) => {
     parent: 'epic',
     goal: 'Goal of epic.',
     children: [
-      { slug: 'busy', status: 'active', next: 'Next step of busy.' },
-      { slug: 'waiting', status: 'parked', next: 'Next step of waiting.' },
-      { slug: 'gone', status: 'retired', next: '' },
+      { slug: 'busy', status: 'active', next: 'Next step of busy.', report: [] },
+      { slug: 'waiting', status: 'parked', next: 'Next step of waiting.', report: [] },
+      { slug: 'gone', status: 'retired', next: '', report: [] },
     ],
   });
 });
@@ -639,8 +639,8 @@ test('show names a backlog child as backlog, with its next step, in text and JSO
 
   assert.equal(ok(home, main, 'show', 'epic').stdout, 'epic\tGoal of epic.\nbusy\tactive\tNext step of busy.\nidea\tbacklog\tNext step of idea.\n');
   assert.deepEqual((JSON.parse(ok(home, main, 'show', 'epic', '--json').stdout) as Shown).children, [
-    { slug: 'busy', status: 'active', next: 'Next step of busy.' },
-    { slug: 'idea', status: 'backlog', next: 'Next step of idea.' },
+    { slug: 'busy', status: 'active', next: 'Next step of busy.', report: [] },
+    { slug: 'idea', status: 'backlog', next: 'Next step of idea.', report: [] },
   ]);
 });
 
@@ -982,9 +982,9 @@ test('show names a child in another repository as slug@main, looks up its status
     ].join('\n'),
   );
   assert.deepEqual((JSON.parse(ok(home, main, 'show', 'epic', '--json').stdout) as Shown).children, [
-    { slug: 'busy', status: 'active', next: 'Next step of busy.' },
-    { slug: 'parser', status: 'active', next: 'Next step of parser.', main: lib.main },
-    { slug: 'idea', status: 'backlog', next: 'Next step of idea.', main: lib.main },
+    { slug: 'busy', status: 'active', next: 'Next step of busy.', report: [] },
+    { slug: 'parser', status: 'active', next: 'Next step of parser.', main: lib.main, report: [] },
+    { slug: 'idea', status: 'backlog', next: 'Next step of idea.', main: lib.main, report: [] },
   ]);
 });
 
@@ -1375,3 +1375,241 @@ for (const args of [['status'], ['status', 'a', 'b'], ['status', 'a', '--main'],
     assert.match(result.stderr, /^usage: cc-ledger-parent /);
   });
 }
+
+const HINT_LINE = read(path.join(REPO, 'ledger.template.md')).match(/^## Report\n(.*)$/m)?.[1] ?? '<no Report section in the template>';
+const withReport = (text: string, lines: string) => text.replace('## Next step\n', `## Report\n${lines}\n## Next step\n`);
+const NO_REPORT = /^warning: \S+ has no report under ## Report, so none is copied to the parent epic\n$/;
+
+test('show prints the report of an active child indented under its line, and a report of only the template hint as none', (t) => {
+  const { home, main, ledgers } = repository(t, 'epic', 'busy', 'idle');
+  ok(home, main, 'add', 'epic', 'busy');
+  ok(home, main, 'add', 'epic', 'idle');
+  const [busy, idle] = [ledgers.busy ?? '', ledgers.idle ?? ''];
+  writeFileSync(busy, withReport(read(busy), 'Merged in PR #12.\n\n- The parent must bump the version.  \n'));
+  writeFileSync(idle, withReport(read(idle), `${HINT_LINE}\n`));
+  utimesSync(busy, new Date(2026, 9, 9), new Date(2026, 9, 9));
+  utimesSync(idle, new Date(2026, 9, 8), new Date(2026, 9, 8));
+
+  assert.equal(
+    ok(home, main, 'show', 'epic').stdout,
+    [
+      'epic\tGoal of epic.',
+      'busy\tactive\tNext step of busy.',
+      '  Merged in PR #12.',
+      '  - The parent must bump the version.',
+      'idle\tactive\tNext step of idle.',
+      '',
+    ].join('\n'),
+  );
+  assert.deepEqual((JSON.parse(ok(home, main, 'show', 'epic', '--json').stdout) as Shown).children, [
+    { slug: 'busy', status: 'active', next: 'Next step of busy.', report: ['Merged in PR #12.', '- The parent must bump the version.'] },
+    { slug: 'idle', status: 'active', next: 'Next step of idle.', report: [] },
+  ]);
+});
+
+test('show reads only the section headed exactly Report, not Reports or the Child reports of a parent', (t) => {
+  const { home, main, ledgers } = repository(t, 'epic', 'busy');
+  ok(home, main, 'add', 'epic', 'busy');
+  const busy = ledgers.busy ?? '';
+  writeFileSync(busy, read(busy).replace('## Next step\n', '## Reports\nStale.\n\n## Child reports\n\n### other\nNot mine.\n\n## Report \t\nMine.\n\n## Next step\n'));
+
+  assert.deepEqual((JSON.parse(ok(home, main, 'show', 'epic', '--json').stdout) as Shown).children[0]?.report, ['Mine.']);
+});
+
+test('show prints the report of a retired child from the copy under Child reports of the parent', (t) => {
+  const { home, main, ledgers } = repository(t, 'epic');
+  const epic = ledgers.epic ?? '';
+  writeFileSync(
+    epic,
+    `${withChildren(read(epic), '- gone (retired 2026-10-02)\n- far @ /x/lib (retired 2026-10-01)\n')}\n## Child reports\n\n### far@/x/lib\nNot this one.\n\n### gone\nShipped in PR #7.\n`,
+  );
+
+  assert.equal(
+    ok(home, main, 'show', 'epic').stdout,
+    ['epic\tGoal of epic.', 'gone\tretired\t', '  Shipped in PR #7.', 'far@/x/lib\tretired\t', '  Not this one.', ''].join('\n'),
+  );
+});
+
+test('report copies the report of a child to the end of the parent, and a second run leaves one copy', (t) => {
+  const { home, main, ledgers } = repository(t, 'epic', 'child-a');
+  ok(home, main, 'add', 'epic', 'child-a');
+  const [epic, child] = [ledgers.epic ?? '', ledgers['child-a'] ?? ''];
+  writeFileSync(child, withReport(read(child), `${HINT_LINE}\nMerged in PR #12.\nFollow-up: none.\n`));
+  const before = read(epic);
+
+  const first = ok(home, main, 'report', 'epic', 'child-a', child);
+  const second = ok(home, main, 'report', 'epic', 'child-a', child);
+
+  assert.equal(read(epic), `${before}\n## Child reports\n\n### child-a\nMerged in PR #12.\nFollow-up: none.\n`);
+  assert.equal(first.stdout, `copied the report of child-a to ${epic}\n`);
+  assert.equal(second.stderr, '');
+});
+
+test('report replaces the copy of the same child in place and keeps the copies of the others', (t) => {
+  const { home, main, ledgers } = repository(t, 'epic', 'child-a');
+  const [epic, child] = [ledgers.epic ?? '', ledgers['child-a'] ?? ''];
+  writeFileSync(epic, read(epic).replace('## Next step\n', '## Child reports\n\n### child-a\nOld line.\nOld second line.\n\n### child-b\nOther.\n\n## Next step\n'));
+  writeFileSync(child, withReport(read(child), 'New line.\n'));
+  const before = read(epic);
+
+  ok(home, main, 'report', 'epic', 'child-a', child);
+
+  assert.equal(read(epic), before.replace('### child-a\nOld line.\nOld second line.\n', '### child-a\nNew line.\n'));
+});
+
+test('report of a child in another repository names its main checkout, and show prints it once the child is retired', (t) => {
+  const { home, main, ledgers } = repository(t, 'epic');
+  const lib = otherRepository(home, 'repos/lib', 'parser');
+  ok(home, main, 'add', 'epic', `parser@${lib.main}`);
+  const parser = lib.ledgers.parser ?? '';
+  writeFileSync(parser, withReport(read(parser), 'Forked and patched.\n'));
+
+  ok(home, lib.main, 'report', 'epic', '--main', main, 'parser', parser);
+  ok(home, lib.main, 'mark', 'epic', '--main', main, 'parser', 'retired');
+  rmSync(parser);
+
+  assert.match(read(ledgers.epic ?? ''), new RegExp(`\\n## Child reports\\n\\n### parser@${lib.main}\\nForked and patched\\.\\n$`));
+  assert.equal(ok(home, main, 'show', 'epic').stdout, `epic\tGoal of epic.\nparser@${lib.main}\tretired\t\n  Forked and patched.\n`);
+});
+
+for (const [name, report] of [
+  ['no Report section', undefined],
+  ['a Report section with only the template hint', `${HINT_LINE}\n`],
+] as const) {
+  test(`report of a child with ${name} warns, succeeds and changes nothing`, (t) => {
+    const { home, main, ledgers } = repository(t, 'epic', 'child-a');
+    ok(home, main, 'add', 'epic', 'child-a');
+    const [epic, child] = [ledgers.epic ?? '', ledgers['child-a'] ?? ''];
+    if (report !== undefined) writeFileSync(child, withReport(read(child), report));
+    const before = read(epic);
+
+    const result = ok(home, main, 'report', 'epic', 'child-a', child);
+
+    assert.match(result.stderr, NO_REPORT);
+    assert.equal(result.stdout, '');
+    assert.equal(read(epic), before);
+  });
+}
+
+test('a report line in angle brackets that is not the template hint is shown and copied', (t) => {
+  const { home, main, ledgers } = repository(t, 'epic', 'child-a');
+  ok(home, main, 'add', 'epic', 'child-a');
+  const [epic, child] = [ledgers.epic ?? '', ledgers['child-a'] ?? ''];
+  writeFileSync(child, withReport(read(child), '<https://github.com/o/r/pull/3>\n'));
+  const before = read(epic);
+
+  assert.equal(ok(home, main, 'show', 'epic').stdout, 'epic\tGoal of epic.\nchild-a\tactive\tNext step of child-a.\n  <https://github.com/o/r/pull/3>\n');
+  const result = ok(home, main, 'report', 'epic', 'child-a', child);
+
+  assert.equal(result.stderr, '');
+  assert.equal(read(epic), `${before}\n## Child reports\n\n### child-a\n<https://github.com/o/r/pull/3>\n`);
+});
+
+test('report to a parent with no ledger warns and succeeds', (t) => {
+  const { home, main, ledgers } = repository(t, 'child-a');
+  const child = ledgers['child-a'] ?? '';
+  writeFileSync(child, withReport(read(child), 'Done.\n'));
+
+  const result = ok(home, main, 'report', 'epic', 'child-a', child);
+
+  assert.equal(result.stderr, 'warning: no task ledger with the slug epic in this repository, so the report of child-a is not copied\n');
+});
+
+test('report keeps CRLF and the file mode of the parent ledger', (t) => {
+  const { home, main, ledgers } = repository(t, 'epic', 'child-a');
+  const [epic, child] = [ledgers.epic ?? '', ledgers['child-a'] ?? ''];
+  writeFileSync(epic, read(epic).replace(/\n/g, '\r\n'));
+  chmodSync(epic, 0o600);
+  writeFileSync(child, withReport(read(child), 'Done.\n'));
+  const before = read(epic);
+
+  ok(home, main, 'report', 'epic', 'child-a', child);
+
+  assert.equal(read(epic), `${before}\r\n## Child reports\r\n\r\n### child-a\r\nDone.\r\n`);
+  assert.equal(statSync(epic).mode & 0o777, 0o600);
+});
+
+for (const args of [['report', 'epic', 'child'], ['report', 'epic', '--main'], ['report', 'epic', 'child', 'a.md', 'b.md']]) {
+  test(`${args.join(' ')} is a usage error`, (t) => {
+    const { home, main } = repository(t, 'epic');
+
+    const result = parent(home, main, ...args);
+
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /^usage: cc-ledger-parent /);
+  });
+}
+
+const REPORT_WITH_HEADINGS = ['Shipped in PR #9.', '### Details', '#### Deeper', '# Title', '\\# Already escaped', '- end'];
+const reportOf = (home: string, main: string, slug: string) =>
+  (JSON.parse(ok(home, main, 'show', 'epic', '--json').stdout) as Shown).children.find((child) => child.slug === slug)?.report;
+
+test('report escapes a leading # in the parent copy, and show prints the report of the retired child unchanged', (t) => {
+  const { home, main, ledgers } = repository(t, 'epic', 'child-a');
+  ok(home, main, 'add', 'epic', 'child-a');
+  const [epic, child] = [ledgers.epic ?? '', ledgers['child-a'] ?? ''];
+  writeFileSync(child, withReport(read(child), `${REPORT_WITH_HEADINGS.join('\n')}\n`));
+
+  ok(home, main, 'report', 'epic', 'child-a', child);
+  ok(home, main, 'mark', 'epic', 'child-a', 'retired');
+
+  assert.match(read(epic), /\n### child-a\nShipped in PR #9\.\n\\### Details\n\\#### Deeper\n\\# Title\n\\\\# Already escaped\n- end\n$/);
+  assert.deepEqual(reportOf(home, main, 'child-a'), REPORT_WITH_HEADINGS);
+  assert.equal(ok(home, main, 'show', 'epic').stdout, ['epic\tGoal of epic.', 'child-a\tretired\t', ...REPORT_WITH_HEADINGS.map((line) => `  ${line}`), ''].join('\n'));
+});
+
+test('report a second time leaves the parent byte-identical when the report has a heading', (t) => {
+  const { home, main, ledgers } = repository(t, 'epic', 'child-a');
+  ok(home, main, 'add', 'epic', 'child-a');
+  const [epic, child] = [ledgers.epic ?? '', ledgers['child-a'] ?? ''];
+  writeFileSync(child, withReport(read(child), `${REPORT_WITH_HEADINGS.join('\n')}\n`));
+
+  ok(home, main, 'report', 'epic', 'child-a', child);
+  const once = read(epic);
+  ok(home, main, 'report', 'epic', 'child-a', child);
+
+  assert.equal(read(epic), once);
+});
+
+test('a report line that names another child as a heading does not change which copy belongs to which child', (t) => {
+  const { home, main, ledgers } = repository(t, 'epic', 'child-a', 'child-b');
+  ok(home, main, 'add', 'epic', 'child-a');
+  ok(home, main, 'add', 'epic', 'child-b');
+  const [a, b] = [ledgers['child-a'] ?? '', ledgers['child-b'] ?? ''];
+  writeFileSync(a, withReport(read(a), 'Before.\n### child-b\nNot the report of child-b.\n'));
+  writeFileSync(b, withReport(read(b), 'Mine.\n'));
+
+  ok(home, main, 'report', 'epic', 'child-a', a);
+  ok(home, main, 'report', 'epic', 'child-b', b);
+  ok(home, main, 'report', 'epic', 'child-a', a);
+  ok(home, main, 'mark', 'epic', 'child-a', 'retired');
+  ok(home, main, 'mark', 'epic', 'child-b', 'retired');
+
+  assert.deepEqual(reportOf(home, main, 'child-a'), ['Before.', '### child-b', 'Not the report of child-b.']);
+  assert.deepEqual(reportOf(home, main, 'child-b'), ['Mine.']);
+});
+
+test('report keeps a group-writable mode of the parent ledger under umask 022', (t) => {
+  const { home, main, ledgers } = repository(t, 'epic', 'child-a');
+  const [epic, child] = [ledgers.epic ?? '', ledgers['child-a'] ?? ''];
+  chmodSync(epic, 0o664);
+  writeFileSync(child, withReport(read(child), 'Done.\n'));
+
+  const result = run(home, ['bash', '-c', 'umask 022 && cd "$1" && shift && exec "$@"', '_', main, PARENT], 'report', 'epic', 'child-a', child);
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(statSync(epic).mode & 0o777, 0o664);
+});
+
+test('report copies the report of a child to a parent in the backlog', (t) => {
+  const { home, main, ledgers } = repository(t, 'child-a');
+  const epic = addBacklogTask(home, main, 'epic');
+  ok(home, main, 'add', 'epic', 'child-a');
+  const child = ledgers['child-a'] ?? '';
+  writeFileSync(child, withReport(read(child), 'Done.\n'));
+  const before = read(epic);
+
+  ok(home, main, 'report', 'epic', 'child-a', child);
+
+  assert.equal(read(epic), `${before}\n## Child reports\n\n### child-a\nDone.\n`);
+});

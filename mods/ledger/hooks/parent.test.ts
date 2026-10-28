@@ -104,7 +104,7 @@ function world(
   }
 }
 
-const shown = (children: { slug: string; status: string; next: string; main?: string }[]): Reply =>
+const shown = (children: { slug: string; status: string; next: string; main?: string; report?: unknown }[]): Reply =>
   exit(0, JSON.stringify({ parent: 'epic', goal: 'Goal of epic.', children }, null, 2))
 
 const FAMILY = [
@@ -136,6 +136,55 @@ test('/ledger:parent <slug> shows the parent, then each child with its status an
     ].join('\n'),
   )
   expect(calls).toEqual([SHOW_EPIC])
+})
+
+test('/ledger:parent prints the report of a child as a list under its line', async ($, on) => {
+  world(on, '/repo', {}, {
+    [SHOW_EPIC]: shown([
+      { slug: 'child-a', status: 'active', next: 'Run the tests.', report: [] },
+      { slug: 'old', status: 'retired', next: '', report: ['Merged in PR #12.', '- The parent must bump the version.'] },
+    ]),
+  })
+
+  const { text } = await $.command.run({ command: 'ledger:parent', args: 'epic' })
+
+  expect(text.split('\n').slice(3)).toEqual([
+    '- **child-a** · active — Run the tests.',
+    '- **old** · retired',
+    '  - Merged in PR #12.',
+    '  - The parent must bump the version.',
+  ])
+})
+
+test('/ledger:parent keeps nested report lines nested and escapes a leading # in the report', async ($, on) => {
+  world(on, '/repo', {}, {
+    [SHOW_EPIC]: shown([
+      {
+        slug: 'old',
+        status: 'retired',
+        next: '',
+        report: ['  - Merged in PR #12.', '    - The parent must bump the version.', '  # Not a heading', '    - # Nor this'],
+      },
+    ]),
+  })
+
+  const { text } = await $.command.run({ command: 'ledger:parent', args: 'epic' })
+
+  expect(text.split('\n').slice(3)).toEqual([
+    '- **old** · retired',
+    '  - Merged in PR #12.',
+    '    - The parent must bump the version.',
+    '  - \\# Not a heading',
+    '    - \\# Nor this',
+  ])
+})
+
+test('/ledger:parent refuses a report that is not a list of lines', async ($, on) => {
+  world(on, '/repo', {}, { [SHOW_EPIC]: shown([{ slug: 'old', status: 'retired', next: '', report: 'Merged.' }]) })
+
+  const { text } = await $.command.run({ command: 'ledger:parent', args: 'epic' })
+
+  expect(text).toBe('Could not show epic. cc-ledger-parent printed something that is not a parent and its children.')
 })
 
 test('/ledger:parent of a task without children says how to add one', async ($, on) => {

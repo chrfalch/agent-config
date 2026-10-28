@@ -10,7 +10,8 @@
 # A parent ledger with children not yet retired needs --force. A child in another repository counts
 # unless cc-ledger-parent status finds it retired there.
 # A retired child is marked retired in its parent's ## Children section (see cc-ledger-parent), in a
-# worktree or in the backlog, of this repository or of another.
+# worktree or in the backlog, of this repository or of another. Its report, the text under ## Report,
+# is copied to the parent's ## Child reports (see cc-ledger-parent report). No report is only a warning.
 # Usage: cc-worktree-retire <worktree-path> [--delete-branch <sha>] [git worktree remove flags]
 #        cc-worktree-retire <backlog-ledger> [--force]
 set -eu
@@ -33,6 +34,8 @@ while [ -L "$self" ]; do
     *) self="$(dirname "$self")/$link" ;;
   esac
 done
+# Absolute, because some calls below run after a cd.
+bin=$(cd "$(dirname "$self")" && pwd)
 
 delete_sha=""
 force=""
@@ -89,7 +92,7 @@ ledger_titled() {
       echo "$candidate"
       return 0
     fi
-  done < <(cd "$main" && bash "$(dirname "$self")/../hooks/ledger-list.sh" backlog)
+  done < <(cd "$main" && bash "$bin/../hooks/ledger-list.sh" backlog)
 }
 
 wt=""
@@ -220,8 +223,9 @@ fi
 
 # After the removal, so a refused removal leaves the parent's Children section as it was. Best
 # effort: the worktree is gone, so a rerun could not finish what an exit here would skip.
-marked=""
+marked="" copy_report=""
 if [ -n "$parent_ledger" ]; then
+  copy_report=1
   today=$(date +%F 2>/dev/null) || today=""
   # The copy gives the temporary file the ledger's mode, which the redirect then keeps.
   if [ -n "$today" ] && { cp -p "$parent_ledger" "$parent_ledger.tmp-$$" && TASK_CHILD="$task" TASK_TODAY="$today" awk '
@@ -242,7 +246,8 @@ if [ -n "$parent_ledger" ]; then
   fi
 elif [ -n "$parent_main" ]; then
   # Run in this task's main checkout, so cc-ledger-parent names it by the path git reports, as the parent's line does.
-  if marking=$(cd "$main" 2>&1 && "$(dirname "$self")/cc-ledger-parent" mark "$parent" --main "$parent_main" "$task" retired 2>&1); then
+  if marking=$(cd "$main" 2>&1 && "$bin/cc-ledger-parent" mark "$parent" --main "$parent_main" "$task" retired 2>&1); then
+    copy_report=1
     # Nothing printed: the line was marked retired already.
     case "$marking" in
       "") ;;
@@ -251,7 +256,7 @@ elif [ -n "$parent_main" ]; then
         parent_ledger="${marking#retired "$task" in }"
         ;;
       *)
-        echo "warning: ${marking//$'\n'/ }, so it is not marked retired. If it belongs there, add the line '- $task @ $main' under ## Children of $parent, then run: cd '$main' && '$(dirname "$self")/cc-ledger-parent' mark $parent --main '$parent_main' $task retired" >&2
+        echo "warning: ${marking//$'\n'/ }, so it is not marked retired. If it belongs there, add the line '- $task @ $main' under ## Children of $parent, then run: cd '$main' && '$bin/cc-ledger-parent' mark $parent --main '$parent_main' $task retired" >&2
         ;;
     esac
   else
@@ -259,6 +264,14 @@ elif [ -n "$parent_main" ]; then
   fi
 elif [ -n "$parent" ]; then
   echo "warning: no ledger for parent $parent in this repository, so its Children section is not updated" >&2
+fi
+
+# From the archive copy, because the child's own ledger is gone now. A parent that was not found is warned about above.
+if [ -n "$copy_report" ] && [ -n "$dest" ]; then
+  report_parent_main="${parent_main:-$main}"
+  if ! (cd "$main" && "$bin/cc-ledger-parent" report "$parent" --main "$report_parent_main" "$task" "$dest"); then
+    echo "warning: could not copy the report of $task to its parent $parent. Copy it with: cd '$main' && '$bin/cc-ledger-parent' report $parent --main '$report_parent_main' $task '$dest'" >&2
+  fi
 fi
 
 if [ -n "$dest" ]; then

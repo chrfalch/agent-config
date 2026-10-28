@@ -11,7 +11,12 @@ type Shown = { parent: string; goal: string; children: ChildStatus[] }
 function isChildStatus(value: unknown): value is ChildStatus {
   if (typeof value !== 'object' || value === null) return false
   const fields: Record<string, unknown> = { ...value }
-  return ['slug', 'status', 'next'].every(key => typeof fields[key] === 'string') && ['undefined', 'string'].includes(typeof fields.main)
+  const { report } = fields
+  return (
+    ['slug', 'status', 'next'].every(key => typeof fields[key] === 'string') &&
+    ['undefined', 'string'].includes(typeof fields.main) &&
+    (report === undefined || (Array.isArray(report) && report.every((line: unknown) => typeof line === 'string')))
+  )
 }
 
 function parseShown(stdout: string): Shown | null {
@@ -73,8 +78,22 @@ function formatShown({ parent, goal, children }: Shown): string {
     `**Parent task ${parent}** · ${count}, ${active} active`,
     ...(goal ? [goal] : []),
     '',
-    ...children.map(child => `- **${taskName(child)}** · ${child.status}${child.next ? ` — ${child.next}` : ''}`),
+    ...children.flatMap(child => [
+      `- **${taskName(child)}** · ${child.status}${child.next ? ` — ${child.next}` : ''}`,
+      ...reportItems(child.report ?? []),
+    ]),
   ].join('\n')
+}
+
+// A nested item per least-indented line, so that Markdown does not join the lines into the child's own line. A more
+// indented line keeps its place under the item before it.
+function reportItems(report: string[]): string[] {
+  const indent = (line: string) => line.length - line.trimStart().length
+  const base = Math.min(...report.map(indent))
+  return report.map(line => {
+    const item = indent(line) === base ? `  - ${line.trimStart().replace(/^[-*+]\s+/, '')}` : `  ${line.slice(base)}`
+    return item.replace(/^(\s*(?:[-*+]\s+)?)#/, '$1\\#')
+  })
 }
 
 async function ownFamily($: EngineInterface, folder: SessionFolder): Promise<{ parent: string | undefined } | { text: string }> {

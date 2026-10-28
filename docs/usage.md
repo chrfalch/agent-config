@@ -394,9 +394,19 @@ To make the child task in the other repository, run `bin/cc-task-new` with
 promotes that task there, with `cc-task-new --repo <main checkout> --promote
 <child>`, marks it started, and names its new worktree. The session stays where
 it is and is not cleared, because `EnterWorktree` enters only worktrees of the
-session's own repository. For now, open a session in that worktree and type
-`go <child>`. A follow-up change lets the parent session send work to the
-child's worktree through subagents.
+session's own repository. The message says that this session sends a subagent
+to work in the new worktree, by its absolute path. The operator can also open a
+session there and type `go <child>`.
+
+The parent session does the work of such child tasks through subagents:
+
+1. It promotes each child task in its own repository, with `/ledger:go
+   <parent>` or with `bin/cc-task-new --repo <path> --promote <child>`. Both
+   name the new worktree.
+2. It sends one subagent per child task. The subagent gets the absolute path
+   of that worktree, and works only in that path.
+3. When a child task is done, its subagent writes `## Report` in the child
+   ledger. See [Child reports](#child-reports).
 
 `/ledger:parent`, `/ledger` at session start and `bin/cc-ledger-parent next`
 show such a child task as `<child> @ <main checkout>` or `<child>@<main checkout>`.
@@ -413,9 +423,68 @@ Retire works across the two repositories:
 - `/ledger:retire <child>` in the other repository marks the child task
   retired in the parent ledger. When the parent ledger does not list the child
   task, retire prints a warning with the line to add and the command to run.
+  Retire also copies the child task's report into the parent ledger.
 - `/ledger:retire <parent>` looks up each child task in another repository.
   A child task that is active, in the backlog, parked or missing there blocks
   the retire. Only a retired child task does not. `--force` overrides.
+
+#### Child reports
+
+A ledger has a `## Report` section, directly before `## Next step`. When a
+child task is done, it writes three to five lines there for its parent task:
+the outcome, the PR link, and what the parent task must know. The template's
+hint line in angle brackets is not a report.
+
+`/ledger:parent <parent>` prints the report of each child task under its line.
+`bin/cc-ledger-parent show <parent>` does the same. With `--json`, each child
+task has a `report` list, which is empty when there is no report.
+
+Retiring a child task copies its report into the parent ledger, under
+`## Child reports`. The parent task can be in this repository or in another
+one. Each copy has its own heading. A child task in another repository also
+names its main checkout:
+
+```
+## Child reports
+
+### parser
+Merged in PR #12.
+
+### async-storage@/Users/me/forks/async-storage
+Merged upstream in PR #301. Release 2.1 is needed before the app can update.
+```
+
+A retired child task has no ledger, so `/ledger:parent` reads its report from
+this copy. A child task with no report gets a warning, and the retire still
+goes on. To copy a report by hand, or to replace a copy, run
+`bin/cc-ledger-parent report <parent> [--main <parent-path>] <child> <child-ledger>`
+in the child task's repository. It replaces the copy of that child task, if
+there is one. A copied line that starts with `#` gets a `\` in front, so it
+cannot start a section of the parent ledger. `/ledger:parent` shows the line
+without the `\`.
+
+#### Example: one change in many forked libraries
+
+A parent task holds a list of React Native community libraries. Each library
+needs a similar change, and each one is in its own forked repository. Each
+library is one child task.
+
+1. Make the parent task. Its goal lists the libraries.
+2. For each library, make a child task in its fork, and link it to the parent:
+
+   ```
+   bin/cc-task-new async-storage --repo ~/forks/async-storage --goal 'Support the new architecture.'
+   bin/cc-ledger-parent add rn-new-arch async-storage@$HOME/forks/async-storage
+   ```
+
+3. Promote each child task:
+   `bin/cc-task-new --repo ~/forks/async-storage --promote async-storage`.
+4. The parent session sends one subagent per library. Each subagent gets the
+   absolute path of its library's worktree.
+5. Each subagent writes `## Report` in its child ledger when its change is done.
+6. `/ledger:parent rn-new-arch` shows each library with its status and report.
+7. Retire each child task when its PR merges. Its report stays in the parent
+   ledger, under `## Child reports`.
 
 ### The dashboard
 

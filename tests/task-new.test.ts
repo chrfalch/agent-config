@@ -62,7 +62,7 @@ function expectedBacklog(slug: string, goal: string | null, main: string, branch
 }
 
 function expectedLedger(slug: string, goal: string | null, worktree: string, branch: string, base: string): string {
-  const lines = TEMPLATE.split('\n').map((line) => {
+  const lines = TEMPLATE.split('\n').filter((line) => !line.startsWith('- design refs: ')).map((line) => {
     if (line === '# Task ledger — <slug>') return `# Task ledger — ${slug}`;
     if (line === GOAL_PLACEHOLDER && goal !== null) return goal;
     if (line === '- worktree: <path>') return `- worktree: ${worktree}`;
@@ -933,3 +933,146 @@ for (const { name, args, stderr } of repoFailures) {
     assert.equal(branches(home, lib), 'refs/heads/main');
   });
 }
+
+function llp(root: string, ...names: string[]) {
+  mkdirSync(path.join(root, 'llp'), { recursive: true });
+  for (const name of names) writeFileSync(path.join(root, 'llp', name), '# Design\n');
+}
+
+test('LLP refs are written in input order with LLP prefixes and survive promotion', (t) => {
+  const { home, main } = checkout(t);
+  llp(main, '0042-sync.rfc.md', '0042.001-rollout.plan.md');
+  const file = backlogged(home, main, 'sync', '--refs', '0042.001, 0042');
+  const bullet = '- design refs: LLP 0042.001, LLP 0042\n';
+  assert.ok(readFileSync(file, 'utf8').includes(bullet));
+  assert.equal(taskNew(home, main, '--promote', 'sync').status, 0);
+  const ledger = readFileSync(path.join(main, '.claude/worktrees/sync/.claude/ledger.md'), 'utf8');
+  assert.ok(ledger.includes(bullet));
+  assert.doesNotMatch(ledger, /<LLP numbers/);
+});
+
+test('LLP repo without --refs writes design refs: none', (t) => {
+  const { home, main } = checkout(t);
+  llp(main);
+  const file = backlogged(home, main, 'sync');
+  assert.match(readFileSync(file, 'utf8'), /- design refs: none\n/);
+});
+
+for (const [name, files, refs] of [
+  ['unknown', ['0042.001-rollout.plan.md'], '0042'],
+  ['ambiguous', ['0042-sync.rfc.md', '0042-other.plan.md'], '0042'],
+] as const) {
+  test(`${name} LLP number fails without writing a ledger`, (t) => {
+    const { home, main } = checkout(t);
+    llp(main, ...files);
+    const result = taskNew(home, main, 'sync', '--refs', refs);
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /0042/);
+    assert.equal(existsSync(backlogFile(home, 'sync')), false);
+    assert.equal(existsSync(path.join(main, '.claude/worktrees/sync')), false);
+    assert.equal(registryText(home), null);
+  });
+}
+
+test('repo without llp omits the design refs line', (t) => {
+  const { home, main } = checkout(t);
+  const file = backlogged(home, main, 'sync');
+  assert.doesNotMatch(readFileSync(file, 'utf8'), /design refs/);
+});
+
+test('--refs without llp fails with the repo path and writes nothing', (t) => {
+  const { home, main } = checkout(t);
+  const result = taskNew(home, main, 'sync', '--refs', '0042');
+  assert.notEqual(result.status, 0);
+  assert.ok(result.stderr.includes(`no llp/ folder in ${main}`), result.stderr);
+  assert.equal(existsSync(backlogFile(home, 'sync')), false);
+});
+
+test('--refs with --promote is refused and leaves the backlog intact', (t) => {
+  const { home, main } = checkout(t);
+  const file = backlogged(home, main, 'sync');
+  const before = readFileSync(file, 'utf8');
+  const result = taskNew(home, main, '--promote', 'sync', '--refs', '0042');
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /--promote takes only a slug/);
+  assert.equal(readFileSync(file, 'utf8'), before);
+  assert.equal(existsSync(path.join(main, '.claude/worktrees/sync')), false);
+});
+
+test('--here --refs uses llp in the current worktree', (t) => {
+  const { home, main } = checkout(t);
+  const worktree = linkedWorktree(home, main, 'sync');
+  llp(worktree, '0042-sync.rfc.md');
+  const result = taskNew(home, worktree, '--here', '--refs', '0042');
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(readFileSync(path.join(worktree, '.claude/ledger.md'), 'utf8'), /- design refs: LLP 0042\n/);
+});
+
+for (const inCaller of [true, false]) {
+  test(`--stack follows the current worktree llp folder (present: ${inCaller})`, (t) => {
+    const { home, main } = checkout(t);
+    const caller = linkedWorktree(home, main, 'caller');
+    llp(inCaller ? caller : main, '0042-sync.rfc.md');
+    const nested = path.join(caller, 'nested');
+    mkdirSync(nested);
+    const result = taskNew(home, nested, 'follow-up', '--stack');
+    assert.equal(result.status, 0, result.stderr);
+    const ledger = readFileSync(path.join(main, '.claude/worktrees/follow-up/.claude/ledger.md'), 'utf8');
+    if (inCaller) assert.match(ledger, /- design refs: none\n/);
+    else assert.doesNotMatch(ledger, /design refs/);
+  });
+}
+
+test('--stack validates refs against the current worktree llp folder', (t) => {
+  const { home, main } = checkout(t);
+  const caller = linkedWorktree(home, main, 'caller');
+  llp(caller, '0042-sync.rfc.md');
+  const result = taskNew(home, caller, 'follow-up', '--stack', '--refs', '0042');
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(readFileSync(path.join(main, '.claude/worktrees/follow-up/.claude/ledger.md'), 'utf8'), /- design refs: LLP 0042\n/);
+});
+
+for (const refs of ['00420', '42', '0042;echo injected', '$(echo 0042)']) {
+  test(`invalid refs item ${JSON.stringify(refs)} fails`, (t) => {
+    const { home, main } = checkout(t);
+    llp(main, '0042-sync.rfc.md', '00420-long.rfc.md');
+    const result = taskNew(home, main, 'sync', '--refs', refs);
+    assert.notEqual(result.status, 0);
+    assert.equal(existsSync(backlogFile(home, 'sync')), false);
+    assert.equal(registryText(home), null);
+  });
+}
+
+test('a 4-digit ref matches its own file, not a longer number', (t) => {
+  const { home, main } = checkout(t);
+  llp(main, '0042-sync.rfc.md', '00420-long.rfc.md');
+  const file = backlogged(home, main, 'sync', '--refs', '0042');
+  assert.match(readFileSync(file, 'utf8'), /- design refs: LLP 0042\n/);
+});
+
+test('a 4-digit ref with only a longer number in llp fails', (t) => {
+  const { home, main } = checkout(t);
+  llp(main, '00420-long.rfc.md');
+  const result = taskNew(home, main, 'sync', '--refs', '0042');
+  assert.notEqual(result.status, 0);
+  assert.equal(existsSync(backlogFile(home, 'sync')), false);
+});
+
+for (const refs of ['0042,,0043', '']) {
+  test(`empty refs item in ${JSON.stringify(refs)} fails with an empty-item message`, (t) => {
+    const { home, main } = checkout(t);
+    llp(main, '0042-sync.rfc.md', '0043-other.rfc.md');
+    const result = taskNew(home, main, 'sync', '--refs', refs);
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /item.*empty|empty.*item/i);
+    assert.equal(existsSync(backlogFile(home, 'sync')), false);
+    assert.equal(registryText(home), null);
+  });
+}
+
+test('duplicate refs are written once', (t) => {
+  const { home, main } = checkout(t);
+  llp(main, '0042-sync.rfc.md');
+  const file = backlogged(home, main, 'sync', '--refs', '0042,0042');
+  assert.match(readFileSync(file, 'utf8'), /- design refs: LLP 0042\n/);
+});

@@ -154,6 +154,8 @@ the ledger, then runs the pipeline:
 investigate -> resolve ambiguity -> plan -> ledger -> red tests -> implement -> verify -> review -> clear point -> accept
 ```
 
+Tasks in repos with `llp/` record design references as described in [The ledger in detail](docs/usage.md#the-ledger-in-detail).
+
 Three things you take part in: you start the task, you approve the plan, and
 you type `/ledger:next` when the orchestrator says so.
 

@@ -200,6 +200,10 @@ transcript is re-billed on every turn; the ledger is read once per fresh session
 - Anything that would still be true next week goes in a rule file or auto memory,
   not the ledger. The ledger outlives the branch: archive it before the
   worktree goes.
+- In a repository with `llp/`, put durable design decisions about its code in
+  a new or updated LLP document. Use a decision or plan, or add an addendum
+  to the LLP it changes. Commit it in the same PR as the code.
+  Ledgers stay local and are never committed.
 
 ### Archiving a ledger
 
@@ -243,6 +247,12 @@ failing tests, run them, show the failure" step one), and the effort level
 **none** of your context. Require a concise structured report (`schema`) and
 **state "concise"** — Opus 5's length follows prompting, not effort. Reports are
 agent-to-agent: layer 2 only (see Writing for humans).
+
+Every report tags each claim `[observed]`, `[confirmed]`, or `[inferred]`.
+`[observed]` means seen in a file, command output or tool result.
+`[confirmed]` means checked by a test or a second source.
+`[inferred]` means not checked.
+Ledger Decisions and Constraints keep the tag.
 
 A commit a subagent made is not yours to amend. Your transcript does not show
 it being created, so `git commit --amend` on it reads as rewriting a commit

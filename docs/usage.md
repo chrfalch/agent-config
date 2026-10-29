@@ -215,6 +215,13 @@ outlive the task move to a rule file or memory. A ledger that keeps growing
 past the limit anyway is a sign that the work is too big for one task. Split
 it into a parent task with child tasks; see [Parent tasks](#parent-tasks).
 
+In repos with `llp/`, `/ledger:task` picks the design documents the task
+touches and passes their numbers to `bin/cc-task-new --refs '0042,0042.001'`.
+The script validates each number and writes `design refs` with the word LLP
+before each number, or `none` when no refs are passed. Without `llp/`, it
+omits the line and refuses `--refs`. Ledgers stay local; durable decisions go in LLP documents
+committed with the code.
+
 ### What does not go in it
 
 Anything that will still be true next week. That belongs in a rule file or in

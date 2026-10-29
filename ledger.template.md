@@ -10,6 +10,7 @@ Facts, not narrative. Keep under ~4k tokens.
 - worktree: <path>
 - branch: <name>
 - base: <branch/commit>
+- design refs: <LLP numbers, comma-separated, or none>
 
 ## Plan (approved <date>)
 | # | step | status | owner | note |
@@ -17,10 +18,10 @@ Facts, not narrative. Keep under ~4k tokens.
 | 1 | <step> | todo / red / green / reviewed / done | <agent> | <one line> |
 
 ## Decisions
-- <decision> — because <reason>
+- <decision> — because <reason> [observed|confirmed|inferred]
 
 ## Constraints discovered
-- <constraint> — found in <file/report>
+- <constraint> — found in <file/report> [observed]
 
 ## Subagent reports
 <paste the structured report for each step; replace with one line once the step is reviewed>

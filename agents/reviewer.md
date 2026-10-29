@@ -45,6 +45,13 @@ You will be given: the original spec, the acceptance criteria, and the changed f
 7. **Verification.** Did the author's claimed verification actually cover the change?
    Re-run checks yourself if the tooling is available.
 
+8. **Durable decisions.** If the repo has `llp/` and the change makes or changes
+   a durable design decision, check that an LLP document in the diff records it.
+   A missing document is a finding.
+9. **Claim tags.** Check that each claim in the report carries `[observed]`
+   (seen in a file, command output or tool result), `[confirmed]` (checked by
+   a test or a second source), or `[inferred]` (not checked).
+
 ## How you report
 
 Be specific and actionable. Point to file and line. Distinguish severity:

@@ -697,3 +697,16 @@ it in `~/.codex/models_cache.json` the same day. After `brew upgrade codex` to
 **The config default is no longer "not sol".** This machine's
 `~/.codex/config.toml` now sets `gpt-6.1-sol`. The rule stays the same: always
 pass `-m`, because the default can be any model.
+
+## 2026-10-28 — Ledgers link to LLP documents
+
+**Ledgers stay local.** They are never committed. In repos with `llp/`, LLP
+documents hold durable design decisions and ship in the same PR as the code.
+
+**The agent picks; the script validates.** `/ledger:task` reads LLP file names
+and likely titles, then passes the relevant numbers with `--refs`.
+`bin/cc-task-new` checks that each number matches exactly one document and
+records it under `design refs`.
+
+**Claims carry tags.** Reports mark each claim `[observed]`, `[confirmed]`, or
+`[inferred]`. Ledger Decisions and Constraints keep those tags.

@@ -3,6 +3,7 @@
 # ledger.template.md at ~/.claude/ledger-backlog/<repo>/<slug>.md, with no branch or
 # worktree yet. Its Location section records the main checkout, and the --branch and
 # --base given, for the promotion.
+# --refs <list> links comma-separated LLP numbers validated in the repo's llp/ folder.
 # --promote turns a backlog task into a worktree task: a new branch, its worktree
 # under the main checkout's .claude/worktrees/, and the ledger moved into it. It exits
 # 2 when there is no such backlog task, 3 when the task belongs to another main
@@ -10,9 +11,9 @@
 # --stack makes the worktree task at once, on top of the current branch.
 # --repo <path> acts as if run in the repository that holds <path>, its main checkout or any
 # worktree. It takes no --here or --stack, which build on the current worktree.
-# Usage: cc-task-new <slug> [--goal <text>] [--branch <name>] [--base <ref> | --stack] [--repo <path>]
+# Usage: cc-task-new <slug> [--goal <text>] [--branch <name>] [--base <ref> | --stack] [--repo <path>] [--refs <list>]
 #        cc-task-new [--repo <path>] --promote <slug>
-#        cc-task-new --here [<slug>] [--goal <text>]
+#        cc-task-new --here [<slug>] [--goal <text>] [--refs <list>]
 # Works from the main checkout or from inside any linked worktree. Every check runs
 # before the worktree is created, and a later failure removes the worktree and
 # branch again, so a failure leaves nothing behind.
@@ -21,9 +22,9 @@
 # cc-worktree-retire names the archive.
 set -eu
 
-usage="usage: cc-task-new <slug> [--goal <text>] [--branch <name>] [--base <ref> | --stack] [--repo <path>]
+usage="usage: cc-task-new <slug> [--goal <text>] [--branch <name>] [--base <ref> | --stack] [--repo <path>] [--refs <list>]
        cc-task-new [--repo <path>] --promote <slug>
-       cc-task-new --here [<slug>] [--goal <text>]"
+       cc-task-new --here [<slug>] [--goal <text>] [--refs <list>]"
 
 fail() {
   echo "$1" >&2
@@ -35,16 +36,17 @@ is_slug() (
   [[ $1 =~ ^[a-z0-9][a-z0-9-]*$ ]]
 )
 
-slug="" goal="" branch="" base="" stack="" here="" promote="" repo=""
+slug="" goal="" branch="" base="" stack="" here="" promote="" repo="" refs="" refs_given="" design_refs=""
 while [ $# -gt 0 ]; do
   case "$1" in
-    --goal|--branch|--base|--repo)
+    --goal|--branch|--base|--repo|--refs)
       [ $# -ge 2 ] || fail "$1 needs a value"
       case "$1" in
         --goal) goal="$2" ;;
         --branch) branch="$2" ;;
         --base) base="$2" ;;
         --repo) repo="$2" ;;
+        --refs) refs="$2"; refs_given=1 ;;
       esac
       shift 2
       ;;
@@ -60,8 +62,8 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-[ -z "$promote" ] || [ -z "$goal$branch$base$stack$here" ] ||
-  fail "--promote takes only a slug: the backlog ledger holds the goal, branch and base"$'\n'"$usage"
+[ -z "$promote" ] || [ -z "$goal$branch$base$stack$here$refs_given" ] ||
+  fail "--promote takes only a slug: the backlog ledger holds the goal, branch, base and design refs"$'\n'"$usage"
 [ -n "$slug" ] || [ -n "$here" ] || fail "$usage"
 [ -z "$slug" ] || is_slug "$slug" || fail "slug must match ^[a-z0-9][a-z0-9-]*\$: $slug"
 [ -z "$base" ] || [ -z "$stack" ] || fail "use --base or --stack, not both"
@@ -90,12 +92,48 @@ main=$(dirname "$common")
 backlog="$HOME/.claude/ledger-backlog/$(basename "$main")/$slug.md"
 wt="" short=""
 
+validate_refs() {
+  local root="$1" number matches file
+  if [ ! -d "$root/llp" ]; then
+    [ -z "$refs_given" ] || fail "no llp/ folder in $root"
+    return
+  fi
+  design_refs="none"
+  [ -n "$refs_given" ] || return 0
+  local remaining="$refs" seen=","
+  design_refs=""
+  while :; do
+    number="${remaining%%,*}"
+    number="${number#"${number%%[![:space:]]*}"}"
+    number="${number%"${number##*[![:space:]]}"}"
+    [ -n "$number" ] || fail "LLP refs item is empty"
+    [[ $number =~ ^[0-9]{4}(\.[0-9]{3})*$ ]] || fail "unknown LLP number: $number"
+    matches=0
+    for file in "$root/llp/$number-"*.md; do
+      [ ! -f "$file" ] || matches=$((matches + 1))
+    done
+    [ "$matches" -eq 1 ] || fail "unknown or ambiguous LLP number: $number (expected exactly one file)"
+    case "$seen" in
+      *,$number,*) ;;
+      *)
+        design_refs="${design_refs:+$design_refs, }LLP $number"
+        seen="$seen$number,"
+        ;;
+    esac
+    case "$remaining" in
+      *,*) remaining="${remaining#*,}" ;;
+      *) break ;;
+    esac
+  done
+}
+
 # Values travel through ENVIRON: awk -v and sed would rewrite backslashes and &.
 # An empty value keeps the line of the source as it is. The main line is dropped,
 # and written again only when $2 names the main checkout. Lines are joined by hand
 # because print would add a final newline that a hand-edited source may lack.
 write_ledger() {
   TASK_FINAL_NEWLINE=$([ -n "$(tail -c 1 "$1")" ] || echo 1) \
+  TASK_DESIGN_REFS="$design_refs" TASK_PROMOTE="$promote" \
   TASK_SLUG="$slug" TASK_GOAL="$goal" TASK_MAIN="${2-}" TASK_WORKTREE="$wt" TASK_BRANCH="$branch" TASK_BASE="$base${short:+ @ $short}" \
     awk '
       function emit(line) { printf "%s%s", separator, line; separator = "\n" }
@@ -106,6 +144,10 @@ write_ledger() {
       section == "## Location" && /^- worktree: / && ENVIRON["TASK_WORKTREE"] != "" { $0 = "- worktree: " ENVIRON["TASK_WORKTREE"] }
       section == "## Location" && /^- branch: / && ENVIRON["TASK_BRANCH"] != "" { $0 = "- branch: " ENVIRON["TASK_BRANCH"] }
       section == "## Location" && /^- base: / && ENVIRON["TASK_BASE"] != "" { $0 = "- base: " ENVIRON["TASK_BASE"] }
+      section == "## Location" && /^- design refs: / && ENVIRON["TASK_PROMOTE"] == "" {
+        if (ENVIRON["TASK_DESIGN_REFS"] == "") next
+        $0 = "- design refs: " ENVIRON["TASK_DESIGN_REFS"]
+      }
       { emit($0) }
       $0 == "## Location" && ENVIRON["TASK_MAIN"] != "" { emit("- main: " ENVIRON["TASK_MAIN"]) }
       END { if (ENVIRON["TASK_FINAL_NEWLINE"] != "") printf "\n" }
@@ -169,12 +211,19 @@ if [ -n "$here" ]; then
   branch="${branch:-detached HEAD}"
   base="HEAD"
   short=$(git rev-parse --short HEAD) || fail "this worktree has no commit yet: $wt"
+  validate_refs "$wt"
   mkdir -p "$wt/.claude"
   write_ledger "$template"
   register_ledger
   exclude_evidence
   report
   exit 0
+fi
+
+if [ -n "$stack" ]; then
+  validate_refs "$(git rev-parse --show-toplevel)"
+elif [ -z "$promote$here" ]; then
+  validate_refs "$main"
 fi
 
 if [ -z "$stack$promote" ]; then

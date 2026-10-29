@@ -11,29 +11,29 @@ const read = (file: string) => readFileSync(path.join(REPO, file), 'utf8').repla
 test('/ledger:task continues in this session when there is no current ledger', () => {
   const task = read('mods/ledger/commands/task.md');
   assert.match(task, /`\.claude\/ledger\.md` in the working directory/);
-  const step7 = task.match(/ 7\. If there is no current ledger.*/)?.[0] ?? '';
-  assert.match(step7, /there is no old task to clear/);
-  assert.match(step7, /move this session into the new worktree with the EnterWorktree tool/i);
+  const step8 = task.match(/ 8\. If there is no current ledger.*/)?.[0] ?? '';
+  assert.match(step8, /there is no old task to clear/);
+  assert.match(step8, /move this session into the new worktree with the EnterWorktree tool/i);
   assert.match(task, /continue with the operator's request in this session/);
 });
 
 test('/ledger:task without a current ledger reads the new ledger and follows the plan gate', () => {
-  const step7 = read('mods/ledger/commands/task.md').match(/ 7\. If there is no current ledger.*/)?.[0] ?? '';
-  assert.match(step7, /EnterWorktree.*Read `\.claude\/ledger\.md` in the new worktree/);
-  assert.match(step7, /get the plan approved, then write the approved plan into the ledger/);
+  const step8 = read('mods/ledger/commands/task.md').match(/ 8\. If there is no current ledger.*/)?.[0] ?? '';
+  assert.match(step8, /EnterWorktree.*Read `\.claude\/ledger\.md` in the new worktree/);
+  assert.match(step8, /get the plan approved, then write the approved plan into the ledger/);
 });
 
 test('/ledger:task without a current ledger promotes the backlog task, then enters the worktree --promote printed', () => {
-  const step7 = read('mods/ledger/commands/task.md').match(/ 7\. If there is no current ledger.*/)?.[0] ?? '';
-  assert.match(step7, /without `--stack`, .*`--promote <slug>`.*EnterWorktree/i);
-  assert.doesNotMatch(step7, /Before that/);
-  assert.match(step7, /Set `path` to the path on the `worktree` line that `--promote` printed/);
+  const step8 = read('mods/ledger/commands/task.md').match(/ 8\. If there is no current ledger.*/)?.[0] ?? '';
+  assert.match(step8, /without `--stack`, .*`--promote <slug>`.*EnterWorktree/i);
+  assert.doesNotMatch(step8, /Before that/);
+  assert.match(step8, /Set `path` to the path on the `worktree` line that `--promote` printed/);
 });
 
 test('/ledger:task with a current ledger leaves the task in the backlog', () => {
-  const step6 = read('mods/ledger/commands/task.md').match(/ 6\. If there is a current ledger.*? 7\. /)?.[0] ?? '';
-  assert.match(step6, /under its Decisions/);
-  assert.doesNotMatch(step6, /--promote/);
+  const step7 = read('mods/ledger/commands/task.md').match(/ 7\. If there is a current ledger.*? 8\. /)?.[0] ?? '';
+  assert.match(step7, /under its Decisions/);
+  assert.doesNotMatch(step7, /--promote/);
 });
 
 test('/ledger:task describes both cases in its frontmatter', () => {
@@ -189,4 +189,18 @@ test('/ledger:task makes the parent task first for a request with separately shi
   assert.match(split, /`bin\/cc-ledger-parent add <parent> <child>`/);
   assert.match(split, /Never promote the parent task/);
   assert.match(split, /`\/ledger:go <parent>`/);
+});
+
+test('/ledger:task selects LLP numbers in a separate step before running the script', () => {
+  const task = read('mods/ledger/commands/task.md');
+  assert.match(task, / 4\. Before running the script, check the task repo for `llp\/`\..*Pick the LLPs.* 5\. Run the script/);
+});
+
+test('/ledger:task keeps the base example without refs and shows an optional refs example', () => {
+  const task = readFileSync(path.join(REPO, 'mods/ledger/commands/task.md'), 'utf8');
+  const examples = task.split('\n').filter(line => line.includes('/bin/cc-task-new" <slug>'));
+  assert.equal(examples.length, 2);
+  assert.doesNotMatch(examples[0], /--refs/);
+  assert.match(examples[1], /--refs '0042,0042\.001'/);
+  assert.match(task, /optional.*--refs|--refs.*optional/i);
 });

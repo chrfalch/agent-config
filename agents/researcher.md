@@ -43,6 +43,9 @@ You will be given: a symptom or a task, and whatever starting context is known
 
 ## Report back (structured)
 
+Tag each claim `[observed]` (seen in a file, command output or tool result),
+`[confirmed]` (checked by a test or a second source), or `[inferred]` (not checked).
+
 Keep it tight — the orchestrator pays to read this, not to re-derive it. Brevity
 is set by this instruction, not by your effort level, so compress deliberately:
 - **root_cause**: the actual cause (for bugs), stated plainly

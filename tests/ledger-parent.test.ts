@@ -1254,6 +1254,22 @@ test('status does not take the archive copy of a repository with the same folder
   assert.equal(status(home, home, 'old', '--main', fork.main), 'retired\n');
 });
 
+test('status takes an archive copy that names the main checkout with a trailing slash or through a symbolic link as retired', (t) => {
+  const { home, main } = repository(t);
+  const link = path.join(home, 'links/app');
+  mkdirSync(path.dirname(link));
+  symlinkSync(main, link);
+  for (const [slug, named] of [['slashed', `${main}/`], ['linked', link]]) {
+    const copy = archiveTask(home, main, slug);
+    writeFileSync(copy, read(copy).replace('## Location\n', `## Location\n- main: ${named}\n`));
+  }
+
+  assert.deepEqual(
+    ['slashed', 'linked'].map((slug) => status(home, home, slug, '--main', main)),
+    ['retired\n', 'retired\n'],
+  );
+});
+
 test('status --main of a main checkout that is gone prints missing', (t) => {
   const { home } = repository(t);
 

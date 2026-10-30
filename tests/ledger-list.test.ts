@@ -393,6 +393,33 @@ test('session-start names a task in another repository with an unknown status wh
   );
 });
 
+test('session-start bounds the total wait for tasks in another repository when cc-ledger-parent does not answer', (t) => {
+  const root = scratch(t);
+  const main = repository(root, 'main');
+  const child = worktree(root, main, path.join(root, 'child'));
+  const other = repository(root, 'app');
+  const parts = ['part-a', 'part-b', 'part-c', 'part-d'];
+  const ledger = ledgerIn(
+    child,
+    familyLedger('child', [`- parent: epic @ ${other}`], `## Children\n${parts.map((part) => `- ${part} @ ${other}\n`).join('')}\n## Next step\nA step.\n`),
+  );
+  const hooks = path.join(root, 'tools/hooks');
+  mkdirSync(hooks, { recursive: true });
+  mkdirSync(path.join(root, 'tools/bin'));
+  writeFileSync(path.join(hooks, 'ledger-list.sh'), readFileSync(LEDGER_LIST));
+  writeFileSync(path.join(root, 'tools/bin/cc-ledger-parent'), '#!/bin/bash\nexec sleep 60\n', { mode: 0o755 });
+
+  const started = Date.now();
+  const result = spawnSync('bash', [path.join(hooks, 'ledger-list.sh'), 'session-start'], { cwd: child, env: environment(root), encoding: 'utf8' });
+
+  assert.ok(Date.now() - started < 7_000, `took ${Date.now() - started} ms`);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(
+    (JSON.parse(result.stdout) as SessionStartOutput).hookSpecificOutput.additionalContext,
+    relationText(ledger, `Parent task: epic @ ${other} (unknown).`, ...parts.map((part) => `Child task: ${part} @ ${other} (unknown).`)),
+  );
+});
+
 test('session-start in a parent task names each child in another repository with that repository and its status there', (t) => {
   const root = scratch(t);
   const main = repository(root, 'main');

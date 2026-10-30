@@ -20,6 +20,10 @@
 
 mode="${1:-session-start}"
 
+# Lookups in another repository run in $(...) subshells, which cannot share a counter; they inherit $SECONDS, the time since the hook started.
+LOOKUP_SECONDS=3
+LOOKUPS_TOTAL_SECONDS=5
+
 slug() {
   sed -n -E '/^# Task ledger[[:space:]]*(—|-)[[:space:]]*/{s///;s/[[:space:]]+$//;p;q;}' "$1"
 }
@@ -176,11 +180,14 @@ task_status() {
 # The status of task $1 in the repository whose main checkout is $2, which cc-ledger-parent looks up there.
 # A lookup that hangs, on a slow network disk say, must not stall the session start; macOS has no timeout(1).
 status_elsewhere() {
-  local lookup watchdog code
+  local lookup watchdog code limit
   command -v node >/dev/null 2>&1 || return 1
+  limit=$(( LOOKUPS_TOTAL_SECONDS - SECONDS ))
+  if [ "$limit" -le 0 ]; then echo unknown; return 0; fi
+  [ "$limit" -gt "$LOOKUP_SECONDS" ] && limit=$LOOKUP_SECONDS
   "$(dirname "$(readlink -f "$0")")/../bin/cc-ledger-parent" status "$1" --main "$2" 2>/dev/null &
   lookup=$!
-  { sleep 3 && kill "$lookup"; } >/dev/null 2>&1 &
+  { sleep "$limit" && kill "$lookup"; } >/dev/null 2>&1 &
   watchdog=$!
   wait "$lookup" && code=0 || code=$?
   kill "$watchdog" 2>/dev/null

@@ -373,7 +373,8 @@ function isArchived({ slug, main }) {
     .filter((name) => name.endsWith('.md'))
     .some((name) => {
       const text = fs.readFileSync(path.join(folder, name), 'utf8');
-      return titleSlug(text) === slug && archivedMain(text) === main;
+      const named = archivedMain(text);
+      return named !== undefined && same({ slug: titleSlug(text), main: named }, { slug, main });
     });
 }
 

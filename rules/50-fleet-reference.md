@@ -26,12 +26,19 @@
 <!-- needs: astra-reviewer -->
 | astra-reviewer    | gpt-6-astra | high/xhigh      | independent cross-lab verdict on critical work | fix code, see the Claude verdict before reviewing |
 <!-- /needs -->
+<!-- needs: codex-runner -->
+| codex-runner      | gpt-6.1-sol / gpt-6-luna | routine | read-only Codex investigation and batch work | code, edits, review, verdicts, untrusted input |
+<!-- /needs -->
 
+<!-- needs: runner, researcher -->
 Runner first for errors; researcher when the cause is not obvious from them.
+<!-- /needs -->
+<!-- needs: runner, reviewer -->
 Pipeline: investigate → resolve ambiguity → plan → ledger → red tests → implement
 (effort stated) → verify (runner) → review (reviewer) → clear point if more remains
 → you accept.
+<!-- /needs -->
 
-<!-- needs: astra-reviewer -->
+<!-- needs: astra-reviewer, reviewer -->
 Add `astra-reviewer` after `reviewer` on critical work.
 <!-- /needs -->

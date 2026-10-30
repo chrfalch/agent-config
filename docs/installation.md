@@ -15,7 +15,7 @@ parts that depend on it:
 
 | Optional | Used by | Skip with |
 |---|---|---|
-| Codex CLI | `sol-implementer`, `astra-implementer`, `astra-reviewer`, and the second-opinion path in `reviewer` | `--no-codex` |
+| Codex CLI | `sol-implementer`, `astra-implementer`, `astra-reviewer`, `codex-runner`, and the second-opinion path in `reviewer` | `--no-codex` |
 | argent MCP server | `ui-runner`, and the UI automation rule | `--no-argent` |
 | `gh stack` extension | the stacked-PR rule | `--no-stacks` |
 
@@ -47,7 +47,7 @@ work as before and skip the wizard.
 |---|---|
 | *(none)* | Apply everything. Codex policy too, if `~/.codex/config.toml` exists. |
 | `--dry-run` | Print every change and write nothing. Run this first. |
-| `--no-codex` | Skip Codex, and the three agents that drive it. |
+| `--no-codex` | Skip Codex, and the four agents that drive it. |
 | `--codex` | Require Codex; fail if its config is missing. |
 | `--no-argent` | Skip `ui-runner` and the UI automation rule. |
 | `--no-stacks` | Skip the stacked-PR rule. |

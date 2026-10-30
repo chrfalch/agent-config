@@ -125,7 +125,7 @@ test('bin/deploy accepts Node 20.12 and runs deploy with the forwarded arguments
   assert.equal(result.stderr, '');
   assert.equal(result.status, 0);
   assert.ok(result.stdout.startsWith('DRY RUN -- nothing below is written.\n'), result.stdout);
-  assert.ok(result.stdout.includes('\nagents   not deployed: sol-implementer astra-implementer astra-reviewer\n'), result.stdout);
+  assert.ok(result.stdout.includes('\nagents   not deployed: sol-implementer astra-implementer astra-reviewer codex-runner\n'), result.stdout);
 });
 
 const install = { complete: 'holds a finished install', partial: 'lacks .package-lock.json', failing: 'lacks it and npm ci fails' } as const;

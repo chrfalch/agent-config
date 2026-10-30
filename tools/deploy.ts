@@ -9,8 +9,8 @@ import { isMain } from './cli.js';
 // bin/deploy passes the path it was called through; import.meta.url is the realpath, and
 // link targets and the CLAUDE.md retirement check must use the caller's path.
 const REPO = process.env.DEPLOY_REPO || path.dirname(path.dirname(fileURLToPath(import.meta.url)));
-export const ALL_AGENTS = ['researcher', 'runner', 'ui-runner', 'opus-implementer', 'sol-implementer', 'astra-implementer', 'astra-reviewer', 'reviewer'];
-export const CODEX_AGENTS = ['sol-implementer', 'astra-implementer', 'astra-reviewer'];
+export const ALL_AGENTS = ['researcher', 'runner', 'ui-runner', 'opus-implementer', 'sol-implementer', 'astra-implementer', 'astra-reviewer', 'codex-runner', 'reviewer'];
+export const CODEX_AGENTS = ['sol-implementer', 'astra-implementer', 'astra-reviewer', 'codex-runner'];
 export const MODELS = 'gpt-6-luna,haiku-5.5,gpt-6.1-terra,gpt-6.1-sol,sonnet-5.5,opus-5.5,gpt-6-astra,fable-5';
 const HOOKS = ['commit-msg', 'prepare-commit-msg', 'pre-commit', 'pre-merge-commit', 'pre-push', 'pre-rebase', 'post-checkout', 'post-merge', 'post-commit', 'post-rewrite'];
 
@@ -415,7 +415,7 @@ const HELP = `Deploy ledger.
 
   bin/deploy                  link the owned files; apply policy; Codex if present
   bin/deploy --dry-run        print every change and write nothing
-  bin/deploy --no-codex       skip Codex, and the three agents that drive it
+  bin/deploy --no-codex       skip Codex, and the four agents that drive it
   bin/deploy --codex          require Codex; fail if ~/.codex/config.toml is missing
   bin/deploy --no-argent      skip ui-runner and the UI automation rule
   bin/deploy --no-stacks      skip the stacked-PR rule (needs the gh stack extension)

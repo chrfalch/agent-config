@@ -751,3 +751,26 @@ it writes the new one.
 - `notes/review-brief-2026-09-25.md`: a dated note. Its path names the checkout
   folder, which keeps its name.
 - Dated entries above in this file: they are history.
+
+## 2026-10-30 — Every Codex run goes through a wrapper
+
+**The orchestrator never runs Codex itself.** The rule asked for a wrapper only
+in workflows, and the routing rule sent Sol investigation and Luna batch work
+straight to `codex exec`. So the orchestrator often ran Codex through Bash, in
+the background. The VS Code extension then showed "0 agents" while Codex ran,
+and no agent owned the run. Now every Codex run goes through a wrapper agent.
+In an Agent call, the engine prefix starts `description`, because `label` is a
+workflow option only.
+
+**A wrapper waits on a done-file.** The wrappers ran Codex in the background
+and polled. A low-effort Haiku wrapper can return before Codex ends. A
+background command keeps running after its subagent returns, and the docs do
+not say that a finished subagent wakes when the command ends. Now the Codex
+command touches a done-file when it exits, even on failure. The wrapper arms
+Monitor on the done-file, arms it again at each deadline notice, and returns
+only after the done-file exists.
+
+**`codex-runner` is the read-only wrapper.** Sol investigation and Luna batch
+work had no wrapper. `codex-runner` runs them with `codex exec -s read-only`
+and relays the answer. It never writes code, edits, reviews or gives verdicts,
+and it takes no untrusted input.

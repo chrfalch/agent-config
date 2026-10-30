@@ -49,7 +49,7 @@ const DEFAULT_SELECTIONS = [
 
 // The wizard runs `gh extension list`, and gh 2.102 writes $XDG_STATE_HOME/gh/device-id. That file
 // is gh's, not deploy's, so it goes outside HOME and the HOME snapshots see only deploy's writes.
-const GH_STATE = mkdtempSync(path.join(tmpdir(), 'agent-config-gh-state-'));
+const GH_STATE = mkdtempSync(path.join(tmpdir(), 'ledger-gh-state-'));
 after(() => rmSync(GH_STATE, { recursive: true, force: true }));
 
 function wizard(home: string, steps: string[]) {

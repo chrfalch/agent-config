@@ -9,11 +9,11 @@ import { fileURLToPath } from 'node:url';
 export const REPO = fileURLToPath(new URL('../', import.meta.url));
 
 const PATH_WITHOUT_STUB = process.env.PATH ?? '';
-const STUB_ROOT = mkdtempSync(path.join(tmpdir(), 'agent-config-claude-stub-'));
+const STUB_ROOT = mkdtempSync(path.join(tmpdir(), 'ledger-claude-stub-'));
 process.on('exit', () => rmSync(STUB_ROOT, { recursive: true, force: true }));
 
 // A fake `claude` that answers the two plugin list commands from per-HOME state, so a
-// marketplace add, plugin install or plugin uninstall changes what later lists report. The state lives
+// marketplace add or remove, plugin install or plugin uninstall changes what later lists report. The state lives
 // outside HOME: --dry-run tests assert that HOME is byte-for-byte unchanged.
 const CLAUDE_STUB = `#!${process.execPath}
 const { createHash } = require('node:crypto');
@@ -25,6 +25,7 @@ const state = path.join(${JSON.stringify(path.join(STUB_ROOT, 'state'))}, create
 fs.mkdirSync(state, { recursive: true });
 const args = process.argv.slice(2);
 fs.appendFileSync(path.join(state, 'calls'), args.join(' ') + '\\n');
+fs.appendFileSync(path.join(state, 'cwds'), process.cwd() + '\\n');
 
 const read = (name) => fs.existsSync(path.join(state, name)) ? JSON.parse(fs.readFileSync(path.join(state, name), 'utf8')) : [];
 const write = (name, value) => fs.writeFileSync(path.join(state, name), JSON.stringify(value, null, 2));
@@ -42,6 +43,11 @@ else if (sub === 'marketplace' && verb === 'add' && target) {
   if (!fs.existsSync(manifest)) fail('Error: no marketplace at ' + manifest);
   const { name } = JSON.parse(fs.readFileSync(manifest, 'utf8'));
   write('marketplaces', [...read('marketplaces'), { name, source: 'directory', path: target, installLocation: target }]);
+} else if (sub === 'marketplace' && verb === 'remove' && target) {
+  failIfAsked('remove');
+  const marketplaces = read('marketplaces');
+  if (!marketplaces.some((entry) => entry.name === target)) fail('Error: marketplace ' + target + ' not found');
+  write('marketplaces', marketplaces.filter((entry) => entry.name !== target));
 } else if (sub === 'install' && verb) {
   failIfAsked('install');
   const [plugin, marketplace] = verb.split('@');
@@ -52,8 +58,11 @@ else if (sub === 'marketplace' && verb === 'add' && target) {
   failIfAsked('uninstall');
   const scope = args[args.indexOf('--scope') + 1];
   const plugins = read('plugins');
-  if (!plugins.some((entry) => entry.id === verb && entry.scope === scope)) fail('Error: plugin ' + verb + ' is not installed at scope ' + scope);
-  write('plugins', plugins.filter((entry) => !(entry.id === verb && entry.scope === scope)));
+  // A local or project uninstall acts on the project of the working directory.
+  const inProject = (entry) => !entry.projectPath || (fs.existsSync(entry.projectPath) && fs.realpathSync(entry.projectPath) === fs.realpathSync(process.cwd()));
+  const matches = (entry) => entry.id === verb && entry.scope === scope && inProject(entry);
+  if (!plugins.some(matches)) fail('Error: plugin ' + verb + ' is not installed at scope ' + scope + ' in ' + process.cwd());
+  write('plugins', plugins.filter((entry) => !matches(entry)));
 } else fail('stub claude: unexpected arguments: ' + args.join(' '));
 `;
 
@@ -72,14 +81,32 @@ export function claudeCalls(home: string): string[] {
   return existsSync(calls) ? readFileSync(calls, 'utf8').split('\n').filter(Boolean) : [];
 }
 
+/** The working directory of each call in claudeCalls(), in the same order. */
+export function claudeCwds(home: string): string[] {
+  const cwds = path.join(stubState(home), 'cwds');
+  return existsSync(cwds) ? readFileSync(cwds, 'utf8').split('\n').filter(Boolean) : [];
+}
+
 /** Sets what the stub claude prints for `plugin marketplace list --json` and `plugin list --json` under this HOME. */
 export function claudeLists(home: string, lists: { marketplaces?: string; plugins?: string }): void {
   mkdirSync(stubState(home), { recursive: true });
   for (const [name, text] of Object.entries(lists)) writeFileSync(path.join(stubState(home), name), text);
 }
 
+/** The marketplace names and plugin ids the stub claude lists under this HOME. */
+export function claudeState(home: string): { marketplaces: string[]; plugins: string[] } {
+  const read = <T>(name: string): T[] => {
+    const file = path.join(stubState(home), name);
+    return existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) : [];
+  };
+  return {
+    marketplaces: read<{ name: string }>('marketplaces').map(({ name }) => name),
+    plugins: read<{ id: string }>('plugins').map(({ id }) => id),
+  };
+}
+
 /** Makes the stub claude exit 1 with an error on stderr for every later `step` under this HOME. */
-export function failClaude(home: string, step: 'add' | 'install' | 'uninstall'): void {
+export function failClaude(home: string, step: 'add' | 'remove' | 'install' | 'uninstall'): void {
   mkdirSync(stubState(home), { recursive: true });
   writeFileSync(path.join(stubState(home), `fail-${step}`), '');
 }
@@ -89,7 +116,7 @@ const PATH_WITHOUT_CLAUDE = PATH_WITHOUT_STUB.split(path.delimiter)
   .join(path.delimiter);
 
 export function freshHome(t: TestContext, ownClaudeMd = false): string {
-  const home = mkdtempSync(path.join(tmpdir(), 'agent-config-test-'));
+  const home = mkdtempSync(path.join(tmpdir(), 'ledger-test-'));
   t.after(() => rmSync(home, { recursive: true, force: true }));
   mkdirSync(path.join(home, '.claude'));
   writeFileSync(path.join(home, '.claude/settings.json'), JSON.stringify({ model: 'sonnet' }, null, 2));

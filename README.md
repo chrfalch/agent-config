@@ -1,4 +1,15 @@
-# agent-config
+# ledger
+
+ledger cuts the cost of long Claude Code sessions. In eight weeks of one
+operator's sessions, 86% of the spend was re-reading the conversation. ledger
+makes it safe to clear the session often. Each task keeps its goal, plan and
+next step in a small ledger file and works in its own git worktree. Builds,
+code searches and implementation go to subagents that return short reports.
+You do three things: start the task in one sentence, approve the plan, and type
+`/ledger:next` at each clear point. The next day you type `go`, and the agent
+continues from the ledger without re-reading files or re-running tests. Big
+work splits into a parent task with child tasks, also across repositories, and
+`/ledger:retire` archives each ledger after the merge.
 
 ## The problem
 
@@ -85,11 +96,14 @@ place where planning, routing, and review happen.
 ## Install
 
 ```sh
-git clone https://github.com/chrfalch/agent-config.git
-cd agent-config
+git clone https://github.com/chrfalch/ledger.git
+cd ledger
 bin/deploy --dry-run   # print every change, write nothing
 bin/deploy
 ```
+
+A clone made before the project was called ledger can still be in a folder
+named `agent-config`. Deploy works from any folder name.
 
 You need Claude Code, Node.js 20.12 or later, `bash`, `git`, and `jq`. Deploy
 runs on Node. `bash` runs the git hook dispatcher that deploy installs. Every

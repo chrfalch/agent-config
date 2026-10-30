@@ -92,7 +92,7 @@ test('every component combination parses and never requires Codex', () => {
 });
 
 test('environment detection reports nothing found instead of throwing', (t) => {
-  const home = mkdtempSync(path.join(tmpdir(), 'agent-config-wizard-'));
+  const home = mkdtempSync(path.join(tmpdir(), 'ledger-wizard-'));
   const saved = { HOME: process.env.HOME, PATH: process.env.PATH };
   t.after(() => {
     Object.assign(process.env, saved);
@@ -108,7 +108,7 @@ test('environment detection reports nothing found instead of throwing', (t) => {
 });
 
 test('the git hook guard counts as detected when core.hooksPath names its directory in any spelling', (t) => {
-  const home = mkdtempSync(path.join(tmpdir(), 'agent-config-wizard-'));
+  const home = mkdtempSync(path.join(tmpdir(), 'ledger-wizard-'));
   const saved = process.env.HOME;
   t.after(() => {
     process.env.HOME = saved;
@@ -130,7 +130,7 @@ test('the git hook guard counts as detected when core.hooksPath names its direct
 
 test('a relative core.hooksPath never counts as the guard, even from the home directory', (t) => {
   // realpath, because a tmpdir under /var reads back from process.cwd() as /private/var.
-  const home = realpathSync(mkdtempSync(path.join(tmpdir(), 'agent-config-wizard-')));
+  const home = realpathSync(mkdtempSync(path.join(tmpdir(), 'ledger-wizard-')));
   const saved = { HOME: process.env.HOME, cwd: process.cwd() };
   t.after(() => {
     process.chdir(saved.cwd);

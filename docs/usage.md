@@ -287,7 +287,7 @@ child task with its own `/ledger:task`. Then attach each child task:
 ```
 
 The orchestrator attaches child tasks itself. It runs
-`bin/cc-ledger-parent add <parent> <child>` from the agent-config repo, in a
+`bin/cc-ledger-parent add <parent> <child>` from the ledger repo, in a
 folder inside the task's repo. Retiring a task stays with you.
 
 A task becomes a parent task when its first child task is attached. There is

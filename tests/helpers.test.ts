@@ -6,7 +6,7 @@ import test, { type TestContext } from 'node:test';
 import { snapshot } from './helpers.js';
 
 function tree(t: TestContext, make: (root: string) => void): Record<string, string> {
-  const root = mkdtempSync(path.join(tmpdir(), 'agent-config-snapshot-'));
+  const root = mkdtempSync(path.join(tmpdir(), 'ledger-snapshot-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   make(root);
   return snapshot(root);

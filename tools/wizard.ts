@@ -197,7 +197,7 @@ function describe(env: Environment): string {
 
 export async function runWizard(): Promise<number> {
   try {
-    intro('agent-config');
+    intro('ledger');
     const action = await ask(select<'deploy' | 'revert'>({
       message: 'What do you want to do?',
       options: [

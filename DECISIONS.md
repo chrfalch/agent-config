@@ -710,3 +710,44 @@ records it under `design refs`.
 
 **Claims carry tags.** Reports mark each claim `[observed]`, `[confirmed]`, or
 `[inferred]`. Ledger Decisions and Constraints keep those tags.
+
+## 2026-10-30 — The project is called ledger
+
+**The name is `ledger`, not `agent-config`.** The task ledger is what the
+project is for, and a planned command-line tool will carry the word. The
+marketplace, the plugin id (`ledger@ledger`), the deploy manifest
+(`~/.claude/.ledger-manifest`), the package name and the clone URL use the new
+name.
+
+**The checkout folder keeps its name.** Ledger backlog and archive folders,
+`cc-dd-path` build folders and the deployed symlinks are keyed to the folder,
+not to the project name. Renaming the folder is a separate step: deploy again
+from the new path, then move the backlog and archive folders.
+
+**Deploy moves an old install.** When a marketplace named `agent-config`
+points at this repo, deploy uninstalls `ledger@agent-config` and
+`worktrees@agent-config`, removes that marketplace, then adds `ledger`. The old
+plugins go first so a session never loads two ledger plugins. The old
+marketplace goes before the add so two marketplaces never share one folder.
+An `agent-config` plugin at local or project scope is also uninstalled before
+the marketplace goes, with the project's folder (`projectPath` in
+`claude plugin list --json`) as the working directory, because the CLI is
+assumed to act on the project of its working directory. That is not yet
+checked against the real CLI. Without that folder, deploy prints the
+fix instead. A project-scope uninstall edits the project's
+`.claude/settings.json`, which that repo may track. A
+marketplace `agent-config` that points elsewhere is not ours and stays. Deploy
+reads `~/.claude/.agent-config-manifest` when the new manifest is missing, so
+generated rule copies are still replaced without a prompt, and deletes it after
+it writes the new one.
+
+**Where the old name stays, and why:**
+
+- `tools/deploy.ts`: `OLD_MARKETPLACE` and the old manifest path. Deploy must
+  find an install made under the old name.
+- `tests/deploy-rename.test.ts`: the tests of that move.
+- `README.md` and `docs/installation.md`: an older clone can still be in a
+  folder named `agent-config`, and the deploy section describes the move.
+- `notes/review-brief-2026-09-25.md`: a dated note. Its path names the checkout
+  folder, which keeps its name.
+- Dated entries above in this file: they are history.

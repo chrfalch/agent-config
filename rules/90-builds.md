@@ -7,7 +7,7 @@ session gets a new id, so a build folder written there can never be reused. It i
 pure cost. Measured on one machine on 2026-10-08: three such folders held 17.4 GB,
 and the scratchpad root held 23 GB.
 
-- Get the folder with `bin/cc-dd-path <configuration>` from the agent-config repo.
+- Get the folder with `bin/cc-dd-path <configuration>` from the ledger repo.
   It prints one fixed path and creates it.
 - Pass that path to `xcodebuild -derivedDataPath`. Use the same path for every later
   build of the same worktree and the same configuration.

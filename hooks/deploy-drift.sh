@@ -1,5 +1,5 @@
 #!/bin/bash
-# SessionStart check: warns when ~/.claude is behind the agent-config repo.
+# SessionStart check: warns when ~/.claude is behind the ledger repo.
 # Read-only. It never deploys and never writes.
 
 self="$0"
@@ -59,5 +59,5 @@ if [ -z "$issues" ]; then
   exit 0
 fi
 
-printf '%s' "agent-config: ~/.claude is behind the repo. Run bin/deploy.
+printf '%s' "ledger: ~/.claude is behind the repo. Run bin/deploy.
 $issues" | jq -Rs '{systemMessage: .}'

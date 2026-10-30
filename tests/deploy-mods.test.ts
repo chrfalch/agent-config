@@ -12,14 +12,14 @@ const REPO_ARGUMENT = REPO.replace(/\/+$/, '');
 const LIST_MARKETPLACES = 'plugin marketplace list --json';
 const LIST_PLUGINS = 'plugin list --json';
 const ADD = `plugin marketplace add ${REPO_ARGUMENT} --scope user`;
-const INSTALL_LEDGER = 'plugin install ledger@agent-config --scope user';
-const UNINSTALL_WORKTREES = 'plugin uninstall worktrees@agent-config --scope user';
+const INSTALL_LEDGER = 'plugin install ledger@ledger --scope user';
+const UNINSTALL_WORKTREES = 'plugin uninstall worktrees@ledger --scope user';
 
 const changesState = (call: string): boolean => / (add|install|uninstall) /.test(call);
 
 test('the repo ships a marketplace that lists only the ledger mod', () => {
   const marketplace = JSON.parse(readFileSync(path.join(REPO, '.claude-plugin/marketplace.json'), 'utf8'));
-  assert.equal(marketplace.name, 'agent-config');
+  assert.equal(marketplace.name, 'ledger');
   assert.deepEqual(
     marketplace.plugins.map(({ name, source }: { name: string; source: string }) => ({ name, source })),
     [{ name: 'ledger', source: './mods/ledger' }],
@@ -37,7 +37,7 @@ test('deploy adds this repo as a marketplace, then installs the ledger mod and n
 
   assert.equal(result.status, 0, result.stderr);
   assert.deepEqual(claudeCalls(home), [LIST_MARKETPLACES, ADD, LIST_PLUGINS, INSTALL_LEDGER]);
-  assert.match(result.stdout, /^mods {5}installed ledger@agent-config \(\/ledger\)$/m);
+  assert.match(result.stdout, /^mods {5}installed ledger@ledger \(\/ledger\)$/m);
   assert.doesNotMatch(result.stdout, /worktrees/);
 });
 
@@ -104,15 +104,15 @@ test('--revert runs no claude command and prints how to remove the mods', (t) =>
   assert.deepEqual(claudeCalls(home).slice(before), []);
   assert.ok(result.stdout.includes('claude plugin uninstall ledger'), result.stdout);
   assert.ok(!result.stdout.includes('worktrees'), result.stdout);
-  assert.ok(result.stdout.includes('claude plugin marketplace remove agent-config'), result.stdout);
+  assert.ok(result.stdout.includes('claude plugin marketplace remove ledger'), result.stdout);
 });
 
 const registeredAt = (location: string): string =>
-  JSON.stringify([{ name: 'agent-config', source: 'directory', path: location, installLocation: location }]);
+  JSON.stringify([{ name: 'ledger', source: 'directory', path: location, installLocation: location }]);
 
 const installed = (...plugins: { id: string; scope: string }[]): string => JSON.stringify(plugins);
-const LEDGER_AT_USER = { id: 'ledger@agent-config', scope: 'user' };
-const WORKTREES_AT_USER = { id: 'worktrees@agent-config', scope: 'user' };
+const LEDGER_AT_USER = { id: 'ledger@ledger', scope: 'user' };
+const WORKTREES_AT_USER = { id: 'worktrees@ledger', scope: 'user' };
 
 test('deploy reports the ledger mod as already installed and uninstalls the old worktrees mod', (t) => {
   const home = freshHome(t);
@@ -122,8 +122,8 @@ test('deploy reports the ledger mod as already installed and uninstalls the old 
 
   assert.equal(result.status, 0, result.stderr);
   assert.deepEqual(claudeCalls(home), [LIST_MARKETPLACES, LIST_PLUGINS, UNINSTALL_WORKTREES]);
-  assert.match(result.stdout, /^mods {5}ledger@agent-config already installed$/m);
-  assert.match(result.stdout, /^mods {5}uninstalled worktrees@agent-config \(now \/ledger:worktrees\)$/m);
+  assert.match(result.stdout, /^mods {5}ledger@ledger already installed$/m);
+  assert.match(result.stdout, /^mods {5}uninstalled worktrees@ledger \(now \/ledger:worktrees\)$/m);
 });
 
 test('deploy installs the ledger mod before it uninstalls the old worktrees mod', (t) => {
@@ -157,20 +157,33 @@ test('--dry-run names the old worktrees mod it would uninstall and uninstalls no
 
   assert.equal(result.status, 0, result.stderr);
   assert.deepEqual(claudeCalls(home).filter(changesState), []);
-  assert.match(result.stdout, /^mods {5}would uninstall worktrees@agent-config \(now \/ledger:worktrees\)$/m);
+  assert.match(result.stdout, /^mods {5}would uninstall worktrees@ledger \(now \/ledger:worktrees\)$/m);
 });
 
 test('deploy leaves a worktrees mod installed at another scope alone', (t) => {
   const home = freshHome(t);
   claudeLists(home, {
     marketplaces: registeredAt(REPO_ARGUMENT),
-    plugins: installed(LEDGER_AT_USER, { id: 'worktrees@agent-config', scope: 'local' }),
+    plugins: installed(LEDGER_AT_USER, { id: 'worktrees@ledger', scope: 'local' }),
   });
 
   const result = run(home, DEPLOY);
 
   assert.equal(result.status, 0, result.stderr);
   assert.deepEqual(claudeCalls(home), [LIST_MARKETPLACES, LIST_PLUGINS]);
+});
+
+test('deploy installs the ledger mod at user scope when it is installed only at another scope', (t) => {
+  const home = freshHome(t);
+  claudeLists(home, {
+    marketplaces: registeredAt(REPO_ARGUMENT),
+    plugins: installed({ id: 'ledger@ledger', scope: 'local' }),
+  });
+
+  const result = run(home, DEPLOY);
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(claudeCalls(home), [LIST_MARKETPLACES, LIST_PLUGINS, INSTALL_LEDGER]);
 });
 
 test('a failing uninstall fails deploy with a message on stderr', (t) => {
@@ -191,21 +204,21 @@ test('a marketplace already added from this repo is reported and not added again
   const result = run(home, DEPLOY);
 
   assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stdout, /^mods {5}marketplace agent-config already added$/m);
+  assert.match(result.stdout, /^mods {5}marketplace ledger already added$/m);
   assert.deepEqual(claudeCalls(home).filter((call) => call.startsWith('plugin marketplace ') && call !== LIST_MARKETPLACES), []);
 });
 
-test('a marketplace named agent-config at another path is reported with the fix and left alone', (t) => {
+test('a marketplace named ledger at another path is reported with the fix and left alone', (t) => {
   const home = freshHome(t);
-  claudeLists(home, { marketplaces: registeredAt('/elsewhere/agent-config') });
+  claudeLists(home, { marketplaces: registeredAt('/elsewhere/ledger') });
 
   const result = run(home, DEPLOY);
 
   assert.equal(result.status, 0, result.stderr);
   assert.ok(
     result.stdout.includes(
-      'mods     marketplace agent-config points at /elsewhere/agent-config, not this repo; to fix: claude plugin marketplace remove agent-config, then run deploy again\n' +
-        'mods     skipped install of ledger@agent-config until the marketplace points at this repo\n',
+      'mods     marketplace ledger points at /elsewhere/ledger, not this repo; to fix: claude plugin marketplace remove ledger, then run deploy again\n' +
+        'mods     skipped install of ledger@ledger until the marketplace points at this repo\n',
     ),
     result.stdout,
   );
@@ -228,16 +241,16 @@ for (const [list, command] of [['marketplaces', LIST_MARKETPLACES], ['plugins', 
 
 test('a marketplace added from the real path of a repo deploy reaches through a symlink counts as this repo', (t) => {
   const home = freshHome(t);
-  const links = mkdtempSync(path.join(tmpdir(), 'agent-config-link-'));
+  const links = mkdtempSync(path.join(tmpdir(), 'ledger-link-'));
   t.after(() => rmSync(links, { recursive: true, force: true }));
-  const linked = path.join(links, 'agent-config');
+  const linked = path.join(links, 'ledger');
   symlinkSync(realpathSync(REPO), linked);
   claudeLists(home, { marketplaces: registeredAt(realpathSync(REPO)) });
 
   const result = run(home, [path.join(linked, 'bin/deploy')]);
 
   assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stdout, /^mods {5}marketplace agent-config already added$/m);
+  assert.match(result.stdout, /^mods {5}marketplace ledger already added$/m);
   assert.doesNotMatch(result.stdout, /points at/);
 });
 

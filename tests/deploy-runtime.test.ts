@@ -27,7 +27,7 @@ test('filtered deploy resolves tsx outside the repository without invoking Pytho
 });
 
 function symlinkedRepo(t: TestContext): string {
-  const directory = mkdtempSync(path.join(tmpdir(), 'agent-config-link-'));
+  const directory = mkdtempSync(path.join(tmpdir(), 'ledger-link-'));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   const link = path.join(directory, 'repo');
   symlinkSync(REPO, link);
@@ -53,7 +53,7 @@ test('bin/deploy links into the repository by the path it was called through', (
   const deploy = [path.join(repo, 'bin/deploy')] as const;
   const first = run(home, deploy);
   assert.equal(first.status, 0, first.stderr);
-  const manifest = readFileSync(path.join(home, '.claude/.agent-config-manifest'), 'utf8').trim().split('\n');
+  const manifest = readFileSync(path.join(home, '.claude/.ledger-manifest'), 'utf8').trim().split('\n');
   const intoRepo = manifest.map((file) => readlinkSync(file)).filter((target) => !target.startsWith(home));
   assert.ok(intoRepo.length > 0);
   for (const target of intoRepo) assert.ok(target.startsWith(`${repo}/`), target);

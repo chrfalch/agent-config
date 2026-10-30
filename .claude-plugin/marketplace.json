@@ -1,7 +1,7 @@
 {
-  "name": "agent-config",
+  "name": "ledger",
   "owner": { "name": "Christian Falch" },
-  "description": "Claude Code mods that ship with agent-config",
+  "description": "Claude Code mods that ship with ledger",
   "plugins": [
     {
       "name": "ledger",

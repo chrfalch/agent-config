@@ -27,7 +27,7 @@ separate PRs or separate merges, it needs a parent task. Write the parent
 task's backlog ledger first, then the ledger of each child task, each with
 steps 1 to 5 and without `--stack`. Then attach each child task in the order
 they ship: run `bin/cc-ledger-parent add <parent> <child>` from the
-agent-config repo, as in step 5. Write the split and the order into the parent
+ledger repo, as in step 5. Write the split and the order into the parent
 ledger. Never promote the parent task. Steps 6 to 8 do not apply, except that
 a current ledger gets one line under its Decisions that names the parent task.
 Reply with `/ledger:go <parent>` as the start line: it starts the first child
@@ -48,7 +48,7 @@ parent task.
    task touches and pass their numbers with `--refs '0042,0042.001'`. Each
    number must name a file directly in `llp/`, as `llp/<number>-*.md`. If none match, pass nothing. This also
    applies to `--here`.
-5. Run the script from the agent-config repo. The repo is two directories
+5. Run the script from the ledger repo. The repo is two directories
    above the real path of `~/.claude/rules/10-operating-model.md`. Put the goal
    in single quotes, and write each `'` inside it as `'\''`:
 

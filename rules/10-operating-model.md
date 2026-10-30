@@ -114,7 +114,7 @@ transcript is re-billed on every turn; the ledger is read once per fresh session
   the session into the new worktree with `EnterWorktree` and continues the
   work in this session. If you cannot tell whether the work is separate, ask
   in one line. Without the ledger mod, run
-  `bin/cc-task-new <slug> --goal '<one paragraph>'` from the agent-config
+  `bin/cc-task-new <slug> --goal '<one paragraph>'` from the ledger
   repo; write each `'` inside the goal as `'\''`. Then
   `bin/cc-task-new --promote <slug>` creates the worktree and branch. Add
   `--stack` only when the new work builds on the current branch.
@@ -137,7 +137,7 @@ transcript is re-billed on every turn; the ledger is read once per fresh session
   a task that only has many steps. This is a hard rule, not a preference.
 - **Making a parent task.** Start the parent task with `/ledger:task`. Start
   each child task with its own `/ledger:task`. Then attach each child task
-  yourself: run the agent-config repo's
+  yourself: run the ledger repo's
   `bin/cc-ledger-parent add <parent> <child>` from a folder inside the task's
   repo. The operator can also type `/ledger:parent <parent> add <child>`.
   `/ledger:parent <parent>` shows the parent task and its child tasks.
@@ -219,7 +219,7 @@ Absolute. A worktree is disposable. Its ledger is the record of the task.
   removal, it copies `.claude/evidence/` to a folder with the same name as the
   ledger copy, without `.md`. It also deletes the worktree's `cc-dd-path` build
   folders. Without the ledger mod,
-  run `bin/cc-worktree-retire <worktree> [--force]` from the agent-config repo.
+  run `bin/cc-worktree-retire <worktree> [--force]` from the ledger repo.
 - `<repo>` is the main checkout's directory name. `<slug>` is the branch name
   without its owner prefix.
 - Never remove a worktree, and never delete its directory, while its ledger is

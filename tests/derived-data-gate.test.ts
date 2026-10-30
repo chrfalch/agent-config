@@ -35,7 +35,7 @@ function repository(root: string, name: string): { dir: string; buildFolder: str
 
 /** A session repository and a separate app repository, both inside one temp HOME. */
 function repositories(t: TestContext) {
-  const root = realpathSync(mkdtempSync(path.join(tmpdir(), 'agent-config-derived-data-gate-')));
+  const root = realpathSync(mkdtempSync(path.join(tmpdir(), 'ledger-derived-data-gate-')));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   writeFileSync(path.join(root, '.gitconfig'), '');
   return { root, session: repository(root, 'session'), app: repository(root, 'app') };

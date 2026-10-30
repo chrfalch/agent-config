@@ -71,7 +71,7 @@ test('a filtered --dry-run leaves the temporary home unchanged', (t) => {
 
 test('a filtered --dry-run that fails removes its temporary rules directory', (t) => {
   const home = freshHome(t);
-  const temp = mkdtempSync(path.join(tmpdir(), 'agent-config-tmpdir-'));
+  const temp = mkdtempSync(path.join(tmpdir(), 'ledger-tmpdir-'));
   t.after(() => rmSync(temp, { recursive: true, force: true }));
 
   const result = spawnSync(DEPLOY[0], ['--dry-run', '--models', 'unknown'], {
@@ -82,7 +82,7 @@ test('a filtered --dry-run that fails removes its temporary rules directory', (t
 
   assert.notEqual(result.status, 0, result.stdout);
   // tsx keeps its own tsx-<uid> directory in TMPDIR, so only deploy's entries are checked.
-  assert.deepEqual(readdirSync(temp).filter((name) => name.startsWith('agent-config-')), []);
+  assert.deepEqual(readdirSync(temp).filter((name) => name.startsWith('ledger-')), []);
 });
 
 test('plain deploy links every rule without creating CLAUDE.md', (t) => {
@@ -167,7 +167,7 @@ test('--revert removes deployed rules, agents, and manifest', (t) => {
       status: result.status,
       rules: rulesIn(home),
       agents: agentsIn(home),
-      manifestExists: existsSync(path.join(home, '.claude', '.agent-config-manifest')),
+      manifestExists: existsSync(path.join(home, '.claude', '.ledger-manifest')),
     },
     { status: 0, rules: [], agents: [], manifestExists: false },
     `--revert removes the rules and the manifest: ${result.stderr}`,

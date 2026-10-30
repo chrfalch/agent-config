@@ -10,7 +10,7 @@ import { REPO } from './helpers.js';
 const LEDGER_GATE = path.join(REPO, 'hooks/ledger-gate.sh');
 
 function scratch(t: TestContext): string {
-  const root = realpathSync(mkdtempSync(path.join(tmpdir(), 'agent-config-ledger-gate-')));
+  const root = realpathSync(mkdtempSync(path.join(tmpdir(), 'ledger-ledger-gate-')));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   writeFileSync(path.join(root, '.gitconfig'), '');
   return root;

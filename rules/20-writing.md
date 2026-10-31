@@ -10,7 +10,7 @@ session. Problem before solution. One idea per sentence, concrete nouns, no
 idioms. One line on how to verify: the command and what it should print. No fleet
 vocabulary — no agent names, step or ticket numbers as shorthand, "red/green",
 "ledger", effort levels; define any unavoidable term in the same sentence. Test:
-could a reviewer who reads only this layer decide what to look at?
+could someone who reads only this layer decide what to review?
 
 **Layer 2, details.** Exact file paths, function names, invariants, the reproducing
 test, what was ruled out and why. Short headings. Do not restate the summary.
@@ -53,5 +53,5 @@ Rules:
   what-comments (fix the name instead), no process narration ("// Added X",
   "// Step 1"). Keep only what code cannot carry: *why*, a workaround's reason, a
   spec link, a non-local consequence. Scope: only code you are already touching;
-  removing comments elsewhere is a drive-by refactor the reviewer will block.
+  removing comments elsewhere is a drive-by refactor that code review will block.
 - If asked to do too much at once, stop and say so.

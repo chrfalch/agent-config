@@ -8,7 +8,8 @@ import { buildRules } from '../tools/build-rules.js';
 import { ALL_AGENTS, CODEX_AGENTS, MODELS } from '../tools/deploy.js';
 import { REPO } from './helpers.js';
 
-const GATED_RULES = ['40-model-routing.md', '50-fleet-reference.md', '60-subagent-mechanics.md'];
+const LIST_GATED_RULES = ['40-model-routing.md', '50-fleet-reference.md', '60-subagent-mechanics.md'];
+const GATED_RULES = ['10-operating-model.md', '20-writing.md', ...LIST_GATED_RULES];
 
 // Mirrors the feature list deploy() passes to buildRules for a filtered deploy.
 function deployFeatures({ agents, noCodex = false }: { agents?: string[]; noCodex?: boolean }): string[] {
@@ -49,7 +50,9 @@ for (const [label, features] of SELECTIONS) {
     for (const [name, text] of render(t, features)) {
       const undeployed = namedAgents(text).filter((agent) => !features.includes(agent));
       assert.deepEqual(undeployed, [], `rules/${name} names undeployed agents`);
-      assert.deepEqual(listHeadersWithoutItems(text), [], `rules/${name} has a list header with no list under it`);
+      if (LIST_GATED_RULES.includes(name)) {
+        assert.deepEqual(listHeadersWithoutItems(text), [], `rules/${name} has a list header with no list under it`);
+      }
       if (!features.includes('astra-implementer') && !features.includes('astra-reviewer')) {
         assert.doesNotMatch(text, /astra-impl/, `rules/${name} shows an Astra label example without an Astra agent`);
       }

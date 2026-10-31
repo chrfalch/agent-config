@@ -46,7 +46,7 @@ export function emptyArchiveMessage(repo: string | null, term: string): string {
   return term ? `No archived ledger in ${archiveFolder(repo)} contains "${term}".` : `No archived ledgers in ${archiveFolder(repo)}.`
 }
 
-function countLabel(count: number, term: string): string {
+export function countLabel(count: number, term: string): string {
   const what = count === 1 ? '1 ledger' : `${count} ledgers`
   const contains = term ? ` that contain${count === 1 ? 's' : ''} "${term}"` : ''
   return `${what}${contains}${count === 1 ? '' : ', newest first'}`

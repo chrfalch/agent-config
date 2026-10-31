@@ -6,7 +6,7 @@ import { findLedgers, message, run, sessionFolder, sessionLedger, type SessionFo
 const USAGE =
   'Usage: /ledger:parent [<slug>] shows a parent task and its children; /ledger:parent <slug> add <child> and /ledger:parent <slug> remove <child> change them.'
 
-type Shown = { parent: string; goal: string; children: ChildStatus[] }
+export type Shown = { parent: string; goal: string; children: ChildStatus[] }
 
 function isChildStatus(value: unknown): value is ChildStatus {
   if (typeof value !== 'object' || value === null) return false
@@ -96,22 +96,34 @@ function reportItems(report: string[]): string[] {
   })
 }
 
-async function ownFamily($: EngineInterface, folder: SessionFolder): Promise<{ parent: string | undefined } | { text: string }> {
+async function ownFamily($: EngineInterface, folder: SessionFolder): Promise<{ parent: string | undefined } | { error: string }> {
   const found = await findLedgers($)
-  if ('error' in found) return { text: `Could not list task ledgers. ${found.error}` }
+  if ('error' in found) return { error: `Could not list task ledgers. ${found.error}` }
   const active = sessionLedger(found, folder)
   if (active.kind !== 'one') return { parent: undefined }
   try {
     const { slug, parent, children } = summarize(await $.fs.read(active.path), folderSlug(active.path), 0)
     return { parent: children ? slug : parent }
   } catch (error) {
-    return { text: `Could not read ${active.path}. ${message(error)}` }
+    return { error: `Could not read ${active.path}. ${message(error)}` }
   }
 }
 
-async function show($: EngineInterface, parent: string, cwd: string): Promise<string> {
-  const shown = await showParent($, parent, cwd)
-  return 'error' in shown ? `Could not show ${parent}. ${shown.error}` : formatShown(shown)
+/**
+ * The parent task `slug` and its children; without a slug, the family of the session's own task. `none` when that task
+ * is neither a parent nor a child. `error` is a whole sentence.
+ */
+export async function familyToShow($: EngineInterface, slug: string | undefined): Promise<Shown | { none: true } | { error: string }> {
+  const folder = await sessionFolder($)
+  let parent = slug
+  if (parent === undefined) {
+    const own = await ownFamily($, folder)
+    if ('error' in own) return own
+    if (own.parent === undefined) return { none: true }
+    parent = taskArgument(own.parent)
+  }
+  const shown = await showParent($, parent, folder.path)
+  return 'error' in shown ? { error: `Could not show ${parent}. ${shown.error}` } : shown
 }
 
 async function change($: EngineInterface, verb: 'add' | 'remove', parent: string, child: string, cwd: string): Promise<string> {
@@ -124,16 +136,14 @@ async function change($: EngineInterface, verb: 'add' | 'remove', parent: string
 
 export async function parentCommand($: EngineInterface, args: string): Promise<string> {
   const words = args.split(/\s+/).filter(word => word !== '')
-  const folder = await sessionFolder($)
-  const cwd = folder.path
   const [parent, verb, child] = words
   if (words.length === 1 && (parent === 'add' || parent === 'remove')) return USAGE
-  if (parent === undefined) {
-    const own = await ownFamily($, folder)
-    if ('text' in own) return own.text
-    return own.parent === undefined ? USAGE : show($, taskArgument(own.parent), cwd)
+  if (words.length <= 1) {
+    const shown = await familyToShow($, parent)
+    return 'none' in shown ? USAGE : 'error' in shown ? shown.error : formatShown(shown)
   }
-  if (words.length === 1) return show($, parent, cwd)
-  if (words.length === 3 && child !== undefined && (verb === 'add' || verb === 'remove')) return change($, verb, parent, child, cwd)
+  if (words.length === 3 && parent !== undefined && child !== undefined && (verb === 'add' || verb === 'remove')) {
+    return change($, verb, parent, child, (await sessionFolder($)).path)
+  }
   return USAGE
 }

@@ -67,7 +67,29 @@ const newestFirst = (entries: Entry[]): Entry[] => [...entries].sort((a, b) => D
 const table = (header: string[], rows: string[][]): string[] =>
   [header, header.map(() => '---'), ...rows].map(row => `| ${row.join(' | ')} |`)
 
-async function tables($: EngineInterface, entries: Entry[]): Promise<string> {
+/** A task as /ledger:all lists it. `name` is its slug, indented under its parent, or followed by the parent it names. */
+type TaskRow = { entry: Entry; name: string; status: string; next: string }
+type BacklogRow = { entry: Entry; name: string; goal: string }
+/** Every registered task once: `tasks` and `backlog` each list parents before their children, and otherwise newest first. */
+export type Overview = { tasks: TaskRow[]; backlog: BacklogRow[] }
+
+/** The registry as `cc-ledgers list` prints it, or as `cc-ledgers scan` rebuilds it from disk; `rebuilt` is the line scan reports that with. */
+export async function readRegistry($: EngineInterface, scan: boolean): Promise<{ entries: Entry[]; rebuilt?: string } | { error: string }> {
+  const script = scriptPath($, 'cc-ledgers')
+  let result: ProcessRunResult
+  try {
+    result = await $.process.run([script, scan ? 'scan' : 'list', '--json'], { cwd: (await sessionFolder($)).path })
+  } catch (error) {
+    return { error: `cc-ledgers did not run: ${message(error)}` }
+  }
+  if (result.exitCode !== 0) return { error: `cc-ledgers failed (exit ${result.exitCode}): ${result.stderr.trim().replace(/\s*\n\s*/g, ' ')}` }
+  const entries = parseEntries(result.stdout)
+  if (entries === null) return { error: 'cc-ledgers printed something that is not a list of ledgers.' }
+  const rebuilt = scan ? result.stderr.split('\n').find(line => line.startsWith('rebuilt ')) : undefined
+  return rebuilt === undefined ? { entries } : { entries, rebuilt }
+}
+
+export async function overview($: EngineInterface, entries: Entry[]): Promise<Overview> {
   const backlog = newestFirst(entries.filter(entry => entry.status === 'backlog')).map(entry => ({ entry, status: entry.status }))
   const [tasks, backlogRows] = await Promise.all([
     Promise.all(
@@ -76,17 +98,17 @@ async function tables($: EngineInterface, entries: Entry[]): Promise<string> {
         return { entry, status, next }
       }),
     ),
-    Promise.all(
-      familyOrder(backlog).map(async ({ entry, name }) =>
-        [entry.repo, name, formatTime(Date.parse(entry.updated)), truncate(await goalOf($, entry))].map(cell),
-      ),
-    ),
+    Promise.all(familyOrder(backlog).map(async ({ entry, name }) => ({ entry, name, goal: await goalOf($, entry) }))),
   ])
-  const taskRows = familyOrder(tasks).map(({ entry, name, status, next }) =>
-    [entry.repo, name, status, formatTime(Date.parse(entry.updated)), truncate(next)].map(cell),
-  )
-  const active = taskRows.filter(row => row[2] === 'active').length
-  const counts = [`${entries.length} ${entries.length === 1 ? 'task' : 'tasks'}`, `${active} active`]
+  return { tasks: familyOrder(tasks), backlog: backlogRows }
+}
+
+export function formatOverview({ tasks, backlog }: Overview): string {
+  const total = tasks.length + backlog.length
+  const taskRows = tasks.map(({ entry, name, status, next }) => [entry.repo, name, status, formatTime(Date.parse(entry.updated)), truncate(next)].map(cell))
+  const backlogRows = backlog.map(({ entry, name, goal }) => [entry.repo, name, formatTime(Date.parse(entry.updated)), truncate(goal)].map(cell))
+  const active = tasks.filter(({ status }) => status === 'active').length
+  const counts = [`${total} ${total === 1 ? 'task' : 'tasks'}`, `${active} active`]
   if (backlog.length > 0) counts.push(`${backlog.length} backlog`)
   // Claude Code puts "ledger: " in front of the first output line; a table on that line does not render.
   const sections = [[`**All task ledgers** · ${counts.join(', ')}`]]
@@ -99,20 +121,9 @@ export async function allCommand($: EngineInterface, args: string): Promise<stri
   const words = args.split(/\s+/).filter(word => word !== '')
   const unknown = words.find(word => word !== '--scan')
   if (unknown !== undefined) return `Unknown argument: ${unknown}. ${USAGE}`
-  const scan = words.includes('--scan')
 
-  const script = scriptPath($, 'cc-ledgers')
-  let result: ProcessRunResult
-  try {
-    result = await $.process.run([script, scan ? 'scan' : 'list', '--json'], { cwd: (await sessionFolder($)).path })
-  } catch (error) {
-    return `cc-ledgers did not run: ${message(error)}`
-  }
-  if (result.exitCode !== 0) return `cc-ledgers failed (exit ${result.exitCode}): ${result.stderr.trim().replace(/\s*\n\s*/g, ' ')}`
-  const entries = parseEntries(result.stdout)
-  if (entries === null) return 'cc-ledgers printed something that is not a list of ledgers.'
-
-  const body = entries.length === 0 ? EMPTY : await tables($, entries)
-  const rebuilt = scan ? result.stderr.split('\n').find(line => line.startsWith('rebuilt ')) : undefined
-  return rebuilt === undefined ? body : `${rebuilt}\n\n${body}`
+  const registry = await readRegistry($, words.includes('--scan'))
+  if ('error' in registry) return registry.error
+  const body = registry.entries.length === 0 ? EMPTY : formatOverview(await overview($, registry.entries))
+  return registry.rebuilt === undefined ? body : `${registry.rebuilt}\n\n${body}`
 }

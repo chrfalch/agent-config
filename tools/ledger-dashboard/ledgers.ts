@@ -1,33 +1,20 @@
-import { spawn } from 'node:child_process';
 import { existsSync, realpathSync } from 'node:fs';
-import { access, lstat, readFile, stat, writeFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import { childOrder, groupByParent, isParentOf, park, parkMarker, summarize, unpark, type Grouped } from '../../mods/ledger/hooks/ledger.js';
+import { loadHooks, nodeEngine as engine, type Engine } from '../lib/node-engine.js';
 import { renderMarkdown } from './markdown.js';
 import { singleUseTokens } from './tokens.js';
 
 const REPO = fileURLToPath(new URL('../../', import.meta.url));
-const PLUGIN_ROOT = path.join(REPO, 'mods/ledger');
 const CC_LEDGERS = path.join(REPO, 'bin/cc-ledgers');
-
-type RunResult = { exitCode: number; stdout: string; stderr: string; isStdoutTruncated: boolean; isStderrTruncated: boolean };
-type FileStat = { kind: 'file' | 'directory' | 'other'; size: number; mtimeMs: number; isLink: boolean };
-
-/** The part of Claude Code's `$` that the ledger mod's commands use, backed by Node. */
-type Engine = {
-  process: { run(argv: string[], init?: { cwd?: string }): Promise<RunResult> };
-  fs: { read(file: string): Promise<string>; write(file: string, text: string): Promise<void>; stat(file: string): Promise<FileStat>; exists(file: string): Promise<boolean> };
-  session: { cwd(): Promise<string> };
-  plugin: { root: string };
-};
 
 type Entry = { repo: string; slug: string; status: string; updated: string; path: string; archivePath?: string; branch?: unknown; parent?: string; parentMain?: string; main?: string };
 type WorktreeState = { path: string; mainCheckout: string };
 type Pr = { state: string; number: number };
 
-// Loaded at run time: the mod's modules import their types from 'claude-code', which only Claude Code provides,
-// so `tsc` cannot follow them. These are the signatures they export.
+// The signatures of the mod's functions that loadHooks imports.
 type Mod = {
   run(engine: Engine, argv: string[], cwd: string): Promise<{ stdout: string; stderr: string; failure?: string }>;
   parseEntries(stdout: string): Entry[] | null;
@@ -43,46 +30,7 @@ type Mod = {
 
 const MOD_EXPORTS = ['run', 'parseEntries', 'statusAndNext', 'worktreeOf', 'readState', 'retireBlockers', 'formatPlan', 'retireLedger', 'lookUpPrs', 'titleSlug'] as const satisfies readonly (keyof Mod)[];
 
-async function loadMod(): Promise<Mod> {
-  const modules = ['lookup', 'registry', 'all-command', 'retire', 'retire-command', 'worktrees-command'];
-  const parts: Partial<Mod>[] = await Promise.all(modules.map(name => import(pathToFileURL(path.join(PLUGIN_ROOT, 'hooks', `${name}.ts`)).href)));
-  const mod: Partial<Mod> = Object.assign({}, ...parts);
-  const missing = MOD_EXPORTS.filter(name => typeof mod[name] !== 'function');
-  if (missing.length > 0) throw new Error(`the ledger mod no longer exports ${missing.join(', ')}`);
-  return mod as Mod;
-}
-
-function runProcess(argv: string[], init: { cwd?: string } = {}): Promise<RunResult> {
-  const [command = '', ...args] = argv;
-  return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { cwd: init.cwd, stdio: ['ignore', 'pipe', 'pipe'] });
-    let stdout = '';
-    let stderr = '';
-    child.stdout.setEncoding('utf8').on('data', chunk => (stdout += chunk));
-    child.stderr.setEncoding('utf8').on('data', chunk => (stderr += chunk));
-    child.on('error', reject);
-    child.on('close', code => resolve({ exitCode: code ?? 1, stdout, stderr, isStdoutTruncated: false, isStderrTruncated: false }));
-  });
-}
-
-async function statOf(file: string): Promise<FileStat> {
-  const [target, link] = await Promise.all([stat(file), lstat(file)]);
-  const kind = target.isFile() ? 'file' : target.isDirectory() ? 'directory' : 'other';
-  return { kind, size: target.size, mtimeMs: target.mtimeMs, isLink: link.isSymbolicLink() };
-}
-
-/** A `$` whose session runs in `cwd`. */
-const engine = (cwd: string): Engine => ({
-  process: { run: runProcess },
-  fs: {
-    read: file => readFile(file, 'utf8'),
-    write: (file, text) => writeFile(file, text),
-    stat: statOf,
-    exists: file => access(file).then(() => true, () => false),
-  },
-  session: { cwd: async () => cwd },
-  plugin: { root: PLUGIN_ROOT },
-});
+const loadMod = (): Promise<Mod> => loadHooks<Mod>(['lookup', 'registry', 'all-command', 'retire', 'retire-command', 'worktrees-command'], MOD_EXPORTS);
 
 /** What an API route answers: an HTTP status and a JSON body. */
 export type Reply = { status: number; body: object };

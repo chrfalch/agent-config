@@ -1,0 +1,42 @@
+#!/usr/bin/env node
+// Shows the task ledgers from a terminal. CommonJS like bin/cc-ledger-dashboard, so the version
+// check runs before Node refuses an extensionless file in a "type": "module" package.
+// Usage: ledger --help
+'use strict';
+const { spawnSync } = require('node:child_process');
+const { existsSync, realpathSync } = require('node:fs');
+const path = require('node:path');
+const { pathToFileURL } = require('node:url');
+
+const [major, minor] = process.versions.node.split('.').map(Number);
+if (major < 20 || (major === 20 && minor < 12)) {
+  console.error('ledger: Node.js >=20.12 is required');
+  process.exit(1);
+}
+
+// The real path, because npm link runs this file through a symbolic link in another folder.
+const repo = path.dirname(path.dirname(realpathSync(__filename)));
+
+// npm writes this file last, so its absence also catches an interrupted install.
+if (!existsSync(path.join(repo, 'node_modules/.package-lock.json'))) {
+  const npm = spawnSync('npm', ['ci', '--silent'], { cwd: repo, stdio: ['ignore', process.stderr, 'inherit'] });
+  if (npm.error) {
+    console.error(`ledger: ${npm.error.message}`);
+    process.exit(1);
+  }
+  if (npm.status !== 0) process.exit(npm.status ?? 1);
+}
+
+import('tsx/esm/api')
+  .then(({ register }) => {
+    register();
+    return import(pathToFileURL(path.join(repo, 'tools/ledger-cli/cli.ts')).href);
+  })
+  .then(({ main }) => main(process.argv.slice(2)))
+  .then((code) => {
+    process.exitCode = code;
+  })
+  .catch((error) => {
+    console.error(`ledger: ${error instanceof Error ? error.message : String(error)}`);
+    process.exit(1);
+  });

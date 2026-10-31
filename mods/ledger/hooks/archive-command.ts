@@ -61,33 +61,43 @@ async function readFolder($: EngineInterface, root: string, repo: string, term: 
   return ledgers.filter(ledger => ledger !== null)
 }
 
-/** The text /ledger:archive answers with. It only reads. */
-export async function archiveCommand($: EngineInterface, args: string): Promise<string> {
-  const command = parseArchiveArgs(args)
-  if (command.kind === 'usage') return ARCHIVE_USAGE
+/**
+ * The archived ledgers of the session's repo, or of every repo when `all`, newest first; with a `term`, only those that contain it.
+ * `repo` is null for every repo.
+ */
+export async function readArchive($: EngineInterface, { term, all }: { term: string; all: boolean }): Promise<{ repo: string | null; ledgers: ArchivedLedger[] } | { error: string }> {
   const home = await $.env.get('HOME')
-  if (!home?.startsWith('/')) return 'Could not find the ledger archive: HOME is not set.'
+  if (!home?.startsWith('/')) return { error: 'Could not find the ledger archive: HOME is not set.' }
   const root = `${home}/.claude/ledger-archive`
 
   let repo: string | null = null
   let repos: string[]
-  if (command.all) {
+  if (all) {
     const entries = await list($, root, null)
-    if ('error' in entries) return entries.error
+    if ('error' in entries) return entries
     repos = entries.filter(({ kind }) => kind === 'dir').map(({ name }) => name)
   } else {
     const found = await repoName($, (await sessionFolder($)).path)
-    if ('error' in found) return found.error
+    if ('error' in found) return found
     repo = found.name
     repos = [repo]
   }
 
-  const folders = await Promise.all(repos.map(name => readFolder($, root, name, command.term)))
+  const folders = await Promise.all(repos.map(name => readFolder($, root, name, term)))
   const ledgers: ArchivedLedger[] = []
   for (const folder of folders) {
-    if ('error' in folder) return folder.error
+    if ('error' in folder) return folder
     ledgers.push(...folder)
   }
-  if (ledgers.length === 0) return emptyArchiveMessage(repo, command.term)
-  return formatArchive(ledgers.sort(newestFirst), repo, command.term)
+  return { repo, ledgers: ledgers.sort(newestFirst) }
+}
+
+/** The text /ledger:archive answers with. It only reads. */
+export async function archiveCommand($: EngineInterface, args: string): Promise<string> {
+  const command = parseArchiveArgs(args)
+  if (command.kind === 'usage') return ARCHIVE_USAGE
+  const archive = await readArchive($, command)
+  if ('error' in archive) return archive.error
+  if (archive.ledgers.length === 0) return emptyArchiveMessage(archive.repo, command.term)
+  return formatArchive(archive.ledgers, archive.repo, command.term)
 }

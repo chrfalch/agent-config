@@ -106,7 +106,7 @@ async function probe($: EngineInterface, { path, branch }: Worktree, cwd: string
   return { row, prError: error }
 }
 
-async function linkedWorktrees($: EngineInterface, cwd: string): Promise<RepoLayout & { error?: string }> {
+export async function linkedWorktrees($: EngineInterface, cwd: string): Promise<RepoLayout & { error?: string }> {
   const list = await run($, ['git', 'worktree', 'list', '--porcelain', '-z'], cwd)
   if (list.failure !== undefined) return { main: null, worktrees: [], error: `Could not list worktrees. git worktree list ${list.failure}` }
   const listed = parseWorktrees(list.stdout)
@@ -114,12 +114,15 @@ async function linkedWorktrees($: EngineInterface, cwd: string): Promise<RepoLay
   return { main: parseMainWorktree(list.stdout), worktrees: listed.filter((_, index) => present[index]) }
 }
 
-async function table($: EngineInterface, worktrees: Worktree[], cwd: string): Promise<string> {
+/** The rows /ledger:worktrees shows. `prError` is why a PR could not be looked up, for the first worktree whose lookup failed. */
+export async function worktreeRows($: EngineInterface, worktrees: Worktree[], cwd: string): Promise<{ rows: WorktreeRow[]; prError?: string }> {
   const probes = await Promise.all(worktrees.map(worktree => probe($, worktree, cwd)))
-  return formatTable(
-    probes.map(({ row }) => row),
-    probes.find(({ prError }) => prError !== undefined)?.prError,
-  )
+  return { rows: probes.map(({ row }) => row), prError: probes.find(({ prError }) => prError !== undefined)?.prError }
+}
+
+async function table($: EngineInterface, worktrees: Worktree[], cwd: string): Promise<string> {
+  const { rows, prError } = await worktreeRows($, worktrees, cwd)
+  return formatTable(rows, prError)
 }
 
 async function derivedDataPath($: EngineInterface): Promise<string | null> {

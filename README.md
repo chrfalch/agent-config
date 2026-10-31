@@ -65,7 +65,7 @@ file instead of in the conversation. It ships five things:
 
 - **An orchestrator contract** — rule files that load in every session and tell
   the top-level agent how to work.
-- **Eight subagents** — investigation, execution, implementation, and review
+- **Nine subagents** — investigation, execution, implementation, and review
   lanes, each pinned to a model.
 - **A task ledger** — a small file that holds the task state, so a session can
   be cleared and restarted without losing anything.
@@ -324,7 +324,7 @@ it archives that ledger, then deletes it.
 | [docs/usage.md](docs/usage.md) | The daily loop, a worked example, the ledger, clear points |
 | [docs/examples.md](docs/examples.md) | Two longer examples: a new task with `/ledger:next`, and a backlog task |
 | [docs/installation.md](docs/installation.md) | Prerequisites, every flag, what deploy owns, revert |
-| [docs/fleet.md](docs/fleet.md) | The eight agents, their models, and the routing rules |
+| [docs/fleet.md](docs/fleet.md) | The nine agents, their models, and the routing rules |
 | [docs/customizing.md](docs/customizing.md) | Changing models, gating rules, adding an agent, tests |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Forking, what to send back, what must never be committed |
 | [DECISIONS.md](DECISIONS.md) | Why the setup is shaped this way |
@@ -333,7 +333,7 @@ it archives that ledger, then deletes it.
 
 ```
 rules/                    the orchestrator contract, one file per topic
-agents/                   the eight subagents
+agents/                   the nine subagents
 docs/                     this documentation
 ledger.template.md        copied per task to .claude/ledger.md
 notes/                    rationale, not rules

@@ -1,6 +1,6 @@
 # The fleet
 
-Eight subagents. Each has one question it answers, one lane it stays in, and a
+Nine subagents. Each has one question it answers, one lane it stays in, and a
 list of things it never does. The orchestrator routes work to them; you rarely
 name one yourself.
 
@@ -14,11 +14,12 @@ name one yourself.
 | `astra-implementer` | gpt-6-astra | high/xhigh/max | implement the hardest well-specified work | routine work, taste work, untrusted input, fill spec gaps |
 | `reviewer` | opus-5.5 | medium | is it actually done, with red/green evidence | fix code |
 | `astra-reviewer` | gpt-6-astra | high/xhigh | independent cross-lab verdict on critical work | fix code, see the Claude verdict first |
+| `codex-runner` | gpt-6.1-sol / gpt-6-luna | routine | read-only Codex investigation and batch work | code, edits, review, verdicts, untrusted input |
 
 `runner` first when there are errors. `researcher` when the errors are known but
 the cause is not.
 
-The last three Codex agents are thin Claude wrappers. Their own model is cheap
+The four Codex agents are thin Claude wrappers. Their own model is cheap
 because the real work happens in Codex; what matters is the Codex model behind
 them.
 
@@ -37,6 +38,7 @@ does not include the model named, or if you want a lane to run cheaper.
 | `sol-implementer` | `claude-haiku-5-5` | low | Codex, `gpt-6.1-sol` |
 | `astra-implementer` | `claude-haiku-5-5` | low | Codex, `gpt-6-astra` |
 | `astra-reviewer` | `claude-haiku-5-5` | low | Codex, `gpt-6-astra` |
+| `codex-runner` | `claude-haiku-5-5` | low | Codex, `gpt-6.1-sol` or `gpt-6-luna` |
 
 To drop the models you do not have from the routing and fleet tables:
 
@@ -110,6 +112,10 @@ disagree, you decide.
 
 OpenAI models run only through the Codex CLI (`codex exec` and `codex review`).
 
+- Every Codex run goes through a wrapper agent: `sol-implementer`,
+  `astra-implementer`, `astra-reviewer` or `codex-runner`. The orchestrator
+  never runs `codex exec` or `codex review` itself, not even in the background.
+  A direct run shows "0 agents" in the UI, and no agent owns it.
 - Always pass `-m` explicitly to `codex exec`: `-m gpt-6.1-sol`, or
   `-m gpt-6-astra`. The config default can be any model, and relying on it is
   a bug.
@@ -119,18 +125,21 @@ OpenAI models run only through the Codex CLI (`codex exec` and `codex review`).
 - `codex review` accepts neither `-m` nor `-s`. Set its model with
   `-c model="gpt-6-astra"`. Use `codex exec -s read-only` when the sandbox must
   be pinned.
-- Read-only work runs `codex exec -s read-only` with a self-contained prompt.
+- Read-only Codex work goes to `codex-runner`. It runs `codex exec -s read-only`
+  with a self-contained prompt.
 - Sol needs Codex CLI 0.165.0 or later. On 0.153.4, `-m gpt-6.1-sol` fails
   with `model_not_found`.
 - Astra needs Codex CLI 0.153.1 or later. Astra wrappers never run below high
   effort.
 - Astra runs with `approval_policy = "on-request"`. Never `--full-auto`, never
   `approval_policy = "never"`.
-- Codex runs can exceed the 10-minute Bash timeout. Use an explicit timeout, or
-  run in the background and poll for the report file. Astra at xhigh or max runs
-  in the background by default.
-- Label a wrapper delegation with its engine prefix — `gpt-6.1:` for Sol,
-  `gpt-6:` for Astra and Luna — because the UI shows only the wrapper's model.
+- A Codex run can exceed the 10-minute Bash foreground limit. The wrapper starts
+  Codex in the background with no timeout. The command writes the Codex
+  output to a file, then a done-file when Codex exits. The wrapper waits on the
+  done-file with Monitor and never returns before Codex ends.
+- Name the engine with a prefix — `gpt-6.1:` for Sol, `gpt-6:` for Astra and
+  Luna — because the UI shows only the wrapper's model. In an Agent call, start
+  `description` with the prefix. In a workflow, put it in `label`.
 
 ## UI automation
 

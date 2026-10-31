@@ -284,15 +284,47 @@ test('--no-codex omits Codex agents and prose', (t) => {
   assert.deepEqual(
     {
       agents: deployedAgents,
+      hasCodexRunner: deployedAgents.includes('codex-runner'),
       hasCodexExec: mechanics.includes('codex exec'),
       hasCodexCli: mechanics.includes('Codex CLI'),
     },
     {
       agents: ['opus-implementer', 'researcher', 'reviewer', 'runner', 'ui-runner'],
+      hasCodexRunner: false,
       hasCodexExec: false,
       hasCodexCli: false,
     },
     `--no-codex drops its agents and its prose: ${JSON.stringify(deployedAgents)}`,
+  );
+});
+
+test('plain deploy links every agent, the Codex agents included', (t) => {
+  const home = freshHome(t);
+
+  const result = run(home, DEPLOY);
+  const deployedAgents = agentsIn(home);
+
+  assert.deepEqual(
+    { status: result.status, agents: deployedAgents },
+    {
+      status: 0,
+      agents: [
+        'astra-implementer',
+        'astra-reviewer',
+        'codex-runner',
+        'opus-implementer',
+        'researcher',
+        'reviewer',
+        'runner',
+        'sol-implementer',
+        'ui-runner',
+      ],
+    },
+    `deploy links every agent: ${JSON.stringify(deployedAgents)} ${result.stderr}`,
+  );
+  assert.ok(
+    lstatSync(path.join(home, '.claude', 'agents', 'codex-runner.md')).isSymbolicLink(),
+    'codex-runner is linked, not generated',
   );
 });
 
@@ -336,6 +368,7 @@ test('narrow deployment leaves no rule references to undeployed agent lanes', (t
     'sol-implementer',
     'astra-implementer',
     'astra-reviewer',
+    'codex-runner',
     'reviewer',
   ];
   const dangling = allAgents.filter(

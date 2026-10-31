@@ -6,6 +6,7 @@
 const { spawnSync } = require('node:child_process');
 const { existsSync, readSync } = require('node:fs');
 const path = require('node:path');
+const { isatty } = require('node:tty');
 const { pathToFileURL } = require('node:url');
 
 // 20.12 for @clack/prompts (node:util styleText); tsx alone needs 20.6 (module.register).
@@ -22,7 +23,9 @@ process.chdir(repo);
 
 function checkUpstream() {
   const args = process.argv.slice(2);
-  if ((!process.stdin.isTTY && process.env.DEPLOY_PULL_CHECK !== '1') || args.includes('-h') || args.includes('--help')) return;
+  // Not process.stdin.isTTY: creating process.stdin makes fd 0 non-blocking, and the
+  // readSync below then fails with EAGAIN before the answer arrives.
+  if ((!isatty(0) && process.env.DEPLOY_PULL_CHECK !== '1') || args.includes('-h') || args.includes('--help')) return;
   const upstreamResult = spawnSync('git', ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'], { encoding: 'utf8' });
   if (upstreamResult.status !== 0) return;
   const upstream = upstreamResult.stdout.trim();

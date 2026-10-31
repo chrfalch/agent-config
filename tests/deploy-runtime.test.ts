@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
+import { once } from 'node:events';
 import { lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -224,7 +225,7 @@ function pullCheckRepo(t: TestContext, ahead = true) {
     return result;
   };
   const deployed = `${realpathSync(repo)}\n${repo}\n`;
-  return { repo, origin, git, initialHead, deploy, deployed };
+  return { repo, origin, env, git, initialHead, deploy, deployed };
 }
 
 test('bin/deploy pulls new upstream commits on an empty answer', (t) => {
@@ -243,6 +244,25 @@ test('bin/deploy continues without pulling when declined', (t) => {
   assert.ok(result.stdout.includes('origin/main has 1 new commit(s). Pull before deploying? [Y/n] '), result.stdout);
   assert.equal(git(repo, 'rev-parse', 'HEAD'), initialHead);
   assert.ok(result.stdout.includes(deployed), result.stdout);
+});
+
+// An answer typed after the prompt appears finds stdin empty at first, so a non-blocking
+// fd 0 fails the read with EAGAIN.
+test('bin/deploy waits for an answer typed after the prompt', async (t) => {
+  const { repo, env, git, initialHead, deployed } = pullCheckRepo(t);
+  const child = spawn(path.join(repo, 'bin/deploy'), [], { cwd: path.dirname(repo), env });
+  let stdout = '';
+  let stderr = '';
+  child.stdout.setEncoding('utf8').on('data', (chunk: string) => {
+    stdout += chunk;
+    if (!child.stdin.writableEnded && stdout.includes('Pull before deploying? [Y/n] ')) child.stdin.end('n\n');
+  });
+  child.stderr.setEncoding('utf8').on('data', (chunk: string) => (stderr += chunk));
+  const [status] = await once(child, 'close');
+  assert.doesNotMatch(stderr, /EAGAIN/);
+  assert.equal(status, 0, stderr);
+  assert.equal(git(repo, 'rev-parse', 'HEAD'), initialHead);
+  assert.ok(stdout.includes(deployed), stdout);
 });
 
 test('bin/deploy does not prompt when upstream has no new commits', (t) => {
